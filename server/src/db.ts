@@ -1,0 +1,235 @@
+import { DatabaseSync } from "node:sqlite";
+import { randomUUID } from "node:crypto";
+
+import { DB_PATH } from "./config.ts";
+import type { Message, MessageRole, PermissionMode, Project, Thread, ThreadStatus } from "./types.ts";
+
+const db = new DatabaseSync(DB_PATH);
+db.exec("PRAGMA journal_mode = WAL");
+db.exec("PRAGMA foreign_keys = ON");
+db.exec(`
+  CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    path TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    is_git INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS threads (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    cwd TEXT NOT NULL,
+    branch TEXT,
+    is_worktree INTEGER NOT NULL DEFAULT 0,
+    model TEXT NOT NULL,
+    permission_mode TEXT NOT NULL,
+    session_id TEXT,
+    status TEXT NOT NULL DEFAULT 'idle',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS messages (
+    id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+    seq INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    text TEXT NOT NULL,
+    meta TEXT,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS messages_thread_seq ON messages(thread_id, seq);
+`);
+
+type Row = Record<string, unknown>;
+
+function toProject(row: Row): Project {
+  return {
+    id: row.id as string,
+    path: row.path as string,
+    name: row.name as string,
+    isGit: Boolean(row.is_git),
+    createdAt: row.created_at as number,
+  };
+}
+
+function toThread(row: Row): Thread {
+  return {
+    id: row.id as string,
+    projectId: row.project_id as string,
+    title: row.title as string,
+    cwd: row.cwd as string,
+    branch: (row.branch as string | null) ?? null,
+    isWorktree: Boolean(row.is_worktree),
+    model: row.model as string,
+    permissionMode: row.permission_mode as PermissionMode,
+    sessionId: (row.session_id as string | null) ?? null,
+    status: row.status as ThreadStatus,
+    createdAt: row.created_at as number,
+    updatedAt: row.updated_at as number,
+  };
+}
+
+function toMessage(row: Row): Message {
+  return {
+    id: row.id as string,
+    threadId: row.thread_id as string,
+    seq: row.seq as number,
+    role: row.role as MessageRole,
+    text: row.text as string,
+    meta: row.meta ? (JSON.parse(row.meta as string) as Record<string, unknown>) : null,
+    createdAt: row.created_at as number,
+  };
+}
+
+export const projects = {
+  list(): Project[] {
+    return db.prepare("SELECT * FROM projects ORDER BY created_at ASC").all().map(toProject);
+  },
+  byId(id: string): Project | null {
+    const row = db.prepare("SELECT * FROM projects WHERE id = ?").get(id);
+    return row ? toProject(row) : null;
+  },
+  byPath(path: string): Project | null {
+    const row = db.prepare("SELECT * FROM projects WHERE path = ?").get(path);
+    return row ? toProject(row) : null;
+  },
+  create(input: { path: string; name: string; isGit: boolean }): Project {
+    const project: Project = { id: randomUUID(), createdAt: Date.now(), ...input };
+    db.prepare("INSERT INTO projects (id, path, name, is_git, created_at) VALUES (?, ?, ?, ?, ?)").run(
+      project.id,
+      project.path,
+      project.name,
+      project.isGit ? 1 : 0,
+      project.createdAt,
+    );
+    return project;
+  },
+  remove(id: string): void {
+    db.prepare("DELETE FROM projects WHERE id = ?").run(id);
+  },
+};
+
+export const threads = {
+  list(): Thread[] {
+    return db.prepare("SELECT * FROM threads ORDER BY updated_at DESC").all().map(toThread);
+  },
+  byId(id: string): Thread | null {
+    const row = db.prepare("SELECT * FROM threads WHERE id = ?").get(id);
+    return row ? toThread(row) : null;
+  },
+  create(input: {
+    projectId: string;
+    title: string;
+    cwd: string;
+    branch: string | null;
+    isWorktree: boolean;
+    model: string;
+    permissionMode: PermissionMode;
+  }): Thread {
+    const now = Date.now();
+    const thread: Thread = {
+      id: randomUUID(),
+      sessionId: null,
+      status: "idle",
+      createdAt: now,
+      updatedAt: now,
+      ...input,
+    };
+    db.prepare(
+      `INSERT INTO threads (id, project_id, title, cwd, branch, is_worktree, model, permission_mode, session_id, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      thread.id,
+      thread.projectId,
+      thread.title,
+      thread.cwd,
+      thread.branch,
+      thread.isWorktree ? 1 : 0,
+      thread.model,
+      thread.permissionMode,
+      null,
+      thread.status,
+      thread.createdAt,
+      thread.updatedAt,
+    );
+    return thread;
+  },
+  update(
+    id: string,
+    patch: Partial<Pick<Thread, "title" | "model" | "permissionMode" | "sessionId" | "status">>,
+  ): Thread | null {
+    const columns: Record<string, string> = {
+      title: "title",
+      model: "model",
+      permissionMode: "permission_mode",
+      sessionId: "session_id",
+      status: "status",
+    };
+    const sets: string[] = [];
+    const values: Array<string | null> = [];
+    for (const [key, column] of Object.entries(columns)) {
+      const value = patch[key as keyof typeof patch];
+      if (value === undefined) continue;
+      sets.push(`${column} = ?`);
+      values.push(value as string | null);
+    }
+    if (sets.length === 0) return threads.byId(id);
+    db.prepare(`UPDATE threads SET ${sets.join(", ")}, updated_at = ? WHERE id = ?`).run(
+      ...values,
+      Date.now(),
+      id,
+    );
+    return threads.byId(id);
+  },
+  touch(id: string): void {
+    db.prepare("UPDATE threads SET updated_at = ? WHERE id = ?").run(Date.now(), id);
+  },
+  remove(id: string): void {
+    db.prepare("DELETE FROM threads WHERE id = ?").run(id);
+  },
+};
+
+export const messages = {
+  list(threadId: string): Message[] {
+    return db
+      .prepare("SELECT * FROM messages WHERE thread_id = ? ORDER BY seq ASC")
+      .all(threadId)
+      .map(toMessage);
+  },
+  append(input: {
+    threadId: string;
+    role: MessageRole;
+    text: string;
+    meta?: Record<string, unknown> | null;
+  }): Message {
+    const row = db
+      .prepare("SELECT COALESCE(MAX(seq), 0) AS seq FROM messages WHERE thread_id = ?")
+      .get(input.threadId) as { seq: number };
+    const message: Message = {
+      id: randomUUID(),
+      threadId: input.threadId,
+      seq: row.seq + 1,
+      role: input.role,
+      text: input.text,
+      meta: input.meta ?? null,
+      createdAt: Date.now(),
+    };
+    db.prepare(
+      "INSERT INTO messages (id, thread_id, seq, role, text, meta, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      message.id,
+      message.threadId,
+      message.seq,
+      message.role,
+      message.text,
+      message.meta ? JSON.stringify(message.meta) : null,
+      message.createdAt,
+    );
+    threads.touch(input.threadId);
+    return message;
+  },
+};
+
+// A crash mid-turn would otherwise leave threads stuck in `running`.
+db.prepare("UPDATE threads SET status = 'idle' WHERE status = 'running'").run();
