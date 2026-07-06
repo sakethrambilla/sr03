@@ -1,4 +1,4 @@
-import type { PermissionMode } from "./types.ts";
+import type { Effort, PermissionMode } from "./types.ts";
 
 export interface ModelOption {
   slug: string;
@@ -22,6 +22,21 @@ export const PERMISSION_MODES: Array<{ value: PermissionMode; label: string; hin
 ];
 
 export const DEFAULT_PERMISSION_MODE: PermissionMode = "default";
+
+// the SDK silently downgrades a level the chosen model can't do
+export const EFFORT_LEVELS: Array<{ value: Effort; label: string; hint: string }> = [
+  { value: "low", label: "Low", hint: "Minimal thinking, fastest" },
+  { value: "medium", label: "Medium", hint: "Moderate thinking" },
+  { value: "high", label: "High", hint: "Deep reasoning" },
+  { value: "xhigh", label: "Extra", hint: "Deeper than high" },
+  { value: "max", label: "Max", hint: "Maximum effort" },
+];
+
+export const DEFAULT_EFFORT: Effort = "high";
+
+export function isEffort(value: unknown): value is Effort {
+  return EFFORT_LEVELS.some((level) => level.value === value);
+}
 
 export function isPermissionMode(value: unknown): value is PermissionMode {
   return PERMISSION_MODES.some((mode) => mode.value === value);

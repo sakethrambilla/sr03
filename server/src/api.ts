@@ -1,15 +1,26 @@
 import path from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
+import { forkSession } from "@anthropic-ai/claude-agent-sdk";
+
 import * as claude from "./claude.ts";
 import * as git from "./git.ts";
-import { listDirectory, isDirectory } from "./fsbrowse.ts";
+import {
+  choosePath,
+  isDirectory,
+  listDirectory,
+  readUpload,
+  saveUpload,
+} from "./fsbrowse.ts";
 import { messages, projects, threads } from "./db.ts";
 import {
+  DEFAULT_EFFORT,
   DEFAULT_MODEL,
   DEFAULT_PERMISSION_MODE,
+  EFFORT_LEVELS,
   MODELS,
   PERMISSION_MODES,
+  isEffort,
   isPermissionMode,
 } from "./models.ts";
 import { publish } from "./bus.ts";
@@ -37,6 +48,17 @@ async function readBody(request: IncomingMessage): Promise<Record<string, unknow
   for await (const chunk of request) chunks.push(chunk as Buffer);
   if (chunks.length === 0) return {};
   return JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+}
+
+async function readRaw(request: IncomingMessage, limit: number): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += (chunk as Buffer).length;
+    if (size > limit) throw new HttpError(413, "File is larger than 25MB");
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks);
 }
 
 function requireString(body: Record<string, unknown>, key: string): string {
@@ -70,18 +92,55 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
   {
     method: "GET",
     pattern: /^\/api\/state$/,
-    handler: () => ({
+    handler: async () => ({
       projects: projects.list(),
       threads: threads.list(),
       models: MODELS,
       permissionModes: PERMISSION_MODES,
-      defaults: { model: DEFAULT_MODEL, permissionMode: DEFAULT_PERMISSION_MODE },
+      effortLevels: EFFORT_LEVELS,
+      defaults: {
+        model: DEFAULT_MODEL,
+        permissionMode: DEFAULT_PERMISSION_MODE,
+        effort: DEFAULT_EFFORT,
+      },
     }),
   },
   {
     method: "GET",
     pattern: /^\/api\/fs$/,
     handler: ({ url }) => listDirectory(url.searchParams.get("path") ?? undefined),
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/fs\/choose$/,
+    handler: async ({ request }) => {
+      const body = await readBody(request);
+      return { path: await choosePath(body.kind === "file" ? "file" : "folder") };
+    },
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/uploads$/,
+    handler: async ({ request }) => {
+      const bytes = await readRaw(request, 25 * 1024 * 1024);
+      if (bytes.length === 0) throw new HttpError(400, "Nothing to upload");
+      const header = request.headers["x-filename"];
+      return saveUpload(typeof header === "string" ? decodeURIComponent(header) : "attachment", bytes);
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/uploads\/([^/]+)$/,
+    handler: async ({ params, response }) => {
+      const file = await readUpload(decodeURIComponent(params[0]!));
+      if (!file) throw new HttpError(404, "Upload not found");
+      response.writeHead(200, {
+        "content-type": file.type,
+        "content-length": file.bytes.length,
+        "cache-control": "no-store",
+      });
+      response.end(file.bytes);
+    },
   },
   {
     method: "POST",
@@ -178,6 +237,7 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
         : DEFAULT_PERMISSION_MODE;
       const thread = threads.create({
         projectId: project.id,
+        effort: isEffort(body.effort) ? body.effort : DEFAULT_EFFORT,
         title: typeof body.title === "string" && body.title.trim() ? body.title.trim() : "New thread",
         cwd,
         branch: info.branch,
@@ -213,15 +273,57 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
     handler: async ({ params, request }) => {
       const thread = requireThread(params[0]!);
       const body = await readBody(request);
-      const patch: { title?: string; model?: string; permissionMode?: typeof thread.permissionMode } = {};
+      const patch: {
+        title?: string;
+        model?: string;
+        permissionMode?: typeof thread.permissionMode;
+        effort?: typeof thread.effort;
+        archived?: boolean;
+      } = {};
       if (typeof body.title === "string" && body.title.trim()) patch.title = body.title.trim();
       if (typeof body.model === "string") patch.model = body.model;
       if (isPermissionMode(body.permissionMode)) patch.permissionMode = body.permissionMode;
+      if (isEffort(body.effort)) patch.effort = body.effort;
+      if (typeof body.archived === "boolean") patch.archived = body.archived;
       const updated = threads.update(thread.id, patch);
       if (!updated) throw new HttpError(404, "Thread not found");
       await claude.applyThreadSettings(updated, patch);
       publish({ type: "thread.updated", thread: updated });
       return updated;
+    },
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/threads\/([^/]+)\/fork$/,
+    handler: async ({ params }) => {
+      const source = requireThread(params[0]!);
+      // the fork gets a session file of its own, so both threads can run without interleaving
+      const forked = source.sessionId
+        ? await forkSession(source.sessionId, { dir: source.cwd }).catch((error: Error) => {
+            throw new HttpError(500, `Could not fork session: ${error.message}`);
+          })
+        : null;
+      const created = threads.create({
+        projectId: source.projectId,
+        title: `${source.title} (fork)`,
+        cwd: source.cwd,
+        branch: source.branch,
+        isWorktree: source.isWorktree,
+        model: source.model,
+        permissionMode: source.permissionMode,
+        effort: source.effort,
+      });
+      for (const message of messages.list(source.id)) {
+        messages.append({
+          threadId: created.id,
+          role: message.role,
+          text: message.text,
+          meta: message.meta,
+        });
+      }
+      const thread = threads.update(created.id, { sessionId: forked?.sessionId ?? null }) ?? created;
+      publish({ type: "thread.updated", thread });
+      return thread;
     },
   },
   {
@@ -301,7 +403,7 @@ export async function handleApiRequest(
       params: match.slice(1),
       url,
     });
-    json(response, 200, result ?? { ok: true });
+    if (!response.headersSent) json(response, 200, result ?? { ok: true });
   } catch (error) {
     const status = error instanceof HttpError ? error.status : 500;
     if (status === 500) console.error("[api]", error);

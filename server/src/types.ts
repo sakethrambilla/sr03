@@ -2,6 +2,8 @@ export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermiss
 
 export type ThreadStatus = "idle" | "running" | "error";
 
+export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+
 export interface Project {
   id: string;
   path: string;
@@ -19,8 +21,10 @@ export interface Thread {
   isWorktree: boolean;
   model: string;
   permissionMode: PermissionMode;
+  effort: Effort;
   sessionId: string | null;
   status: ThreadStatus;
+  archived: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -53,3 +57,4 @@ export type ServerEvent =
   | { type: "thread.approval.resolved"; threadId: string; approvalId: string }
   | { type: "thread.updated"; thread: Thread }
   | { type: "projects.changed" };
+

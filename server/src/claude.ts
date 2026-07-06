@@ -10,7 +10,7 @@ import {
 
 import { publish } from "./bus.ts";
 import { messages as messageStore, threads as threadStore } from "./db.ts";
-import type { PendingApproval, PermissionMode, Thread } from "./types.ts";
+import type { Effort, PendingApproval, PermissionMode, Thread } from "./types.ts";
 
 interface InputQueue extends AsyncIterable<SDKUserMessage> {
   push(message: SDKUserMessage): void;
@@ -204,6 +204,7 @@ function startSession(thread: Thread): Session {
       cwd: thread.cwd,
       model: thread.model,
       permissionMode: thread.permissionMode,
+      effort: thread.effort,
       includePartialMessages: true,
       abortController: abort,
       systemPrompt: { type: "preset", preset: "claude_code" },
@@ -268,13 +269,15 @@ export function resolveApproval(
 
 export async function applyThreadSettings(
   thread: Thread,
-  patch: { model?: string; permissionMode?: PermissionMode },
+  patch: { model?: string; permissionMode?: PermissionMode; effort?: Effort },
 ): Promise<void> {
   const session = sessions.get(thread.id);
   if (!session) return;
   if (patch.model) await session.query.setModel(patch.model).catch(() => undefined);
   if (patch.permissionMode)
     await session.query.setPermissionMode(patch.permissionMode).catch(() => undefined);
+  if (patch.effort)
+    await session.query.applyFlagSettings({ effortLevel: patch.effort }).catch(() => undefined);
 }
 
 export function closeSession(threadId: string): void {

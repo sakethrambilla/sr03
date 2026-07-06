@@ -3,7 +3,8 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api.ts";
 import type { Thread } from "../lib/types.ts";
 import { useStore } from "../store.ts";
-import { Composer } from "./Composer.tsx";
+import { ThreadComposer } from "./Composer.tsx";
+import { SidebarToggle } from "./Sidebar.tsx";
 import { Timeline } from "./Timeline.tsx";
 import { Pill, StatusDot } from "./ui.tsx";
 import type { Message } from "../lib/types.ts";
@@ -31,13 +32,13 @@ function ThreadHeader({ thread }: { thread: Thread }) {
   }, [thread.id, thread.status]);
 
   return (
-    <header className="flex items-center gap-3 border-b border-line px-5 py-3">
+    <header className="flex items-center gap-3 border-b border-border px-5 py-3">
+      <SidebarToggle />
       <StatusDot status={thread.status} />
       <h1 className="min-w-0 truncate text-sm font-medium">{thread.title}</h1>
       <div className="flex flex-wrap items-center gap-1.5">
         {thread.branch ? (
-          <Pill className={thread.isWorktree ? "border-accent/50 text-accent" : undefined}>
-            {thread.isWorktree ? "⧉ " : ""}
+          <Pill className={thread.isWorktree ? "border-primary/50 text-primary" : undefined}>
             {thread.branch}
           </Pill>
         ) : null}
@@ -59,7 +60,7 @@ export function ChatView({ thread }: { thread: Thread }) {
     <main className="flex h-full min-w-0 flex-1 flex-col">
       <ThreadHeader thread={thread} />
       <Timeline messages={messages} streaming={streaming} running={thread.status === "running"} />
-      <Composer thread={thread} />
+      <ThreadComposer thread={thread} />
     </main>
   );
 }

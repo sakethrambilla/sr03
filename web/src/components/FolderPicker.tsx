@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 
 import { api } from "../lib/api.ts";
 import type { DirListing } from "../lib/types.ts";
-import { Button, Dialog, Pill } from "./ui.tsx";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Dialog, Pill } from "./ui.tsx";
 
 export function FolderPicker({
   onClose,
@@ -48,39 +50,39 @@ export function FolderPicker({
       wide
       footer={
         <div className="flex items-center justify-between gap-3">
-          <input
+          <Input
             value={manual}
             onChange={(event) => setManual(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") load(manual);
             }}
             spellCheck={false}
-            className="h-8 min-w-0 flex-1 rounded-md border border-line bg-canvas px-2 font-mono text-xs text-ink outline-none focus:border-accent"
+            className="h-8 min-w-0 flex-1 font-mono text-xs"
             placeholder="~/Documents/personal/projects"
           />
           <Button onClick={() => load(manual)}>Go</Button>
-          <Button variant="primary" disabled={busy || !listing} onClick={() => void pick(manual)}>
+          <Button variant="default" disabled={busy || !listing} onClick={() => void pick(manual)}>
             Add this folder
           </Button>
         </div>
       }
     >
-      {error ? <p className="mb-3 text-xs text-danger">{error}</p> : null}
+      {error ? <p className="mb-3 text-xs text-destructive">{error}</p> : null}
       <div className="mb-3 flex items-center gap-2">
         <Button variant="ghost" disabled={!listing?.parent} onClick={() => load(listing?.parent ?? undefined)}>
           ↑ Up
         </Button>
-        <span className="truncate font-mono text-xs text-muted">{listing?.path ?? "…"}</span>
+        <span className="truncate font-mono text-xs text-muted-foreground">{listing?.path ?? "…"}</span>
       </div>
-      <ul className="divide-y divide-line/60 overflow-hidden rounded-lg border border-line">
+      <ul className="divide-y divide-border/60 overflow-hidden rounded-lg border border-border">
         {listing?.entries.length === 0 ? (
           <li className="px-3 py-6 text-center text-xs text-faint">No subfolders here</li>
         ) : null}
         {listing?.entries.map((entry) => (
-          <li key={entry.path} className="flex items-center gap-2 px-3 py-2 hover:bg-raised">
+          <li key={entry.path} className="flex items-center gap-2 px-3 py-2 hover:bg-accent">
             <button
               onClick={() => load(entry.path)}
-              className="min-w-0 flex-1 truncate text-left text-[13px] text-ink"
+              className="min-w-0 flex-1 truncate text-left text-[13px] text-foreground"
             >
               {entry.name}
             </button>

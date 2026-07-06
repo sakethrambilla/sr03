@@ -1,4 +1,5 @@
 export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
+export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 export type ThreadStatus = "idle" | "running" | "error";
 export type MessageRole = "user" | "assistant" | "tool" | "system" | "error";
 
@@ -19,8 +20,10 @@ export interface Thread {
   isWorktree: boolean;
   model: string;
   permissionMode: PermissionMode;
+  effort: Effort;
   sessionId: string | null;
   status: ThreadStatus;
+  archived: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -54,12 +57,19 @@ export interface PermissionModeOption {
   hint: string;
 }
 
+export interface EffortOption {
+  value: Effort;
+  label: string;
+  hint: string;
+}
+
 export interface AppState {
   projects: Project[];
   threads: Thread[];
   models: ModelOption[];
   permissionModes: PermissionModeOption[];
-  defaults: { model: string; permissionMode: PermissionMode };
+  effortLevels: EffortOption[];
+  defaults: { model: string; permissionMode: PermissionMode; effort: Effort };
 }
 
 export interface Branch {
@@ -73,6 +83,7 @@ export interface Worktree {
   branch: string | null;
   isMain: boolean;
 }
+
 
 export interface GitSnapshot {
   isGit: boolean;
@@ -104,3 +115,5 @@ export type ServerEvent =
   | { type: "thread.approval.resolved"; threadId: string; approvalId: string }
   | { type: "thread.updated"; thread: Thread }
   | { type: "projects.changed" };
+
+

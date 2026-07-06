@@ -3,10 +3,12 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api.ts";
 import type { GitSnapshot, Project } from "../lib/types.ts";
 import { useStore } from "../store.ts";
-import { Button, Dialog, Pill } from "./ui.tsx";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Dialog, Pill } from "./ui.tsx";
 
 export function WorktreePanel({ project, onClose }: { project: Project; onClose: () => void }) {
-  const newThread = useStore((state) => state.newThread);
+  const startDraft = useStore((state) => state.startDraft);
   const [snapshot, setSnapshot] = useState<GitSnapshot | null>(null);
   const [branch, setBranch] = useState("");
   const [base, setBase] = useState("");
@@ -47,26 +49,30 @@ export function WorktreePanel({ project, onClose }: { project: Project; onClose:
         ...(existing ? {} : { base: base.trim() || "HEAD" }),
       });
       setBranch("");
-      await newThread({ projectId: project.id, cwd: worktree.path });
+      startDraft({
+        projectId: project.id,
+        ...(worktree.branch ? { branch: worktree.branch } : {}),
+        worktreePath: worktree.path,
+      });
       onClose();
     });
 
   if (snapshot && !snapshot.isGit) {
     return (
       <Dialog title={`${project.name} · worktrees`} onClose={onClose}>
-        <p className="text-sm text-muted">This folder is not a git repository, so worktrees are unavailable.</p>
+        <p className="text-sm text-muted-foreground">This folder is not a git repository, so worktrees are unavailable.</p>
       </Dialog>
     );
   }
 
   return (
     <Dialog title={`${project.name} · worktrees`} onClose={onClose} wide>
-      {error ? <p className="mb-3 text-xs text-danger">{error}</p> : null}
+      {error ? <p className="mb-3 text-xs text-destructive">{error}</p> : null}
 
-      <section className="mb-5 rounded-lg border border-line bg-canvas p-3">
-        <h3 className="mb-2 text-xs font-semibold tracking-wide text-muted uppercase">New worktree</h3>
+      <section className="mb-5 rounded-lg border border-border bg-background p-3">
+        <h3 className="mb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">New worktree</h3>
         <div className="flex flex-wrap items-center gap-2">
-          <input
+          <Input
             value={branch}
             onChange={(event) => setBranch(event.target.value)}
             onKeyDown={(event) => {
@@ -74,17 +80,17 @@ export function WorktreePanel({ project, onClose }: { project: Project; onClose:
             }}
             placeholder="feat/my-branch"
             spellCheck={false}
-            className="h-8 min-w-52 flex-1 rounded-md border border-line bg-panel px-2 font-mono text-xs outline-none focus:border-accent"
+            className="h-8 min-w-52 flex-1 font-mono text-xs"
           />
           <span className="text-xs text-faint">from</span>
-          <input
+          <Input
             value={base}
             onChange={(event) => setBase(event.target.value)}
             spellCheck={false}
-            className="h-8 w-32 rounded-md border border-line bg-panel px-2 font-mono text-xs outline-none focus:border-accent"
+            className="h-8 w-32 font-mono text-xs"
           />
-          <Button variant="primary" disabled={busy || !branch.trim()} onClick={() => void create()}>
-            Create + open thread
+          <Button variant="default" disabled={busy || !branch.trim()} onClick={() => void create()}>
+            Create + start session
           </Button>
         </div>
         <p className="mt-2 text-[11px] text-faint">
@@ -93,10 +99,10 @@ export function WorktreePanel({ project, onClose }: { project: Project; onClose:
       </section>
 
       <section className="mb-5">
-        <h3 className="mb-2 text-xs font-semibold tracking-wide text-muted uppercase">
+        <h3 className="mb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
           Worktrees ({snapshot?.worktrees.length ?? 0})
         </h3>
-        <ul className="divide-y divide-line/60 overflow-hidden rounded-lg border border-line">
+        <ul className="divide-y divide-border/60 overflow-hidden rounded-lg border border-border">
           {snapshot?.worktrees.map((worktree) => (
             <li key={worktree.path} className="flex items-center gap-2 px-3 py-2">
               <div className="min-w-0 flex-1">
@@ -108,13 +114,20 @@ export function WorktreePanel({ project, onClose }: { project: Project; onClose:
               </div>
               <Button
                 disabled={busy}
-                onClick={() => void newThread({ projectId: project.id, cwd: worktree.path }).then(onClose)}
+                onClick={() => {
+                  startDraft({
+                    projectId: project.id,
+                    ...(worktree.branch ? { branch: worktree.branch } : {}),
+                    ...(worktree.isMain ? {} : { worktreePath: worktree.path }),
+                  });
+                  onClose();
+                }}
               >
-                New thread
+                New session
               </Button>
               {worktree.isMain ? null : (
                 <Button
-                  variant="danger"
+                  variant="destructive"
                   disabled={busy}
                   onClick={() => void run(() => api.removeWorktree(project.id, worktree.path, true))}
                 >
@@ -127,13 +140,13 @@ export function WorktreePanel({ project, onClose }: { project: Project; onClose:
       </section>
 
       <section>
-        <h3 className="mb-2 text-xs font-semibold tracking-wide text-muted uppercase">Branches</h3>
+        <h3 className="mb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">Branches</h3>
         <div className="flex flex-wrap gap-1.5">
           {snapshot?.branches.map((item) => (
             <button
               key={item.name}
               onClick={() => setBranch(item.name)}
-              className="rounded-full border border-line bg-canvas px-2 py-0.5 font-mono text-[11px] text-muted hover:border-accent hover:text-ink"
+              className="rounded-md border border-border bg-background px-2 py-0.5 font-mono text-[11px] text-muted-foreground hover:border-primary hover:text-foreground"
             >
               {item.name}
               {item.isCurrent ? " ●" : ""}

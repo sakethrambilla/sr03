@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 
 import type { Message } from "../lib/types.ts";
+import { Markdown } from "./Markdown.tsx";
 import { cn } from "./ui.tsx";
 
 function ToolCard({ message }: { message: Message }) {
@@ -19,11 +20,9 @@ function ToolCard({ message }: { message: Message }) {
             : "";
 
   return (
-    <div className="rounded-lg border border-line bg-panel/60 px-3 py-2">
-      <div className="flex items-center gap-2">
-        <span className="font-mono text-[11px] font-semibold text-accent">{name}</span>
-        {summary ? <span className="truncate font-mono text-[11px] text-muted">{summary}</span> : null}
-      </div>
+    <div className="flex min-w-0 items-center gap-2 rounded-lg border border-border/70 bg-card/50 px-3 py-2">
+      <span className="shrink-0 font-mono text-[11px] font-semibold text-primary">{name}</span>
+      {summary ? <span className="truncate font-mono text-[11px] text-muted-foreground">{summary}</span> : null}
     </div>
   );
 }
@@ -34,22 +33,26 @@ function Bubble({ message }: { message: Message }) {
     return <p className="text-center text-[11px] text-faint">{message.text}</p>;
   }
 
-  const isUser = message.role === "user";
-  const isError = message.role === "error";
+  if (message.role === "user") {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[85%] rounded-lg bg-accent px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap text-foreground">
+          {message.text}
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
-      <div
-        className={cn(
-          "max-w-[85%] rounded-xl px-3.5 py-2.5 text-[13.5px] leading-relaxed whitespace-pre-wrap",
-          isUser && "bg-raised text-ink",
-          isError && "border border-danger/40 bg-danger/10 text-danger",
-          !isUser && !isError && "text-ink",
-        )}
-      >
-        {message.text}
-      </div>
-    </div>
+    <Markdown
+      text={message.text}
+      className={cn(
+        "text-[14px] leading-[1.65]",
+        message.role === "error"
+          ? "rounded-lg border border-destructive/40 bg-destructive/10 px-3.5 py-2.5 text-destructive"
+          : "text-foreground",
+      )}
+    />
   );
 }
 
@@ -71,24 +74,21 @@ export function Timeline({
   if (messages.length === 0 && !streaming) {
     return (
       <div className="flex flex-1 items-center justify-center">
-        <p className="text-sm text-faint">Send a message to start this thread.</p>
+        <p className="text-[13px] text-faint">Send a message to start this thread.</p>
       </div>
     );
   }
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto flex max-w-3xl flex-col gap-3 px-5 py-6">
+      <div className="mx-auto flex max-w-3xl flex-col gap-4 px-5 py-6">
         {messages.map((message) => (
           <Bubble key={message.id} message={message} />
         ))}
         {streaming ? (
-          <div className="max-w-[85%] text-[13.5px] leading-relaxed whitespace-pre-wrap text-ink">
-            {streaming}
-            <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse bg-accent align-middle" />
-          </div>
+          <Markdown text={`${streaming}\u258f`} className="text-[14px] leading-[1.65] text-foreground" />
         ) : running ? (
-          <p className="text-xs text-faint">Working…</p>
+          <p className="text-[12px] text-faint">Working…</p>
         ) : null}
         <div ref={endRef} />
       </div>

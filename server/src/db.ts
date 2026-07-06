@@ -2,7 +2,15 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 
 import { DB_PATH } from "./config.ts";
-import type { Message, MessageRole, PermissionMode, Project, Thread, ThreadStatus } from "./types.ts";
+import type {
+  Effort,
+  Message,
+  MessageRole,
+  PermissionMode,
+  Project,
+  Thread,
+  ThreadStatus,
+} from "./types.ts";
 
 const db = new DatabaseSync(DB_PATH);
 db.exec("PRAGMA journal_mode = WAL");
@@ -24,6 +32,7 @@ db.exec(`
     is_worktree INTEGER NOT NULL DEFAULT 0,
     model TEXT NOT NULL,
     permission_mode TEXT NOT NULL,
+    effort TEXT NOT NULL DEFAULT 'high',
     session_id TEXT,
     status TEXT NOT NULL DEFAULT 'idle',
     created_at INTEGER NOT NULL,
@@ -40,6 +49,21 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS messages_thread_seq ON messages(thread_id, seq);
 `);
+
+// sqlite has no ADD COLUMN IF NOT EXISTS, so additive migrations check first
+const threadColumns = db
+  .prepare("SELECT name FROM pragma_table_info('threads')")
+  .all()
+  .map((row) => (row as Record<string, unknown>).name as string);
+if (!threadColumns.includes("effort")) {
+  db.exec("ALTER TABLE threads ADD COLUMN effort TEXT NOT NULL DEFAULT 'high'");
+}
+if (!threadColumns.includes("archived")) {
+  db.exec("ALTER TABLE threads ADD COLUMN archived INTEGER NOT NULL DEFAULT 0");
+}
+
+// folders are derived from threads, so a project without any is stale state
+db.exec("DELETE FROM projects WHERE id NOT IN (SELECT project_id FROM threads)");
 
 type Row = Record<string, unknown>;
 
@@ -63,8 +87,10 @@ function toThread(row: Row): Thread {
     isWorktree: Boolean(row.is_worktree),
     model: row.model as string,
     permissionMode: row.permission_mode as PermissionMode,
+    effort: row.effort as Effort,
     sessionId: (row.session_id as string | null) ?? null,
     status: row.status as ThreadStatus,
+    archived: Boolean(row.archived),
     createdAt: row.created_at as number,
     updatedAt: row.updated_at as number,
   };
@@ -126,19 +152,21 @@ export const threads = {
     isWorktree: boolean;
     model: string;
     permissionMode: PermissionMode;
+    effort: Effort;
   }): Thread {
     const now = Date.now();
     const thread: Thread = {
       id: randomUUID(),
       sessionId: null,
       status: "idle",
+      archived: false,
       createdAt: now,
       updatedAt: now,
       ...input,
     };
     db.prepare(
-      `INSERT INTO threads (id, project_id, title, cwd, branch, is_worktree, model, permission_mode, session_id, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO threads (id, project_id, title, cwd, branch, is_worktree, model, permission_mode, effort, session_id, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       thread.id,
       thread.projectId,
@@ -148,6 +176,7 @@ export const threads = {
       thread.isWorktree ? 1 : 0,
       thread.model,
       thread.permissionMode,
+      thread.effort,
       null,
       thread.status,
       thread.createdAt,
@@ -157,22 +186,26 @@ export const threads = {
   },
   update(
     id: string,
-    patch: Partial<Pick<Thread, "title" | "model" | "permissionMode" | "sessionId" | "status">>,
+    patch: Partial<
+      Pick<Thread, "title" | "model" | "permissionMode" | "effort" | "sessionId" | "status" | "archived">
+    >,
   ): Thread | null {
     const columns: Record<string, string> = {
       title: "title",
       model: "model",
       permissionMode: "permission_mode",
+      effort: "effort",
       sessionId: "session_id",
       status: "status",
+      archived: "archived",
     };
     const sets: string[] = [];
-    const values: Array<string | null> = [];
+    const values: Array<string | number | null> = [];
     for (const [key, column] of Object.entries(columns)) {
       const value = patch[key as keyof typeof patch];
       if (value === undefined) continue;
       sets.push(`${column} = ?`);
-      values.push(value as string | null);
+      values.push(typeof value === "boolean" ? Number(value) : value);
     }
     if (sets.length === 0) return threads.byId(id);
     db.prepare(`UPDATE threads SET ${sets.join(", ")}, updated_at = ? WHERE id = ?`).run(

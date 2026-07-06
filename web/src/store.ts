@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { api } from "./lib/api.ts";
 import type {
   AppState,
+  Effort,
   Message,
   PendingApproval,
   PermissionMode,
@@ -10,9 +11,22 @@ import type {
   Thread,
 } from "./lib/types.ts";
 
+export interface Draft {
+  projectId: string | null;
+  branch: string | null;
+  createBranch: boolean;
+  worktreePath: string | null;
+  worktree: boolean;
+  model: string;
+  permissionMode: PermissionMode;
+  effort: Effort;
+}
+
 interface Store extends AppState {
   connected: boolean;
+  sidebarOpen: boolean;
   activeThreadId: string | null;
+  draft: Draft | null;
   messagesByThread: Record<string, Message[]>;
   streamByThread: Record<string, string>;
   approvalsByThread: Record<string, PendingApproval[]>;
@@ -21,13 +35,19 @@ interface Store extends AppState {
   bootstrap: () => Promise<void>;
   refreshState: () => Promise<void>;
   openThread: (id: string) => Promise<void>;
-  newThread: (input: { projectId: string; cwd?: string }) => Promise<void>;
+  startDraft: (input?: { projectId?: string; branch?: string; worktreePath?: string }) => void;
+  patchDraft: (patch: Partial<Draft>) => void;
+  startFromDraft: (text: string) => Promise<void>;
+  renameThread: (id: string, title: string) => Promise<void>;
+  forkThread: (id: string) => Promise<void>;
+  setArchived: (id: string, archived: boolean) => Promise<void>;
   removeThread: (id: string) => Promise<void>;
   send: (text: string) => Promise<void>;
   interrupt: () => Promise<void>;
-  patchActive: (patch: { model?: string; permissionMode?: PermissionMode }) => Promise<void>;
+  patchActive: (patch: { model?: string; permissionMode?: PermissionMode; effort?: Effort }) => Promise<void>;
   respond: (approvalId: string, decision: "allow" | "always" | "deny") => Promise<void>;
   applyEvent: (event: ServerEvent) => void;
+  toggleSidebar: () => void;
   setConnected: (connected: boolean) => void;
   setError: (error: string | null) => void;
 }
@@ -37,7 +57,8 @@ const EMPTY: AppState = {
   threads: [],
   models: [],
   permissionModes: [],
-  defaults: { model: "", permissionMode: "default" },
+  effortLevels: [],
+  defaults: { model: "", permissionMode: "default", effort: "high" },
 };
 
 function upsertThread(threads: Thread[], thread: Thread): Thread[] {
@@ -49,12 +70,15 @@ function upsertThread(threads: Thread[], thread: Thread): Thread[] {
 export const useStore = create<Store>((set, get) => ({
   ...EMPTY,
   connected: false,
+  sidebarOpen: true,
   activeThreadId: null,
+  draft: null,
   messagesByThread: {},
   streamByThread: {},
   approvalsByThread: {},
   error: null,
 
+  toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
   setConnected: (connected) => set({ connected }),
   setError: (error) => set({ error }),
 
@@ -63,6 +87,7 @@ export const useStore = create<Store>((set, get) => ({
     const { threads, activeThreadId } = get();
     const next = activeThreadId ?? threads[0]?.id ?? null;
     if (next) await get().openThread(next);
+    else get().startDraft();
   },
 
   refreshState: async () => {
@@ -74,7 +99,7 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   openThread: async (id) => {
-    set({ activeThreadId: id });
+    set({ activeThreadId: id, draft: null });
     try {
       const { thread, messages } = await api.thread(id);
       set((state) => ({
@@ -86,20 +111,83 @@ export const useStore = create<Store>((set, get) => ({
     }
   },
 
-  newThread: async ({ projectId, cwd }) => {
+  startDraft: (input) => {
     const { defaults } = get();
-    try {
-      const thread = await api.createThread({
-        projectId,
-        ...(cwd ? { cwd } : {}),
+    set({
+      activeThreadId: null,
+      draft: {
+        projectId: input?.projectId ?? null,
+        branch: input?.branch ?? null,
+        createBranch: false,
+        worktreePath: input?.worktreePath ?? null,
+        worktree: Boolean(input?.worktreePath),
         model: defaults.model,
         permissionMode: defaults.permissionMode,
+        effort: defaults.effort,
+      },
+    });
+  },
+
+  patchDraft: (patch) =>
+    set((state) => (state.draft ? { draft: { ...state.draft, ...patch } } : {})),
+
+  // a thread only exists once its first turn is sent, so cwd/branch are fixed for its lifetime
+  startFromDraft: async (text) => {
+    const draft = get().draft;
+    if (!draft?.projectId) throw new Error("Choose a folder first");
+    let cwd = draft.worktreePath ?? undefined;
+    if (!cwd && draft.worktree && draft.branch) {
+      const worktree = await api.addWorktree(draft.projectId, {
+        branch: draft.branch,
+        createBranch: draft.createBranch,
       });
-      set((state) => ({
-        threads: upsertThread(state.threads, thread),
-        activeThreadId: thread.id,
-        messagesByThread: { ...state.messagesByThread, [thread.id]: [] },
-      }));
+      cwd = worktree.path;
+    }
+    const thread = await api.createThread({
+      projectId: draft.projectId,
+      ...(cwd ? { cwd } : {}),
+      model: draft.model,
+      permissionMode: draft.permissionMode,
+      effort: draft.effort,
+    });
+    set((state) => ({
+      threads: upsertThread(state.threads, thread),
+      activeThreadId: thread.id,
+      messagesByThread: { ...state.messagesByThread, [thread.id]: [] },
+      draft: null,
+    }));
+    await api.sendTurn(thread.id, text);
+  },
+
+  renameThread: async (id, title) => {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    try {
+      const thread = await api.patchThread(id, { title: trimmed });
+      set((state) => ({ threads: upsertThread(state.threads, thread) }));
+    } catch (error) {
+      set({ error: (error as Error).message });
+    }
+  },
+
+  forkThread: async (id) => {
+    try {
+      const thread = await api.forkThread(id);
+      set((state) => ({ threads: upsertThread(state.threads, thread) }));
+      await get().openThread(thread.id);
+    } catch (error) {
+      set({ error: (error as Error).message });
+    }
+  },
+
+  setArchived: async (id, archived) => {
+    try {
+      const thread = await api.patchThread(id, { archived });
+      set((state) => ({ threads: upsertThread(state.threads, thread) }));
+      if (!archived || get().activeThreadId !== id) return;
+      const next = get().threads.find((item) => item.id !== id && !item.archived);
+      if (next) await get().openThread(next.id);
+      else get().startDraft();
     } catch (error) {
       set({ error: (error as Error).message });
     }
@@ -131,14 +219,19 @@ export const useStore = create<Store>((set, get) => ({
     if (id) await api.interrupt(id).catch(() => undefined);
   },
 
+  // applied locally first so the pickers move with the pointer, not with the round trip
   patchActive: async (patch) => {
     const id = get().activeThreadId;
     if (!id) return;
+    set((state) => ({
+      threads: state.threads.map((thread) => (thread.id === id ? { ...thread, ...patch } : thread)),
+    }));
     try {
       const thread = await api.patchThread(id, patch);
       set((state) => ({ threads: upsertThread(state.threads, thread) }));
     } catch (error) {
       set({ error: (error as Error).message });
+      await get().refreshState();
     }
   },
 
