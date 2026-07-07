@@ -7,6 +7,9 @@ import { WebSocketServer } from "ws";
 import { PORT } from "./config.ts";
 import { handleApiRequest } from "./api.ts";
 import { subscribe } from "./bus.ts";
+import { threads } from "./db.ts";
+import * as pty from "./pty.ts";
+import type { ClientMessage } from "./types.ts";
 
 const WEB_DIST = path.resolve(fileURLToPath(new URL("../../web/dist", import.meta.url)));
 
@@ -43,9 +46,45 @@ const server = http.createServer((request, response) => {
 
 const websockets = new WebSocketServer({ server, path: "/ws" });
 
+function handleClientMessage(socket: { send: (data: string) => void }, raw: string): void {
+  let message: ClientMessage;
+  try {
+    message = JSON.parse(raw) as ClientMessage;
+  } catch {
+    return;
+  }
+  const thread = threads.byId(message.threadId);
+  if (!thread) return;
+
+  switch (message.type) {
+    case "pty.open": {
+      // the snapshot goes only to the socket that asked, so other clients keep their own scroll
+      const { data } = pty.openSession(thread.id, thread.cwd, message.cols, message.rows);
+      socket.send(JSON.stringify({ type: "pty.snapshot", threadId: thread.id, data }));
+      return;
+    }
+    case "pty.input":
+      pty.write(thread.id, message.data);
+      return;
+    case "pty.resize":
+      pty.resize(thread.id, message.cols, message.rows);
+      return;
+    case "pty.close":
+      pty.closeSession(thread.id);
+      return;
+  }
+}
+
 websockets.on("connection", (socket) => {
   const unsubscribe = subscribe((event) => {
     if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(event));
+  });
+  socket.on("message", (raw) => {
+    try {
+      handleClientMessage(socket, raw.toString());
+    } catch (error) {
+      console.error("[ws]", error);
+    }
   });
   socket.on("close", unsubscribe);
   socket.on("error", unsubscribe);

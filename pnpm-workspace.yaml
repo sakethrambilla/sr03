@@ -3,7 +3,9 @@ packages:
   - web
 
 allowBuilds:
-  esbuild: set this to true or false
+  esbuild: true
+  node-pty: true
 
 onlyBuiltDependencies:
   - esbuild
+  - node-pty

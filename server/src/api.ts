@@ -5,11 +5,16 @@ import { forkSession } from "@anthropic-ai/claude-agent-sdk";
 
 import * as claude from "./claude.ts";
 import * as git from "./git.ts";
+import * as pty from "./pty.ts";
 import {
   choosePath,
   isDirectory,
+  listApps,
   listDirectory,
+  listWorkspaceDir,
+  openIn,
   readUpload,
+  readWorkspaceFile,
   saveUpload,
 } from "./fsbrowse.ts";
 import { messages, projects, threads } from "./db.ts";
@@ -98,6 +103,7 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
       models: MODELS,
       permissionModes: PERMISSION_MODES,
       effortLevels: EFFORT_LEVELS,
+      apps: await listApps(),
       defaults: {
         model: DEFAULT_MODEL,
         permissionMode: DEFAULT_PERMISSION_MODE,
@@ -268,6 +274,61 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
     },
   },
   {
+    method: "GET",
+    pattern: /^\/api\/threads\/([^/]+)\/tree$/,
+    handler: async ({ params, url }) => {
+      const thread = requireThread(params[0]!);
+      const rel = url.searchParams.get("path") ?? "";
+      return { path: rel, entries: await listWorkspaceDir(thread.cwd, rel) };
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/threads\/([^/]+)\/file$/,
+    handler: async ({ params, url }) => {
+      const thread = requireThread(params[0]!);
+      const rel = url.searchParams.get("path")?.trim() ?? "";
+      if (!rel) throw new HttpError(400, "`path` is required");
+      const [file, state] = await Promise.all([
+        readWorkspaceFile(thread.cwd, rel),
+        git.fileState(thread.cwd, rel),
+      ]);
+      return { path: rel, ...file, ...state };
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/threads\/([^/]+)\/changes$/,
+    handler: async ({ params }) => {
+      const thread = requireThread(params[0]!);
+      const [info, files] = await Promise.all([git.repoInfo(thread.cwd), git.changedFiles(thread.cwd)]);
+      return { isGit: info.isGit, branch: info.branch, files };
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/threads\/([^/]+)\/diff$/,
+    handler: async ({ params, url }) => {
+      const thread = requireThread(params[0]!);
+      const file = url.searchParams.get("file")?.trim() ?? "";
+      if (!file || file.startsWith("-") || file.split("/").includes("..")) {
+        throw new HttpError(400, "`file` is required");
+      }
+      const untracked = url.searchParams.get("untracked") === "1";
+      return { file, diff: await git.fileDiff(thread.cwd, file, untracked) };
+    },
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/threads\/([^/]+)\/open$/,
+    handler: async ({ params, request }) => {
+      const thread = requireThread(params[0]!);
+      const body = await readBody(request);
+      await openIn(requireString(body, "app"), thread.cwd);
+      return { ok: true };
+    },
+  },
+  {
     method: "PATCH",
     pattern: /^\/api\/threads\/([^/]+)$/,
     handler: async ({ params, request }) => {
@@ -332,6 +393,7 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
     handler: ({ params }) => {
       const thread = requireThread(params[0]!);
       claude.closeSession(thread.id);
+      pty.closeSession(thread.id);
       threads.remove(thread.id);
       publish({ type: "projects.changed" });
       return { ok: true };

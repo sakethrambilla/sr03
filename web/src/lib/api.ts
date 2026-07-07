@@ -1,5 +1,6 @@
 import type {
   AppState,
+  ChangedFile,
   DirListing,
   Effort,
   GitSnapshot,
@@ -7,6 +8,7 @@ import type {
   PermissionMode,
   Project,
   Thread,
+  TreeEntry,
   Worktree,
 } from "./types.ts";
 
@@ -80,6 +82,26 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(patch),
     }),
+  changes: (id: string) =>
+    call<{ isGit: boolean; branch: string | null; files: ChangedFile[] }>(`/api/threads/${id}/changes`),
+  fileDiff: (id: string, file: string, untracked: boolean) =>
+    call<{ file: string; diff: string }>(
+      `/api/threads/${id}/diff?file=${encodeURIComponent(file)}${untracked ? "&untracked=1" : ""}`,
+    ),
+  tree: (id: string, path: string) =>
+    call<{ path: string; entries: TreeEntry[] }>(
+      `/api/threads/${id}/tree${path ? `?path=${encodeURIComponent(path)}` : ""}`,
+    ),
+  file: (id: string, path: string) =>
+    call<{
+      path: string;
+      text: string;
+      binary: boolean;
+      truncated: boolean;
+      status: ChangedFile["status"] | null;
+      diff: string;
+    }>(`/api/threads/${id}/file?path=${encodeURIComponent(path)}`),
+  openIn: (id: string, app: string) => post<{ ok: true }>(`/api/threads/${id}/open`, { app }),
   forkThread: (id: string) => post<Thread>(`/api/threads/${id}/fork`),
   removeThread: (id: string) => call<{ ok: true }>(`/api/threads/${id}`, { method: "DELETE" }),
   sendTurn: (id: string, text: string) => post<{ ok: true }>(`/api/threads/${id}/turns`, { text }),

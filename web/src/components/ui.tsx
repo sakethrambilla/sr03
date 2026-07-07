@@ -1,13 +1,18 @@
 import type { ReactNode } from "react";
+import { useState } from "react";
 import {
   ArrowUp,
   Check,
   ChevronDown,
+  Code,
   EllipsisVertical,
+  FileDiff,
   Folder,
   GitBranch,
   Mic,
   PanelLeft,
+  RefreshCw,
+  SquareTerminal,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -123,8 +128,12 @@ const ICONS = {
   DotsIcon: EllipsisVertical,
   SidebarIcon: PanelLeft,
   SendIcon: ArrowUp,
+  TerminalIcon: SquareTerminal,
+  ChangesIcon: FileDiff,
+  CodeIcon: Code,
   CheckIcon: Check,
   ChevronIcon: ChevronDown,
+  RefreshIcon: RefreshCw,
 } as const;
 
 function icon(Source: LucideIcon) {
@@ -140,8 +149,12 @@ export const CloseIcon = icon(ICONS.CloseIcon);
 export const DotsIcon = icon(ICONS.DotsIcon);
 export const SidebarIcon = icon(ICONS.SidebarIcon);
 export const SendIcon = icon(ICONS.SendIcon);
+export const TerminalIcon = icon(ICONS.TerminalIcon);
+export const ChangesIcon = icon(ICONS.ChangesIcon);
+export const CodeIcon = icon(ICONS.CodeIcon);
 export const CheckIcon = icon(ICONS.CheckIcon);
 export const ChevronIcon = icon(ICONS.ChevronIcon);
+export const RefreshIcon = icon(ICONS.RefreshIcon);
 
 export interface MenuItem {
   id: string;
@@ -204,4 +217,23 @@ export function Menu({
       </DropdownMenuContent>
     </DropdownMenu>
   );
+}
+
+// small per-view preferences that should outlive a remount, but never reach the server
+export function usePersistedState<T extends string | boolean>(
+  key: string,
+  fallback: T,
+): [T, (value: T) => void] {
+  const [value, setValue] = useState<T>(() => {
+    const stored = localStorage.getItem(`sr03:${key}`);
+    if (stored === null) return fallback;
+    return (typeof fallback === "boolean" ? stored === "true" : stored) as T;
+  });
+  return [
+    value,
+    (next: T) => {
+      localStorage.setItem(`sr03:${key}`, String(next));
+      setValue(next);
+    },
+  ];
 }

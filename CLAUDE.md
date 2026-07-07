@@ -5,7 +5,7 @@ git worktrees. Modelled on [t3code](https://github.com/pingdotgg/t3code)'s shape
 everything, the client is a thin view over one WebSocket — but deliberately much smaller.
 
 **Out of scope.** Ask before building any of these: remote control / relay / Tailscale, mobile app,
-Electron shell, providers other than Claude, checkpointing and turn revert, embedded terminals, MCP
+Electron shell, providers other than Claude, checkpointing and turn revert, MCP
 servers, PR integration. t3code is Effect-based and event-sourced; sr03 is not, and shouldn't become
 so.
 
@@ -47,7 +47,9 @@ REST for commands, WebSocket (`/ws`) for everything the server pushes back. Wire
 ## Conventions
 
 - Server side: no frameworks, no ORM, no Effect. Node built-ins and the Agent SDK are the
-  dependency budget; reuse what's here before adding anything.
+  dependency budget; reuse what's here before adding anything. The terminal panel is the one
+  exception — `node-pty` on the server and `@xterm/xterm` on the web, since a PTY and an ANSI
+  renderer can't be built from built-ins.
 - UI comes from shadcn/ui — never hand-roll a button, dialog, menu, popover, input or the like.
   Add what you need with `pnpm dlx shadcn@latest add <component>` (run it in `web/`), then compose
   it. Icons come from `lucide-react`, aliased in `components/ui.tsx`; no hand-drawn SVG glyphs and

@@ -104,3 +104,105 @@ export async function readUpload(name: string): Promise<{ bytes: Buffer; type: s
   if (!bytes) return null;
   return { bytes, type: UPLOAD_TYPES[path.extname(target).toLowerCase()] ?? "application/octet-stream" };
 }
+
+const APP_DIRS = [
+  "/Applications",
+  path.join(os.homedir(), "Applications"),
+  "/System/Applications",
+  "/System/Applications/Utilities",
+  "/System/Library/CoreServices",
+];
+
+const OPEN_TARGETS = [
+  { id: "cursor", label: "Cursor", names: ["Cursor"] },
+  { id: "vscode", label: "VS Code", names: ["Visual Studio Code", "VSCodium"] },
+  { id: "zed", label: "Zed", names: ["Zed"] },
+  { id: "finder", label: "Finder", names: ["Finder"] },
+] as const;
+
+export interface ExternalApp {
+  id: string;
+  label: string;
+}
+
+async function findBundle(names: readonly string[]): Promise<string | null> {
+  for (const name of names) {
+    for (const dir of APP_DIRS) {
+      const candidate = path.join(dir, `${name}.app`);
+      if (await fs.stat(candidate).then(() => true).catch(() => false)) return candidate;
+    }
+  }
+  return null;
+}
+
+async function installedApps(): Promise<Array<{ app: ExternalApp; bundle: string }>> {
+  if (process.platform !== "darwin") return [];
+  const found = await Promise.all(
+    OPEN_TARGETS.map(async (target): Promise<{ app: ExternalApp; bundle: string } | null> => {
+      const bundle = await findBundle(target.names);
+      return bundle
+        ? { app: { id: target.id, label: target.label }, bundle }
+        : null;
+    }),
+  );
+  return found.filter((entry): entry is { app: ExternalApp; bundle: string } => entry !== null);
+}
+
+export async function listApps(): Promise<ExternalApp[]> {
+  return (await installedApps()).map((entry) => entry.app);
+}
+
+export async function openIn(id: string, target: string): Promise<void> {
+  const entry = (await installedApps()).find((candidate) => candidate.app.id === id);
+  if (!entry) throw new Error(`${id} is not installed on this machine`);
+  await exec("open", ["-a", entry.bundle, target]);
+}
+
+export interface TreeEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+}
+
+const TREE_SKIP = new Set([".git"]);
+const FILE_LIMIT = 1024 * 1024;
+
+function safeJoin(root: string, rel: string): string {
+  const base = path.resolve(root);
+  const target = path.resolve(base, rel);
+  if (target !== base && !target.startsWith(base + path.sep)) {
+    throw new Error("That path is outside the session folder");
+  }
+  return target;
+}
+
+export async function listWorkspaceDir(root: string, rel: string): Promise<TreeEntry[]> {
+  const dirents = await fs.readdir(safeJoin(root, rel), { withFileTypes: true });
+  return dirents
+    .filter((entry) => !TREE_SKIP.has(entry.name))
+    .map((entry) => ({
+      name: entry.name,
+      path: rel ? `${rel}/${entry.name}` : entry.name,
+      isDir: entry.isDirectory(),
+    }))
+    .sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
+}
+
+export async function readWorkspaceFile(
+  root: string,
+  rel: string,
+): Promise<{ text: string; binary: boolean; truncated: boolean }> {
+  const target = safeJoin(root, rel);
+  const stats = await fs.stat(target);
+  if (!stats.isFile()) throw new Error("That path is not a file");
+  const handle = await fs.open(target, "r");
+  try {
+    const size = Math.min(stats.size, FILE_LIMIT);
+    const buffer = Buffer.alloc(size);
+    await handle.read(buffer, 0, size, 0);
+    if (buffer.includes(0)) return { text: "", binary: true, truncated: false };
+    return { text: buffer.toString("utf8"), binary: false, truncated: stats.size > FILE_LIMIT };
+  } finally {
+    await handle.close();
+  }
+}

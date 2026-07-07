@@ -153,3 +153,153 @@ export async function diffStat(cwd: string): Promise<{ files: number; insertions
     return { files: 0, insertions: 0, deletions: 0 };
   }
 }
+
+// `git diff --no-index` exits 1 when the files differ, which is a result here rather than a failure
+async function diffText(cwd: string, args: string[]): Promise<string> {
+  try {
+    const { stdout } = await exec("git", args, { cwd, maxBuffer: 32 * 1024 * 1024 });
+    return stdout;
+  } catch (error) {
+    const failure = error as { stdout?: string; stderr?: string };
+    if (failure.stdout) return failure.stdout;
+    throw new GitError(failure.stderr?.trim() || (error as Error).message);
+  }
+}
+
+export interface ChangedFile {
+  path: string;
+  status: "added" | "modified" | "deleted" | "renamed" | "untracked";
+  staged: boolean;
+  insertions: number;
+  deletions: number;
+  binary: boolean;
+}
+
+function classify(code: string | undefined): ChangedFile["status"] {
+  if (code === "??") return "untracked";
+  const letters = (code ?? "M").replace(/[ ?]/g, "");
+  if (letters.includes("R")) return "renamed";
+  if (letters.includes("D")) return "deleted";
+  if (letters.includes("A")) return "added";
+  return "modified";
+}
+
+async function statusCodes(cwd: string, pathspec?: string): Promise<Map<string, string>> {
+  const raw = await git(cwd, [
+    "-c",
+    "core.quotepath=false",
+    "status",
+    "--porcelain",
+    "-z",
+    "--untracked-files=all",
+    ...(pathspec ? ["--", pathspec] : []),
+  ]);
+  const codes = new Map<string, string>();
+  const parts = raw.split("\0");
+  for (let index = 0; index < parts.length; index += 1) {
+    const entry = parts[index];
+    if (!entry || entry.length < 4) continue;
+    const code = entry.slice(0, 2);
+    codes.set(entry.slice(3), code);
+    // a rename or copy is followed by its source path; git reports that side as a deletion
+    // whenever the content changed too much for the pair to survive rename detection
+    if (code.includes("R") || code.includes("C")) {
+      index += 1;
+      const source = parts[index];
+      if (source && !codes.has(source)) codes.set(source, "D ");
+    }
+  }
+  return codes;
+}
+
+// -z numstat writes renames as `ins\tdel\t` followed by the old and new paths as separate records
+async function numstat(cwd: string, ref: string) {
+  const raw = await diffText(cwd, ["-c", "core.quotepath=false", "diff", "--numstat", "-z", ref]);
+  const parts = raw.split("\0");
+  const entries: Array<{ path: string; insertions: number; deletions: number; binary: boolean }> = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    const record = parts[index];
+    if (!record) continue;
+    const [insertions, deletions, name] = record.split("\t");
+    if (insertions === undefined || deletions === undefined) continue;
+    let file = name ?? "";
+    if (!file) {
+      index += 2;
+      file = parts[index] ?? "";
+    }
+    if (!file) continue;
+    entries.push({
+      path: file,
+      insertions: Number(insertions) || 0,
+      deletions: Number(deletions) || 0,
+      binary: insertions === "-",
+    });
+  }
+  return entries;
+}
+
+const UNTRACKED_SCAN_LIMIT = 2 * 1024 * 1024;
+
+async function countLines(target: string) {
+  const stats = await fs.stat(target).catch(() => null);
+  if (!stats || !stats.isFile() || stats.size > UNTRACKED_SCAN_LIMIT) {
+    return { insertions: 0, deletions: 0, binary: false };
+  }
+  const bytes = await fs.readFile(target).catch(() => null);
+  if (!bytes) return { insertions: 0, deletions: 0, binary: false };
+  if (bytes.includes(0)) return { insertions: 0, deletions: 0, binary: true };
+  const text = bytes.toString("utf8");
+  const lines = text.length === 0 ? 0 : text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
+  return { insertions: lines, deletions: 0, binary: false };
+}
+
+export async function changedFiles(cwd: string): Promise<ChangedFile[]> {
+  const [codes, tracked, untracked] = await Promise.all([
+    statusCodes(cwd).catch(() => new Map<string, string>()),
+    numstat(cwd, "HEAD").catch(() => []),
+    git(cwd, ["-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard", "-z"])
+      .then((raw) => raw.split("\0").filter((entry) => entry.length > 0))
+      .catch(() => [] as string[]),
+  ]);
+
+  const files: ChangedFile[] = tracked.map((entry) => {
+    const code = codes.get(entry.path);
+    return {
+      path: entry.path,
+      status: classify(code),
+      staged: code !== undefined && code[0] !== " " && code[0] !== "?",
+      insertions: entry.insertions,
+      deletions: entry.deletions,
+      binary: entry.binary,
+    };
+  });
+
+  for (const file of untracked) {
+    files.push({
+      path: file,
+      status: "untracked",
+      staged: false,
+      ...(await countLines(path.join(cwd, file))),
+    });
+  }
+
+  return files.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+export async function fileDiff(cwd: string, file: string, untracked: boolean): Promise<string> {
+  const args = untracked
+    ? ["diff", "--no-index", "--", "/dev/null", file]
+    : ["diff", "HEAD", "--", file];
+  return diffText(cwd, ["-c", "core.quotepath=false", ...args]);
+}
+
+export async function fileState(
+  cwd: string,
+  file: string,
+): Promise<{ status: ChangedFile["status"] | null; diff: string }> {
+  const codes = await statusCodes(cwd, file).catch(() => new Map<string, string>());
+  const code = codes.get(file);
+  if (!code) return { status: null, diff: "" };
+  const status = classify(code);
+  return { status, diff: await fileDiff(cwd, file, status === "untracked").catch(() => "") };
+}

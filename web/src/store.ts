@@ -58,6 +58,7 @@ const EMPTY: AppState = {
   models: [],
   permissionModes: [],
   effortLevels: [],
+  apps: [],
   defaults: { model: "", permissionMode: "default", effort: "high" },
 };
 

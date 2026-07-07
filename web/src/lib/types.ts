@@ -57,6 +57,11 @@ export interface PermissionModeOption {
   hint: string;
 }
 
+export interface ExternalApp {
+  id: string;
+  label: string;
+}
+
 export interface EffortOption {
   value: Effort;
   label: string;
@@ -69,6 +74,7 @@ export interface AppState {
   models: ModelOption[];
   permissionModes: PermissionModeOption[];
   effortLevels: EffortOption[];
+  apps: ExternalApp[];
   defaults: { model: string; permissionMode: PermissionMode; effort: Effort };
 }
 
@@ -84,6 +90,14 @@ export interface Worktree {
   isMain: boolean;
 }
 
+export interface ChangedFile {
+  path: string;
+  status: "added" | "modified" | "deleted" | "renamed" | "untracked";
+  staged: boolean;
+  insertions: number;
+  deletions: number;
+  binary: boolean;
+}
 
 export interface GitSnapshot {
   isGit: boolean;
@@ -114,6 +128,19 @@ export type ServerEvent =
   | { type: "thread.approval"; approval: PendingApproval }
   | { type: "thread.approval.resolved"; threadId: string; approvalId: string }
   | { type: "thread.updated"; thread: Thread }
+  | { type: "pty.data"; threadId: string; data: string }
+  | { type: "pty.snapshot"; threadId: string; data: string }
+  | { type: "pty.exit"; threadId: string; code: number }
   | { type: "projects.changed" };
 
+export type ClientMessage =
+  | { type: "pty.open"; threadId: string; cols: number; rows: number }
+  | { type: "pty.input"; threadId: string; data: string }
+  | { type: "pty.resize"; threadId: string; cols: number; rows: number }
+  | { type: "pty.close"; threadId: string };
 
+export interface TreeEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+}
