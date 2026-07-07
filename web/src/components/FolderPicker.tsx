@@ -80,12 +80,13 @@ export function FolderPicker({
         ) : null}
         {listing?.entries.map((entry) => (
           <li key={entry.path} className="flex items-center gap-2 px-3 py-2 hover:bg-accent">
-            <button
+            <Button
+              variant="ghost"
               onClick={() => load(entry.path)}
-              className="min-w-0 flex-1 truncate text-left text-[13px] text-foreground"
+              className="h-auto min-w-0 flex-1 justify-start truncate px-0 text-[13px] font-normal hover:bg-transparent"
             >
               {entry.name}
-            </button>
+            </Button>
             {entry.isGit ? <Pill>git</Pill> : null}
             <Button variant="ghost" disabled={busy} onClick={() => void pick(entry.path)}>
               Add

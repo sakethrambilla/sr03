@@ -6,7 +6,21 @@ import type { Effort, PendingApproval, PermissionMode, Thread } from "../lib/typ
 import { useStore } from "../store.ts";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { BranchIcon, Chip, CloseIcon, FolderIcon, Menu, MicIcon, SendIcon, cn } from "./ui.tsx";
+import { Textarea } from "@/components/ui/textarea";
+import { Toggle } from "@/components/ui/toggle";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  BranchIcon,
+  Chip,
+  CloseIcon,
+  FolderIcon,
+  Menu,
+  MicIcon,
+  PlusIcon,
+  SendIcon,
+  WorktreeIcon,
+  cn,
+} from "./ui.tsx";
 
 const NO_APPROVALS: PendingApproval[] = [];
 
@@ -322,10 +336,11 @@ export function Composer({
             <div className="flex flex-wrap gap-1.5 px-3 pt-3">
               {attachments.map((item) => (
                 <div key={item.id} className="group relative">
-                  <button
+                  <Button
+                    variant="outline"
                     onClick={() => (item.isImage ? setViewing(item) : undefined)}
                     title={item.isImage ? `View ${item.name}` : item.name}
-                    className="size-14 overflow-hidden rounded-lg border border-border bg-background"
+                    className="size-14 overflow-hidden rounded-lg bg-background p-0"
                   >
                     {item.isImage ? (
                       <img src={item.url} alt={item.name} className="size-full object-cover" />
@@ -334,21 +349,23 @@ export function Composer({
                         {item.name.slice(-10)}
                       </span>
                     )}
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
                     onClick={() => setAttachments((current) => current.filter((entry) => entry.id !== item.id))}
-                    title="Remove"
-                    className="absolute -top-1 -right-1 grid size-4 place-items-center rounded-md border border-border bg-card text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
+                    aria-label={`Remove ${item.name}`}
+                    className="absolute -top-1 -right-1 size-4 bg-card text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive"
                   >
                     <CloseIcon className="size-2.5" />
-                  </button>
+                  </Button>
                 </div>
               ))}
             </div>
           ) : null}
 
           <div className="flex items-end gap-1.5 px-3 py-2.5">
-            <textarea
+            <Textarea
               ref={inputRef}
               value={text}
               onChange={(event) => setText(event.target.value)}
@@ -366,24 +383,28 @@ export function Composer({
               }}
               rows={1}
               placeholder={placeholder}
-              className="max-h-[220px] min-h-8 w-full flex-1 resize-none bg-transparent py-1.5 text-[14px] leading-relaxed text-foreground outline-none placeholder:text-faint"
+              className="max-h-[220px] min-h-8 w-full flex-1 resize-none rounded-none border-0 bg-transparent px-0 py-1.5 text-[14px] leading-relaxed shadow-none focus-visible:ring-0 placeholder:text-faint"
             />
             {running && onInterrupt ? (
               <Button variant="destructive" onClick={onInterrupt} className="mb-1 h-7">
                 Stop
               </Button>
             ) : (
-              <button
-                onClick={() => void submit()}
-                disabled={!ready || busy || blocked}
-                title="Send (⏎)"
-                className={cn(
-                  "mb-1 grid size-7 shrink-0 place-items-center rounded-md transition",
-                  ready && !blocked ? "bg-primary text-primary-foreground hover:brightness-110" : "text-faint hover:bg-accent",
-                )}
-              >
-                <SendIcon />
-              </button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={ready && !blocked ? "default" : "ghost"}
+                    size="icon"
+                    onClick={() => void submit()}
+                    disabled={!ready || busy || blocked}
+                    aria-label="Send"
+                    className="mb-1 size-7 shrink-0"
+                  >
+                    <SendIcon />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Send (⏎)</TooltipContent>
+              </Tooltip>
             )}
           </div>
         </div>
@@ -401,24 +422,37 @@ export function Composer({
             }))}
             onPick={(id) => onPermissionMode(id as PermissionMode)}
           />
-          <button
-            onClick={() => void attach()}
-            title="Attach a file"
-            className="grid size-7 place-items-center rounded-md text-[15px] leading-none text-faint transition hover:bg-accent hover:text-foreground"
-          >
-            +
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => void attach()}
+                aria-label="Attach a file"
+                className="size-7 text-faint"
+              >
+                <PlusIcon />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Attach a file</TooltipContent>
+          </Tooltip>
           {Dictation ? (
-            <button
-              onClick={toggleDictation}
-              title={listening ? "Stop dictation" : "Dictate a message"}
-              className={cn(
-                "grid size-7 place-items-center rounded-md transition hover:bg-accent",
-                listening ? "text-primary" : "text-faint hover:text-foreground",
-              )}
-            >
-              <MicIcon />
-            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-flex">
+                  <Toggle
+                    size="sm"
+                    pressed={listening}
+                    onPressedChange={toggleDictation}
+                    aria-label="Dictate a message"
+                    className="size-7 min-w-7 text-faint data-[state=on]:text-primary"
+                  >
+                    <MicIcon />
+                  </Toggle>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>{listening ? "Stop dictation" : "Dictate a message"}</TooltipContent>
+            </Tooltip>
           ) : null}
           <div className="flex-1" />
           <Menu
@@ -505,7 +539,9 @@ function ThreadChips({ thread }: { thread: Thread }) {
           {thread.branch}
         </Chip>
       ) : null}
-      {thread.isWorktree ? <Chip className="border-primary/40 text-primary">⧉ worktree</Chip> : null}
+      {thread.isWorktree ? <Chip icon={<WorktreeIcon />} className="border-primary/40 text-primary">
+          worktree
+        </Chip> : null}
       {dirty ? <Chip>{dirty} changed</Chip> : null}
     </>
   );

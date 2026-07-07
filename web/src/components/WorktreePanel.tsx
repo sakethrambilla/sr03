@@ -5,7 +5,7 @@ import type { GitSnapshot, Project } from "../lib/types.ts";
 import { useStore } from "../store.ts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, Pill } from "./ui.tsx";
+import { CheckIcon, Dialog, Pill, WorktreeIcon } from "./ui.tsx";
 
 export function WorktreePanel({ project, onClose }: { project: Project; onClose: () => void }) {
   const startDraft = useStore((state) => state.startDraft);
@@ -143,15 +143,16 @@ export function WorktreePanel({ project, onClose }: { project: Project; onClose:
         <h3 className="mb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">Branches</h3>
         <div className="flex flex-wrap gap-1.5">
           {snapshot?.branches.map((item) => (
-            <button
+            <Button
               key={item.name}
+              variant="outline"
               onClick={() => setBranch(item.name)}
-              className="rounded-md border border-border bg-background px-2 py-0.5 font-mono text-[11px] text-muted-foreground hover:border-primary hover:text-foreground"
+              className="h-auto gap-1.5 bg-background px-2 py-0.5 font-mono text-[11px] font-normal text-muted-foreground"
             >
               {item.name}
-              {item.isCurrent ? " ●" : ""}
-              {item.worktreePath ? " ⧉" : ""}
-            </button>
+              {item.isCurrent ? <CheckIcon className="size-3 text-primary" /> : null}
+              {item.worktreePath ? <WorktreeIcon className="size-3" /> : null}
+            </Button>
           ))}
         </div>
       </section>

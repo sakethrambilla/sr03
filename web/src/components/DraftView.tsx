@@ -6,7 +6,19 @@ import { useStore } from "../store.ts";
 import type { Draft } from "../store.ts";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { BranchIcon, Chip, FolderIcon, StatusDot, cn } from "./ui.tsx";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  BranchIcon,
+  Chip,
+  FolderIcon,
+  PlusIcon,
+  SparkleIcon,
+  StatusDot,
+  WorktreeIcon,
+  cn,
+} from "./ui.tsx";
 import { Composer } from "./Composer.tsx";
 import { SidebarToggle } from "./Sidebar.tsx";
 import { Separator } from "@/components/ui/separator";
@@ -57,29 +69,31 @@ function BranchMenu({
         <ul className="max-h-64 overflow-y-auto">
           {isNew ? (
             <li>
-              <button
+              <Button
+                variant="ghost"
                 onClick={() => onPick({ name: needle, create: true })}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] hover:bg-accent"
+                className="h-auto w-full justify-start gap-2 px-2 py-1.5 text-[12.5px] font-normal"
               >
-                <span className="text-primary">+</span>
+                <PlusIcon className="text-primary" />
                 <span className="min-w-0 flex-1 truncate font-mono">{needle}</span>
                 <span className="text-[11px] text-faint">new branch · worktree</span>
-              </button>
+              </Button>
             </li>
           ) : null}
           {matches.map((branch) => (
             <li key={branch.name}>
-              <button
+              <Button
+                variant="ghost"
                 onClick={() => onPick(branch)}
                 className={cn(
-                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] hover:bg-accent",
+                  "h-auto w-full justify-start gap-2 px-2 py-1.5 text-[12.5px] font-normal",
                   branch.name === selected && "bg-accent/70",
                 )}
               >
                 <span className="min-w-0 flex-1 truncate font-mono">{branch.name}</span>
                 {branch.name === current ? <span className="text-[11px] text-faint">checked out</span> : null}
-                {linkedWorktree(branch) ? <span className="text-[11px] text-primary">⧉</span> : null}
-              </button>
+                {linkedWorktree(branch) ? <WorktreeIcon className="size-3 text-primary" /> : null}
+              </Button>
             </li>
           ))}
           {matches.length === 0 && !isNew ? (
@@ -221,26 +235,29 @@ function DraftChips({ draft }: { draft: Draft }) {
               </PopoverContent>
             </Popover>
             <Separator orientation="vertical" className="h-4" />
-            <button
-              onClick={toggleWorktree}
-              disabled={lockedWorktree}
-              title={
-                lockedWorktree
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <label
+                  className={cn(
+                    "flex h-full items-center gap-1.5 px-2 transition hover:text-foreground",
+                    lockedWorktree ? "cursor-default" : "cursor-pointer",
+                  )}
+                >
+                  <Checkbox
+                    checked={draft.worktree}
+                    disabled={lockedWorktree}
+                    onCheckedChange={toggleWorktree}
+                    className="size-3"
+                  />
+                  worktree
+                </label>
+              </TooltipTrigger>
+              <TooltipContent>
+                {lockedWorktree
                   ? "This branch already has a worktree, so the session runs there"
-                  : "Run this session in its own git worktree"
-              }
-              className="flex h-full items-center gap-1.5 px-2 transition hover:text-foreground disabled:hover:text-muted-foreground"
-            >
-              <span
-                className={cn(
-                  "grid size-3 place-items-center rounded-[3px] border text-[8px] leading-none",
-                  draft.worktree ? "border-primary bg-primary text-primary-foreground" : "border-border",
-                )}
-              >
-                {draft.worktree ? "✓" : ""}
-              </span>
-              worktree
-            </button>
+                  : "Run this session in its own git worktree"}
+              </TooltipContent>
+            </Tooltip>
           </div>
         </div>
       ) : null}
@@ -274,8 +291,8 @@ export function DraftView({ draft }: { draft: Draft }) {
 
       <div className="flex min-h-0 flex-1 items-center justify-center px-5">
         <div className="text-center">
-          <h2 className="text-[17px] font-medium">
-            <span className="mr-1.5 text-primary">✳</span>
+          <h2 className="flex items-center justify-center gap-1.5 text-[17px] font-medium">
+            <SparkleIcon className="size-4 text-primary" />
             Start a session
           </h2>
           <p className="mt-1.5 text-[13px] text-faint">

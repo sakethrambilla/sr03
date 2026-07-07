@@ -11,7 +11,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { ChevronIcon, DotsIcon, SidebarIcon, StatusDot, cn } from "./ui.tsx";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  ChevronIcon,
+  DotsIcon,
+  PlusIcon,
+  SidebarIcon,
+  StatusDot,
+  WorktreeIcon,
+  cn,
+} from "./ui.tsx";
 import { WorktreePanel } from "./WorktreePanel.tsx";
 
 export function SidebarToggle() {
@@ -19,13 +28,20 @@ export function SidebarToggle() {
   const toggleSidebar = useStore((state) => state.toggleSidebar);
 
   return (
-    <button
-      onClick={toggleSidebar}
-      title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
-      className="-ml-1.5 rounded-md p-1 text-faint transition hover:bg-accent hover:text-foreground"
-    >
-      <SidebarIcon className="size-4" />
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={toggleSidebar}
+          aria-label={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
+          className="-ml-1.5 text-faint"
+        >
+          <SidebarIcon className="size-4" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{sidebarOpen ? "Hide sidebar" : "Show sidebar"}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -90,7 +106,10 @@ function ThreadRow({ thread }: { thread: Thread }) {
             </p>
           )}
           {thread.isWorktree && thread.branch ? (
-            <p className="truncate font-mono text-[10px] text-faint">⧉ {thread.branch}</p>
+            <p className="flex items-center gap-1 truncate font-mono text-[10px] text-faint">
+                          <WorktreeIcon className="size-2.5" />
+                          {thread.branch}
+                        </p>
           ) : null}
         </div>
 
@@ -162,16 +181,14 @@ export function Sidebar() {
       </header>
 
       <div className="px-2 pb-2">
-        <button
+        <Button
+          variant="secondary"
           onClick={() => startDraft()}
-          className={cn(
-            "flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-[13px] text-foreground transition hover:bg-accent",
-            draft ? "bg-accent" : "bg-accent/70",
-          )}
+          className={cn("h-8 w-full justify-start gap-2 font-normal", draft && "bg-accent")}
         >
-          <span className="text-[15px] leading-none text-muted-foreground">+</span>
+          <PlusIcon />
           New
-        </button>
+        </Button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
@@ -191,21 +208,35 @@ export function Sidebar() {
                 {project.name}
               </span>
               {project.isGit ? (
-                <button
-                  onClick={() => setWorktreeProject(project)}
-                  className="rounded px-1 text-[12px] text-faint opacity-0 transition group-hover:opacity-100 hover:text-foreground"
-                  title="Worktrees"
-                >
-                  ⧉
-                </button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setWorktreeProject(project)}
+                      aria-label="Worktrees"
+                      className="size-6 text-faint opacity-0 group-hover:opacity-100"
+                    >
+                      <WorktreeIcon className="size-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Worktrees</TooltipContent>
+                </Tooltip>
               ) : null}
-              <button
-                onClick={() => startDraft({ projectId: project.id })}
-                className="rounded px-1 text-[15px] leading-none text-faint transition hover:text-foreground"
-                title="New thread"
-              >
-                +
-              </button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => startDraft({ projectId: project.id })}
+                    aria-label="New thread"
+                    className="size-6 text-faint"
+                  >
+                    <PlusIcon className="size-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>New thread</TooltipContent>
+              </Tooltip>
             </div>
 
             <ul className="mt-0.5">
@@ -218,13 +249,14 @@ export function Sidebar() {
 
         {archived.length > 0 ? (
           <section className="mb-4">
-            <button
+            <Button
+              variant="ghost"
               onClick={() => setShowArchived((open) => !open)}
-              className="flex w-full items-center gap-1.5 px-2 py-1 text-[12px] font-medium text-faint transition hover:text-muted-foreground"
+              className="h-auto w-full justify-start gap-1.5 px-2 py-1 text-[12px] font-medium text-faint"
             >
               <ChevronIcon className={cn("size-3 transition-transform", !showArchived && "-rotate-90")} />
               Archived ({archived.length})
-            </button>
+            </Button>
             {showArchived ? (
               <ul className="mt-0.5">
                 {archived.map((thread) => (

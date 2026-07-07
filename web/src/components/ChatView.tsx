@@ -18,7 +18,6 @@ import {
   FolderIcon,
   StatusDot,
   TerminalIcon,
-  cn,
   usePersistedState,
 } from "./ui.tsx";
 import {
@@ -28,31 +27,40 @@ import {
   DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
+import { Toggle } from "@/components/ui/toggle";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 const NO_MESSAGES: Message[] = [];
 
-function ToolButton({
-  onClick,
-  title,
-  active,
+function PanelToggle({
+  pressed,
+  onPressedChange,
+  label,
   children,
 }: {
-  onClick: () => void;
-  title: string;
-  active?: boolean;
+  pressed: boolean;
+  onPressedChange: (next: boolean) => void;
+  label: string;
   children: ReactNode;
 }) {
   return (
-    <button
-      onClick={onClick}
-      title={title}
-      className={cn(
-        "rounded-md p-1 transition hover:bg-accent hover:text-foreground",
-        active ? "bg-accent text-foreground" : "text-faint",
-      )}
-    >
-      {children}
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex">
+          <Toggle
+            size="sm"
+            pressed={pressed}
+            onPressedChange={onPressedChange}
+            aria-label={label}
+            className="text-faint data-[state=on]:text-foreground"
+          >
+            {children}
+          </Toggle>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -86,22 +94,32 @@ function OpenMenu({ thread }: { thread: Thread }) {
   if (!primary) return null;
 
   return (
-    <span className="inline-flex h-7 items-center overflow-hidden rounded-md border border-border/70 bg-accent/40 text-[12px] text-muted-foreground">
-      <button
-        onClick={() => launch(primary.id)}
-        title={`Open ${thread.cwd} in ${primary.label} (⌘O)`}
-        className="flex h-full items-center gap-1.5 px-2 transition hover:text-foreground"
-      >
-        <AppIcon id={primary.id} />
-        Open
-      </button>
+    <div className="flex h-7 shrink-0 items-center rounded-md border border-border/70 bg-accent/40">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            onClick={() => launch(primary.id)}
+            className="h-full gap-1.5 rounded-r-none px-2 text-[12px] font-normal text-muted-foreground"
+          >
+            <AppIcon id={primary.id} />
+            Open
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>
+          Open in {primary.label} <span className="text-faint">⌘O</span>
+        </TooltipContent>
+      </Tooltip>
       <Separator orientation="vertical" className="h-4" />
       <DropdownMenu>
-        <DropdownMenuTrigger
-          title="Open in…"
-          className="flex h-full items-center px-1 transition hover:text-foreground"
-        >
-          <ChevronIcon className="size-3" />
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            aria-label="Open in…"
+            className="h-full rounded-l-none px-1 text-muted-foreground"
+          >
+            <ChevronIcon className="size-3" />
+          </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="min-w-44">
           {apps.map((app) => (
@@ -113,7 +131,7 @@ function OpenMenu({ thread }: { thread: Thread }) {
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
-    </span>
+    </div>
   );
 }
 
@@ -136,20 +154,12 @@ export function ChatView({ thread }: { thread: Thread }) {
             {thread.cwd.replace(/^\/Users\/[^/]+/, "~")}
           </span>
           <OpenMenu thread={thread} />
-          <ToolButton
-            title={terminalOpen ? "Hide terminal" : "Show terminal"}
-            active={terminalOpen}
-            onClick={() => setTerminalOpen(!terminalOpen)}
-          >
+          <PanelToggle pressed={terminalOpen} onPressedChange={setTerminalOpen} label="Terminal">
             <TerminalIcon className="size-4" />
-          </ToolButton>
-          <ToolButton
-            title={treeOpen ? "Hide files" : "Show files"}
-            active={treeOpen}
-            onClick={() => setTreeOpen(!treeOpen)}
-          >
+          </PanelToggle>
+          <PanelToggle pressed={treeOpen} onPressedChange={setTreeOpen} label="Files">
             <ChangesIcon className="size-4" />
-          </ToolButton>
+          </PanelToggle>
         </header>
 
         {openFile ? (

@@ -4,14 +4,28 @@ import {
   ArrowUp,
   Check,
   ChevronDown,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Code,
   EllipsisVertical,
   FileDiff,
+  File,
+  FileCode2,
+  FilePlus,
+  FileCog,
+  FileImage,
+  FileJson2,
+  FileText,
+  FileType,
   Folder,
+  FolderPlus,
   GitBranch,
   Mic,
   PanelLeft,
+  Plus,
   RefreshCw,
+  Sparkles,
+  SquareStack,
   SquareTerminal,
   X,
   type LucideIcon,
@@ -32,20 +46,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export { cn };
 
 export function Pill({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 rounded-md border border-border bg-card px-2 py-0.5 text-[11px] text-muted-foreground",
-        className,
-      )}
-    >
+    <Badge variant="outline" className={cn("bg-card px-2 py-0.5 text-[11px] font-normal", className)}>
       {children}
-    </span>
+    </Badge>
   );
 }
 
@@ -103,20 +114,28 @@ export function Chip({
   onClick?: () => void;
   title?: string;
 }) {
-  const Tag = onClick ? "button" : "span";
-  return (
-    <Tag
-      onClick={onClick}
-      title={title}
-      className={cn(
-        "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border/70 bg-accent/40 px-2 text-[12px] text-muted-foreground",
-        onClick && "cursor-pointer transition hover:border-border hover:text-foreground",
-        className,
-      )}
-    >
+  const body = (
+    <>
       {icon}
       <span className="max-w-40 truncate">{children}</span>
-    </Tag>
+    </>
+  );
+  const shape = cn(
+    "h-7 gap-1.5 border-border/70 bg-accent/40 px-2 text-[12px] font-normal text-muted-foreground",
+    className,
+  );
+
+  if (onClick) {
+    return (
+      <Button variant="outline" onClick={onClick} title={title} className={cn(shape, "shrink-0")}>
+        {body}
+      </Button>
+    );
+  }
+  return (
+    <Badge variant="outline" title={title} className={cn(shape, "shrink-0")}>
+      {body}
+    </Badge>
   );
 }
 
@@ -134,6 +153,13 @@ const ICONS = {
   CheckIcon: Check,
   ChevronIcon: ChevronDown,
   RefreshIcon: RefreshCw,
+  WorktreeIcon: SquareStack,
+  SparkleIcon: Sparkles,
+  PlusIcon: Plus,
+  NewFileIcon: FilePlus,
+  NewFolderIcon: FolderPlus,
+  CollapseIcon: ChevronsDownUp,
+  ExpandIcon: ChevronsUpDown,
 } as const;
 
 function icon(Source: LucideIcon) {
@@ -155,6 +181,13 @@ export const CodeIcon = icon(ICONS.CodeIcon);
 export const CheckIcon = icon(ICONS.CheckIcon);
 export const ChevronIcon = icon(ICONS.ChevronIcon);
 export const RefreshIcon = icon(ICONS.RefreshIcon);
+export const WorktreeIcon = icon(ICONS.WorktreeIcon);
+export const SparkleIcon = icon(ICONS.SparkleIcon);
+export const PlusIcon = icon(ICONS.PlusIcon);
+export const NewFileIcon = icon(ICONS.NewFileIcon);
+export const NewFolderIcon = icon(ICONS.NewFolderIcon);
+export const CollapseIcon = icon(ICONS.CollapseIcon);
+export const ExpandIcon = icon(ICONS.ExpandIcon);
 
 export interface MenuItem {
   id: string;
@@ -236,4 +269,30 @@ export function usePersistedState<T extends string | boolean>(
       setValue(next);
     },
   ];
+}
+
+// file-type icons, mapped the way an editor's icon theme does: shape by kind, hue by family
+const FILE_KINDS: Array<{ match: RegExp; Source: LucideIcon; tone: string }> = [
+  { match: /\.(png|jpe?g|gif|webp|avif|ico|bmp|svg)$/i, Source: FileImage, tone: "text-file-style" },
+  { match: /\.(css|scss|sass|less|woff2?|ttf|otf)$/i, Source: FileType, tone: "text-file-style" },
+  { match: /\.(sh|bash|zsh|fish|ps1|bat|cmd)$/i, Source: SquareTerminal, tone: "text-file-shell" },
+  { match: /(^\.env|^\.?[\w.-]*rc$|\.(toml|ini|conf|config)$)/i, Source: FileCog, tone: "text-file-data" },
+  { match: /\.(json|jsonc|ya?ml|lock|xml|csv|tsv)$/i, Source: FileJson2, tone: "text-file-data" },
+  { match: /\.(m?d|mdx|txt|pdf|log)$/i, Source: FileText, tone: "text-file-doc" },
+  {
+    match: /\.(tsx?|jsx?|m[jt]s|c[jt]s|html?|py|rs|go|java|rb|php|swift|kt|c|h|cpp|hpp|cs|sql|vue|svelte)$/i,
+    Source: FileCode2,
+    tone: "text-file-code",
+  },
+];
+
+export function FileIcon({ name, muted }: { name: string; muted?: boolean }) {
+  const kind = FILE_KINDS.find((candidate) => candidate.match.test(name));
+  const Source = kind?.Source ?? File;
+  return (
+    <Source
+      strokeWidth={1.75}
+      className={cn("size-3.5 shrink-0", muted ? "text-git-ignored" : (kind?.tone ?? "text-faint"))}
+    />
+  );
 }
