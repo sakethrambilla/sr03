@@ -8,6 +8,7 @@ import * as git from "./git.ts";
 import * as pty from "./pty.ts";
 import {
   choosePath,
+  createWorkspaceEntry,
   isDirectory,
   listApps,
   listDirectory,
@@ -279,7 +280,28 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
     handler: async ({ params, url }) => {
       const thread = requireThread(params[0]!);
       const rel = url.searchParams.get("path") ?? "";
-      return { path: rel, entries: await listWorkspaceDir(thread.cwd, rel) };
+      const entries = await listWorkspaceDir(thread.cwd, rel);
+      const ignored = await git.ignoredPaths(
+        thread.cwd,
+        entries.map((entry) => entry.path),
+      );
+      return {
+        path: rel,
+        entries: entries.map((entry) => ({ ...entry, ignored: ignored.has(entry.path) })),
+      };
+    },
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/threads\/([^/]+)\/fs$/,
+    handler: async ({ params, request }) => {
+      const thread = requireThread(params[0]!);
+      const body = await readBody(request);
+      return createWorkspaceEntry(
+        thread.cwd,
+        requireString(body, "path"),
+        body.kind === "dir" ? "dir" : "file",
+      );
     },
   },
   {

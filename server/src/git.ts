@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
 import fs from "node:fs/promises";
@@ -302,4 +302,31 @@ export async function fileState(
   if (!code) return { status: null, diff: "" };
   const status = classify(code);
   return { status, diff: await fileDiff(cwd, file, status === "untracked").catch(() => "") };
+}
+
+// check-ignore wants its paths on stdin (a big directory would blow the argument limit)
+// and exits 1 when nothing matched, which is an answer rather than a failure
+function gitStdin(cwd: string, args: string[], input: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("git", args, { cwd });
+    let out = "";
+    let err = "";
+    child.stdout.on("data", (chunk) => (out += chunk));
+    child.stderr.on("data", (chunk) => (err += chunk));
+    child.on("error", reject);
+    child.on("close", (code) =>
+      code === 0 || code === 1 ? resolve(out) : reject(new GitError(err.trim() || `git exited ${code}`)),
+    );
+    child.stdin.end(input);
+  });
+}
+
+export async function ignoredPaths(cwd: string, paths: string[]): Promise<Set<string>> {
+  if (paths.length === 0) return new Set();
+  const out = await gitStdin(
+    cwd,
+    ["-c", "core.quotepath=false", "check-ignore", "-z", "--stdin"],
+    `${paths.join("\0")}\0`,
+  ).catch(() => "");
+  return new Set(out.split("\0").filter((entry) => entry.length > 0));
 }

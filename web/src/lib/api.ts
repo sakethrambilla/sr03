@@ -101,6 +101,8 @@ export const api = {
       status: ChangedFile["status"] | null;
       diff: string;
     }>(`/api/threads/${id}/file?path=${encodeURIComponent(path)}`),
+  createEntry: (id: string, path: string, kind: "file" | "dir") =>
+    post<TreeEntry>(`/api/threads/${id}/fs`, { path, kind }),
   openIn: (id: string, app: string) => post<{ ok: true }>(`/api/threads/${id}/open`, { app }),
   forkThread: (id: string) => post<Thread>(`/api/threads/${id}/fork`),
   removeThread: (id: string) => call<{ ok: true }>(`/api/threads/${id}`, { method: "DELETE" }),

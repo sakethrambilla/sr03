@@ -162,6 +162,7 @@ export interface TreeEntry {
   name: string;
   path: string;
   isDir: boolean;
+  ignored: boolean;
 }
 
 const TREE_SKIP = new Set([".git"]);
@@ -184,6 +185,7 @@ export async function listWorkspaceDir(root: string, rel: string): Promise<TreeE
       name: entry.name,
       path: rel ? `${rel}/${entry.name}` : entry.name,
       isDir: entry.isDirectory(),
+      ignored: false,
     }))
     .sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
 }
@@ -205,4 +207,20 @@ export async function readWorkspaceFile(
   } finally {
     await handle.close();
   }
+}
+
+export async function createWorkspaceEntry(
+  root: string,
+  rel: string,
+  kind: "file" | "dir",
+): Promise<TreeEntry> {
+  const target = safeJoin(root, rel);
+  if (target === path.resolve(root)) throw new Error("Give the new entry a name");
+  if (await fs.stat(target).then(() => true).catch(() => false)) {
+    throw new Error(`${path.basename(target)} already exists`);
+  }
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  if (kind === "dir") await fs.mkdir(target);
+  else await fs.writeFile(target, "", { flag: "wx" });
+  return { name: path.basename(target), path: rel, isDir: kind === "dir", ignored: false };
 }

@@ -29,6 +29,13 @@
   --git-modified: #e2c08d;
   --git-deleted: #c74e39;
   --git-untracked: #73c991;
+  --git-ignored: #8c8c8c;
+  /* file-type icon hues, in the spirit of VS Code's Seti theme */
+  --file-code: #519aba;
+  --file-data: #cbcb41;
+  --file-style: #a074c4;
+  --file-shell: #8dc149;
+  --file-doc: #6d8086;
   --radius: 0.375rem;
 }
 
@@ -58,6 +65,12 @@
   --color-git-modified: var(--git-modified);
   --color-git-deleted: var(--git-deleted);
   --color-git-untracked: var(--git-untracked);
+  --color-git-ignored: var(--git-ignored);
+  --color-file-code: var(--file-code);
+  --color-file-data: var(--file-data);
+  --color-file-style: var(--file-style);
+  --color-file-shell: var(--file-shell);
+  --color-file-doc: var(--file-doc);
   --radius-sm: calc(var(--radius) - 2px);
   --radius-md: var(--radius);
   --radius-lg: calc(var(--radius) + 2px);

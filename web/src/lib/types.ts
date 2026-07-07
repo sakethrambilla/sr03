@@ -143,4 +143,5 @@ export interface TreeEntry {
   name: string;
   path: string;
   isDir: boolean;
+  ignored: boolean;
 }

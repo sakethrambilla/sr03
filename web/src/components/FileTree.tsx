@@ -1,10 +1,22 @@
 import { useCallback, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 
 import { api } from "../lib/api.ts";
 import type { ChangedFile, Message, Thread, TreeEntry } from "../lib/types.ts";
 import { useStore } from "../store.ts";
 import { Button } from "@/components/ui/button";
-import { ChevronIcon, CloseIcon, RefreshIcon, cn } from "./ui.tsx";
+import {
+  ChevronIcon,
+  CloseIcon,
+  CollapseIcon,
+  ExpandIcon,
+  FileIcon,
+  FolderIcon,
+  NewFileIcon,
+  NewFolderIcon,
+  RefreshIcon,
+  cn,
+} from "./ui.tsx";
 
 const NO_MESSAGES: Message[] = [];
 
@@ -24,6 +36,43 @@ function ancestors(path: string): string[] {
   return parts.map((_, index) => parts.slice(0, index + 1).join("/"));
 }
 
+const INDENT = 12;
+
+function Guides({ depth }: { depth: number }) {
+  // one guide per ancestor level, the way the editor draws them
+  return (
+    <>
+      {Array.from({ length: depth }, (_, level) => (
+        <span key={level} style={{ width: INDENT }} className="shrink-0 border-r border-border/50" />
+      ))}
+    </>
+  );
+}
+
+function RowAction({
+  label,
+  onClick,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      title={label}
+      aria-label={label}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+      className="grid size-4 place-items-center rounded text-faint transition hover:bg-accent hover:text-foreground"
+    >
+      {children}
+    </button>
+  );
+}
+
 function Row({
   entry,
   depth,
@@ -32,6 +81,9 @@ function Row({
   expanded,
   selected,
   onClick,
+  onCreate,
+  onReload,
+  onToggleSubtree,
 }: {
   entry: TreeEntry;
   depth: number;
@@ -40,41 +92,117 @@ function Row({
   expanded: boolean;
   selected: boolean;
   onClick: () => void;
+  onCreate: (kind: "file" | "dir") => void;
+  onReload: () => void;
+  onToggleSubtree: () => void;
 }) {
   const decoration = status ? DECORATION[status] : null;
+  const tint = entry.ignored
+    ? "text-git-ignored"
+    : decoration
+      ? decoration.className
+      : dirty
+        ? "text-git-modified"
+        : "text-muted-foreground";
 
   return (
-    <button
-      onClick={onClick}
-      title={entry.path}
-      style={{ paddingLeft: depth * 12 + 6 }}
+    <div
       className={cn(
-        "flex h-[22px] w-full items-center gap-1 pr-2 text-left transition hover:bg-accent/50",
+        "group/row flex h-[22px] w-full items-stretch transition hover:bg-accent/50",
         selected && "bg-accent",
       )}
     >
-      <span className="grid size-3 shrink-0 place-items-center text-faint">
+      <Guides depth={depth} />
+      <button onClick={onClick} title={entry.path} className="flex min-w-0 flex-1 items-center gap-1 pl-1 text-left">
+        <span className="grid size-3 shrink-0 place-items-center text-faint">
+          {entry.isDir ? (
+            <ChevronIcon className={cn("size-3 transition-transform", expanded ? "" : "-rotate-90")} />
+          ) : null}
+        </span>
         {entry.isDir ? (
-          <ChevronIcon className={cn("size-3 transition", expanded ? "" : "-rotate-90")} />
+          <FolderIcon className={cn("size-3.5", entry.ignored ? "text-git-ignored" : "text-faint")} />
+        ) : (
+          <FileIcon name={entry.name} muted={entry.ignored} />
+        )}
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate font-mono text-[12px]",
+            tint,
+            status === "deleted" && "line-through",
+          )}
+        >
+          {entry.name}
+        </span>
+      </button>
+
+      {entry.isDir ? (
+        <span className="hidden items-center gap-0.5 pr-1 group-hover/row:flex">
+          <RowAction label="New file" onClick={() => onCreate("file")}>
+            <NewFileIcon className="size-3" />
+          </RowAction>
+          <RowAction label="New folder" onClick={() => onCreate("dir")}>
+            <NewFolderIcon className="size-3" />
+          </RowAction>
+          <RowAction label="Reload folder" onClick={onReload}>
+            <RefreshIcon className="size-3" />
+          </RowAction>
+          <RowAction label={expanded ? "Collapse folder" : "Expand folder"} onClick={onToggleSubtree}>
+            {expanded ? <CollapseIcon className="size-3" /> : <ExpandIcon className="size-3" />}
+          </RowAction>
+        </span>
+      ) : null}
+
+      <span className={cn("flex shrink-0 items-center pr-2", entry.isDir && "group-hover/row:hidden")}>
+        {decoration ? (
+          <span className={cn("font-mono text-[10.5px] font-semibold", decoration.className)}>
+            {decoration.letter}
+          </span>
+        ) : dirty ? (
+          <span className="size-1.5 rounded-full bg-git-modified" />
         ) : null}
       </span>
-      <span
-        className={cn(
-          "min-w-0 flex-1 truncate font-mono text-[12px]",
-          decoration ? decoration.className : dirty ? "text-git-modified" : "text-muted-foreground",
-          status === "deleted" && "line-through",
+    </div>
+  );
+}
+
+function NewEntryRow({
+  depth,
+  kind,
+  onCommit,
+  onCancel,
+}: {
+  depth: number;
+  kind: "file" | "dir";
+  onCommit: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState("");
+
+  return (
+    <div className="flex h-[22px] w-full items-stretch bg-accent/40">
+      <Guides depth={depth} />
+      <span className="flex min-w-0 flex-1 items-center gap-1 pr-2 pl-1">
+        <span className="size-3 shrink-0" />
+        {kind === "dir" ? (
+          <FolderIcon className="size-3.5 text-faint" />
+        ) : (
+          <FileIcon name={name || "x"} />
         )}
-      >
-        {entry.name}
+        <input
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && name.trim()) onCommit(name.trim());
+            if (event.key === "Escape") onCancel();
+          }}
+          onBlur={() => onCancel()}
+          autoFocus
+          spellCheck={false}
+          placeholder={kind === "dir" ? "folder name" : "file name"}
+          className="min-w-0 flex-1 bg-transparent font-mono text-[12px] text-foreground outline-none placeholder:text-faint"
+        />
       </span>
-      {decoration ? (
-        <span className={cn("shrink-0 font-mono text-[10.5px] font-semibold", decoration.className)}>
-          {decoration.letter}
-        </span>
-      ) : dirty ? (
-        <span className="shrink-0 text-[13px] leading-none text-git-modified">•</span>
-      ) : null}
-    </button>
+    </div>
   );
 }
 
@@ -95,6 +223,7 @@ export function FileTree({
   const [changes, setChanges] = useState<Map<string, Status>>(new Map());
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  const [creating, setCreating] = useState<{ parent: string; kind: "file" | "dir" } | null>(null);
 
   const load = useCallback(
     async (path: string) => {
@@ -159,16 +288,61 @@ export function FileTree({
     });
   };
 
+  const startCreate = (parent: string, kind: "file" | "dir") => {
+    setExpanded((current) => new Set(current).add(parent));
+    setCreating({ parent, kind });
+  };
+
+  const commitCreate = async (name: string) => {
+    if (!creating) return;
+    const target = creating.parent ? `${creating.parent}/${name}` : name;
+    setCreating(null);
+    try {
+      const entry = await api.createEntry(thread.id, target, creating.kind);
+      await load(creating.parent);
+      if (entry.isDir) setExpanded((current) => new Set(current).add(entry.path));
+      else onOpenFile(entry.path);
+    } catch (cause) {
+      setError((cause as Error).message);
+    }
+  };
+
+  // collapsing a folder takes its whole subtree with it; expanding restores what is already loaded
+  const toggleSubtree = (dir: string) => {
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (current.has(dir)) {
+        for (const path of current) if (path === dir || path.startsWith(`${dir}/`)) next.delete(path);
+      } else {
+        next.add(dir);
+        for (const path of Object.keys(dirs)) if (path.startsWith(`${dir}/`)) next.add(path);
+      }
+      return next;
+    });
+  };
+
   const hasChangesUnder = (dir: string) => {
     const prefix = `${dir}/`;
     for (const path of changes.keys()) if (path.startsWith(prefix)) return true;
     return false;
   };
 
-  const rows = (path: string, depth: number): React.ReactNode[] =>
-    (dirs[path] ?? []).flatMap((entry) => {
+  const rows = (path: string, depth: number): ReactNode[] => {
+    const out: ReactNode[] = [];
+    if (creating?.parent === path) {
+      out.push(
+        <NewEntryRow
+          key="__new"
+          depth={depth}
+          kind={creating.kind}
+          onCommit={(name) => void commitCreate(name)}
+          onCancel={() => setCreating(null)}
+        />,
+      );
+    }
+    for (const entry of dirs[path] ?? []) {
       const isExpanded = entry.isDir && expanded.has(entry.path);
-      return [
+      out.push(
         <Row
           key={entry.path}
           entry={entry}
@@ -178,10 +352,15 @@ export function FileTree({
           expanded={isExpanded}
           selected={entry.path === openPath}
           onClick={() => toggle(entry)}
+          onCreate={(kind) => startCreate(entry.path, kind)}
+          onReload={() => void load(entry.path).catch(() => undefined)}
+          onToggleSubtree={() => toggleSubtree(entry.path)}
         />,
-        ...(isExpanded ? rows(entry.path, depth + 1) : []),
-      ];
-    });
+      );
+      if (isExpanded) out.push(...rows(entry.path, depth + 1));
+    }
+    return out;
+  };
 
   return (
     <aside className="flex h-full w-[300px] shrink-0 flex-col border-l border-border/60 bg-card">
@@ -191,13 +370,18 @@ export function FileTree({
           <span className="font-mono text-[10.5px] text-git-modified">{changes.size} changed</span>
         ) : null}
         <div className="flex-1" />
-        <button
-          onClick={() => setTick((current) => current + 1)}
-          title="Refresh"
-          className="rounded p-1 text-faint transition hover:bg-accent hover:text-foreground"
-        >
-          <RefreshIcon />
-        </button>
+        <RowAction label="New file" onClick={() => startCreate("", "file")}>
+          <NewFileIcon className="size-3.5" />
+        </RowAction>
+        <RowAction label="New folder" onClick={() => startCreate("", "dir")}>
+          <NewFolderIcon className="size-3.5" />
+        </RowAction>
+        <RowAction label="Refresh" onClick={() => setTick((current) => current + 1)}>
+          <RefreshIcon className="size-3.5" />
+        </RowAction>
+        <RowAction label="Collapse all" onClick={() => setExpanded(new Set([""]))}>
+          <CollapseIcon className="size-3.5" />
+        </RowAction>
         <Button variant="ghost" onClick={onClose} aria-label="Close files">
           <CloseIcon />
         </Button>
