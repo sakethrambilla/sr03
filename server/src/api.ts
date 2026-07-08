@@ -16,7 +16,9 @@ import {
   openIn,
   readUpload,
   readWorkspaceFile,
+  renameWorkspaceEntry,
   saveUpload,
+  trashWorkspaceEntry,
 } from "./fsbrowse.ts";
 import { messages, projects, threads } from "./db.ts";
 import {
@@ -302,6 +304,28 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
         requireString(body, "path"),
         body.kind === "dir" ? "dir" : "file",
       );
+    },
+  },
+  {
+    method: "PATCH",
+    pattern: /^\/api\/threads\/([^/]+)\/fs$/,
+    handler: async ({ params, request }) => {
+      const thread = requireThread(params[0]!);
+      const body = await readBody(request);
+      return renameWorkspaceEntry(
+        thread.cwd,
+        requireString(body, "path"),
+        requireString(body, "name"),
+      );
+    },
+  },
+  {
+    method: "DELETE",
+    pattern: /^\/api\/threads\/([^/]+)\/fs$/,
+    handler: async ({ params, request }) => {
+      const thread = requireThread(params[0]!);
+      const body = await readBody(request);
+      return trashWorkspaceEntry(thread.cwd, requireString(body, "path"));
     },
   },
   {

@@ -103,6 +103,18 @@ export const api = {
     }>(`/api/threads/${id}/file?path=${encodeURIComponent(path)}`),
   createEntry: (id: string, path: string, kind: "file" | "dir") =>
     post<TreeEntry>(`/api/threads/${id}/fs`, { path, kind }),
+  renameEntry: (id: string, path: string, name: string) =>
+    call<TreeEntry>(`/api/threads/${id}/fs`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path, name }),
+    }),
+  trashEntry: (id: string, path: string) =>
+    call<{ path: string; trashed: boolean }>(`/api/threads/${id}/fs`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path }),
+    }),
   openIn: (id: string, app: string) => post<{ ok: true }>(`/api/threads/${id}/open`, { app }),
   forkThread: (id: string) => post<Thread>(`/api/threads/${id}/fork`),
   removeThread: (id: string) => call<{ ok: true }>(`/api/threads/${id}`, { method: "DELETE" }),

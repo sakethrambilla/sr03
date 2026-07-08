@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { api } from "../lib/api.ts";
@@ -6,8 +6,16 @@ import type { ChangedFile, Message, Thread, TreeEntry } from "../lib/types.ts";
 import { useStore } from "../store.ts";
 import { Button } from "@/components/ui/button";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   ChevronIcon,
   CloseIcon,
+  Dialog,
+  DotsIcon,
   CollapseIcon,
   ExpandIcon,
   FileIcon,
@@ -84,6 +92,11 @@ function Row({
   onCreate,
   onReload,
   onToggleSubtree,
+  renaming,
+  onStartRename,
+  onRename,
+  onCancelRename,
+  onDelete,
 }: {
   entry: TreeEntry;
   depth: number;
@@ -95,6 +108,11 @@ function Row({
   onCreate: (kind: "file" | "dir") => void;
   onReload: () => void;
   onToggleSubtree: () => void;
+  renaming: boolean;
+  onStartRename: () => void;
+  onRename: (name: string) => void;
+  onCancelRename: () => void;
+  onDelete: () => void;
 }) {
   const decoration = status ? DECORATION[status] : null;
   const tint = entry.ignored
@@ -113,46 +131,93 @@ function Row({
       )}
     >
       <Guides depth={depth} />
-      <button onClick={onClick} title={entry.path} className="flex min-w-0 flex-1 items-center gap-1 pl-1 text-left">
-        <span className="grid size-3 shrink-0 place-items-center text-faint">
+      {renaming ? (
+        <span className="flex min-w-0 flex-1 items-center gap-1 pr-2 pl-1">
+          <span className="size-3 shrink-0" />
           {entry.isDir ? (
-            <ChevronIcon className={cn("size-3 transition-transform", expanded ? "" : "-rotate-90")} />
-          ) : null}
-        </span>
-        {entry.isDir ? (
-          <FolderIcon className={cn("size-3.5", entry.ignored ? "text-git-ignored" : "text-faint")} />
-        ) : (
-          <FileIcon name={entry.name} muted={entry.ignored} />
-        )}
-        <span
-          className={cn(
-            "min-w-0 flex-1 truncate font-mono text-[12px]",
-            tint,
-            status === "deleted" && "line-through",
+            <FolderIcon className="size-3.5 text-faint" />
+          ) : (
+            <FileIcon name={entry.name} />
           )}
+          <NameInput
+            initial={entry.name}
+            placeholder="new name"
+            onCommit={onRename}
+            onCancel={onCancelRename}
+          />
+        </span>
+      ) : (
+        <button
+          onClick={onClick}
+          title={entry.path}
+          className="flex min-w-0 flex-1 items-center gap-1 pl-1 text-left"
         >
-          {entry.name}
-        </span>
-      </button>
+          <span className="grid size-3 shrink-0 place-items-center text-faint">
+            {entry.isDir ? (
+              <ChevronIcon className={cn("size-3 transition-transform", expanded ? "" : "-rotate-90")} />
+            ) : null}
+          </span>
+          {entry.isDir ? (
+            <FolderIcon className={cn("size-3.5", entry.ignored ? "text-git-ignored" : "text-faint")} />
+          ) : (
+            <FileIcon name={entry.name} muted={entry.ignored} />
+          )}
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate font-mono text-[12px]",
+              tint,
+              status === "deleted" && "line-through",
+            )}
+          >
+            {entry.name}
+          </span>
+        </button>
+      )}
 
-      {entry.isDir ? (
-        <span className="hidden items-center gap-0.5 pr-1 group-hover/row:flex">
-          <RowAction label="New file" onClick={() => onCreate("file")}>
-            <NewFileIcon className="size-3" />
-          </RowAction>
-          <RowAction label="New folder" onClick={() => onCreate("dir")}>
-            <NewFolderIcon className="size-3" />
-          </RowAction>
-          <RowAction label="Reload folder" onClick={onReload}>
-            <RefreshIcon className="size-3" />
-          </RowAction>
-          <RowAction label={expanded ? "Collapse folder" : "Expand folder"} onClick={onToggleSubtree}>
-            {expanded ? <CollapseIcon className="size-3" /> : <ExpandIcon className="size-3" />}
-          </RowAction>
+      {renaming ? null : (
+        <span className="hidden items-center gap-0.5 pr-1 group-hover/row:flex has-[[data-state=open]]:flex">
+          {entry.isDir ? (
+            <>
+              <RowAction label="New file" onClick={() => onCreate("file")}>
+                <NewFileIcon className="size-3" />
+              </RowAction>
+              <RowAction label="New folder" onClick={() => onCreate("dir")}>
+                <NewFolderIcon className="size-3" />
+              </RowAction>
+              <RowAction label="Reload folder" onClick={onReload}>
+                <RefreshIcon className="size-3" />
+              </RowAction>
+              <RowAction label={expanded ? "Collapse folder" : "Expand folder"} onClick={onToggleSubtree}>
+                {expanded ? <CollapseIcon className="size-3" /> : <ExpandIcon className="size-3" />}
+              </RowAction>
+            </>
+          ) : null}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              title="More"
+              aria-label="More"
+              onClick={(event) => event.stopPropagation()}
+              className="grid size-4 place-items-center rounded text-faint outline-none transition hover:bg-accent hover:text-foreground"
+            >
+              <DotsIcon className="size-3" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              className="min-w-36"
+              // closing the menu would otherwise pull focus back to the trigger and
+              // blur the rename input the moment it mounts, cancelling the rename
+              onCloseAutoFocus={(event) => event.preventDefault()}
+            >
+              <DropdownMenuItem onSelect={onStartRename}>Rename…</DropdownMenuItem>
+              <DropdownMenuItem variant="destructive" onSelect={onDelete}>
+                Delete…
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </span>
-      ) : null}
+      )}
 
-      <span className={cn("flex shrink-0 items-center pr-2", entry.isDir && "group-hover/row:hidden")}>
+      <span className={cn("flex shrink-0 items-center pr-2", "group-hover/row:hidden")}>
         {decoration ? (
           <span className={cn("font-mono text-[10.5px] font-semibold", decoration.className)}>
             {decoration.letter}
@@ -162,6 +227,45 @@ function Row({
         ) : null}
       </span>
     </div>
+  );
+}
+
+function NameInput({
+  initial,
+  placeholder,
+  onCommit,
+  onCancel,
+}: {
+  initial: string;
+  placeholder: string;
+  onCommit: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(initial);
+  const ref = useRef<HTMLInputElement>(null);
+
+  // renaming should land with the stem selected, so typing replaces the name but keeps the suffix
+  useEffect(() => {
+    if (!initial) return;
+    const dot = initial.lastIndexOf(".");
+    ref.current?.setSelectionRange(0, dot > 0 ? dot : initial.length);
+  }, [initial]);
+
+  return (
+    <input
+      ref={ref}
+      value={name}
+      onChange={(event) => setName(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" && name.trim()) onCommit(name.trim());
+        if (event.key === "Escape") onCancel();
+      }}
+      onBlur={onCancel}
+      autoFocus
+      spellCheck={false}
+      placeholder={placeholder}
+      className="min-w-0 flex-1 bg-transparent font-mono text-[12px] text-foreground outline-none placeholder:text-faint"
+    />
   );
 }
 
@@ -176,35 +280,23 @@ function NewEntryRow({
   onCommit: (name: string) => void;
   onCancel: () => void;
 }) {
-  const [name, setName] = useState("");
-
   return (
     <div className="flex h-[22px] w-full items-stretch bg-accent/40">
       <Guides depth={depth} />
       <span className="flex min-w-0 flex-1 items-center gap-1 pr-2 pl-1">
         <span className="size-3 shrink-0" />
-        {kind === "dir" ? (
-          <FolderIcon className="size-3.5 text-faint" />
-        ) : (
-          <FileIcon name={name || "x"} />
-        )}
-        <input
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && name.trim()) onCommit(name.trim());
-            if (event.key === "Escape") onCancel();
-          }}
-          onBlur={() => onCancel()}
-          autoFocus
-          spellCheck={false}
+        {kind === "dir" ? <FolderIcon className="size-3.5 text-faint" /> : <FileIcon name="x" />}
+        <NameInput
+          initial=""
           placeholder={kind === "dir" ? "folder name" : "file name"}
-          className="min-w-0 flex-1 bg-transparent font-mono text-[12px] text-foreground outline-none placeholder:text-faint"
+          onCommit={onCommit}
+          onCancel={onCancel}
         />
       </span>
     </div>
   );
 }
+
 
 export function FileTree({
   thread,
@@ -214,7 +306,7 @@ export function FileTree({
 }: {
   thread: Thread;
   openPath: string | null;
-  onOpenFile: (path: string) => void;
+  onOpenFile: (path: string | null) => void;
   onClose: () => void;
 }) {
   const messageCount = useStore((state) => (state.messagesByThread[thread.id] ?? NO_MESSAGES).length);
@@ -224,6 +316,9 @@ export function FileTree({
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const [creating, setCreating] = useState<{ parent: string; kind: "file" | "dir" } | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<TreeEntry | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const load = useCallback(
     async (path: string) => {
@@ -307,6 +402,38 @@ export function FileTree({
     }
   };
 
+  const parentOf = (path: string) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
+
+  const commitRename = async (entry: TreeEntry, name: string) => {
+    setRenaming(null);
+    if (name === entry.name) return;
+    try {
+      const next = await api.renameEntry(thread.id, entry.path, name);
+      await load(parentOf(entry.path));
+      if (openPath === entry.path && !next.isDir) onOpenFile(next.path);
+      else if (openPath && openPath.startsWith(`${entry.path}/`)) onOpenFile(null);
+    } catch (cause) {
+      setError((cause as Error).message);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!pendingDelete) return;
+    setBusy(true);
+    try {
+      await api.trashEntry(thread.id, pendingDelete.path);
+      await load(parentOf(pendingDelete.path));
+      if (openPath === pendingDelete.path || openPath?.startsWith(`${pendingDelete.path}/`)) {
+        onOpenFile(null);
+      }
+      setPendingDelete(null);
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // collapsing a folder takes its whole subtree with it; expanding restores what is already loaded
   const toggleSubtree = (dir: string) => {
     setExpanded((current) => {
@@ -355,6 +482,11 @@ export function FileTree({
           onCreate={(kind) => startCreate(entry.path, kind)}
           onReload={() => void load(entry.path).catch(() => undefined)}
           onToggleSubtree={() => toggleSubtree(entry.path)}
+          renaming={renaming === entry.path}
+          onStartRename={() => setRenaming(entry.path)}
+          onRename={(name) => void commitRename(entry, name)}
+          onCancelRename={() => setRenaming(null)}
+          onDelete={() => setPendingDelete(entry)}
         />,
       );
       if (isExpanded) out.push(...rows(entry.path, depth + 1));
@@ -391,6 +523,29 @@ export function FileTree({
         {error ? <p className="px-3 py-4 text-[12px] text-destructive">{error}</p> : null}
         {rows("", 0)}
       </div>
+
+      {pendingDelete ? (
+        <Dialog
+          title={`Delete ${pendingDelete.name}?`}
+          onClose={() => setPendingDelete(null)}
+          footer={
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" disabled={busy} onClick={() => setPendingDelete(null)}>
+                Cancel
+              </Button>
+              <Button variant="destructive" disabled={busy} onClick={() => void confirmDelete()}>
+                Move to Trash
+              </Button>
+            </div>
+          }
+        >
+          <p className="text-[13px] text-muted-foreground">
+            <span className="font-mono text-foreground">{pendingDelete.path}</span>
+            {pendingDelete.isDir ? " and everything inside it" : ""} moves to your Trash, so you can
+            put it back from Finder.
+          </p>
+        </Dialog>
+      ) : null}
     </aside>
   );
 }

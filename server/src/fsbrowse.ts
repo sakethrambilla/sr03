@@ -224,3 +224,52 @@ export async function createWorkspaceEntry(
   else await fs.writeFile(target, "", { flag: "wx" });
   return { name: path.basename(target), path: rel, isDir: kind === "dir", ignored: false };
 }
+
+export async function renameWorkspaceEntry(
+  root: string,
+  rel: string,
+  name: string,
+): Promise<TreeEntry> {
+  if (name.includes("/")) throw new Error("A name can't contain a slash");
+  const target = safeJoin(root, rel);
+  if (target === path.resolve(root)) throw new Error("The session folder itself can't be renamed");
+  const nextRel = path.join(path.dirname(rel), name);
+  const next = safeJoin(root, nextRel);
+  if (next !== target) {
+    if (await fs.stat(next).then(() => true).catch(() => false)) {
+      throw new Error(`${name} already exists`);
+    }
+    await fs.rename(target, next);
+  }
+  const stats = await fs.stat(next);
+  return { name, path: nextRel, isDir: stats.isDirectory(), ignored: false };
+}
+
+async function freeTrashPath(base: string): Promise<string> {
+  const trash = path.join(os.homedir(), ".Trash");
+  const ext = path.extname(base);
+  const stem = base.slice(0, base.length - ext.length);
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const candidate = path.join(trash, attempt === 0 ? base : `${stem} ${attempt}${ext}`);
+    if (!(await fs.stat(candidate).then(() => true).catch(() => false))) return candidate;
+  }
+  throw new Error("The Trash already holds 200 entries by that name");
+}
+
+// deleting someone's source file should stay undoable, so this moves it to the Trash
+// and only removes it outright when that isn't possible (another volume, no Trash)
+export async function trashWorkspaceEntry(
+  root: string,
+  rel: string,
+): Promise<{ path: string; trashed: boolean }> {
+  const target = safeJoin(root, rel);
+  if (target === path.resolve(root)) throw new Error("The session folder itself can't be deleted");
+  await fs.lstat(target);
+  try {
+    await fs.rename(target, await freeTrashPath(path.basename(target)));
+    return { path: rel, trashed: true };
+  } catch {
+    await fs.rm(target, { recursive: true, force: true });
+    return { path: rel, trashed: false };
+  }
+}
