@@ -302,11 +302,15 @@ export function FileTree({
   thread,
   openPath,
   onOpenFile,
+  onRenamed,
+  onDeleted,
   onClose,
 }: {
   thread: Thread;
   openPath: string | null;
-  onOpenFile: (path: string | null) => void;
+  onOpenFile: (path: string) => void;
+  onRenamed: (from: string, to: string) => void;
+  onDeleted: (path: string) => void;
   onClose: () => void;
 }) {
   const messageCount = useStore((state) => (state.messagesByThread[thread.id] ?? NO_MESSAGES).length);
@@ -410,8 +414,7 @@ export function FileTree({
     try {
       const next = await api.renameEntry(thread.id, entry.path, name);
       await load(parentOf(entry.path));
-      if (openPath === entry.path && !next.isDir) onOpenFile(next.path);
-      else if (openPath && openPath.startsWith(`${entry.path}/`)) onOpenFile(null);
+      onRenamed(entry.path, next.path);
     } catch (cause) {
       setError((cause as Error).message);
     }
@@ -423,9 +426,7 @@ export function FileTree({
     try {
       await api.trashEntry(thread.id, pendingDelete.path);
       await load(parentOf(pendingDelete.path));
-      if (openPath === pendingDelete.path || openPath?.startsWith(`${pendingDelete.path}/`)) {
-        onOpenFile(null);
-      }
+      onDeleted(pendingDelete.path);
       setPendingDelete(null);
     } catch (cause) {
       setError((cause as Error).message);

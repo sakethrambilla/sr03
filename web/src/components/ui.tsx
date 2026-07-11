@@ -20,6 +20,7 @@ import {
   Folder,
   FolderPlus,
   GitBranch,
+  MessageSquare,
   Mic,
   PanelLeft,
   Plus,
@@ -156,6 +157,7 @@ const ICONS = {
   WorktreeIcon: SquareStack,
   SparkleIcon: Sparkles,
   PlusIcon: Plus,
+  MessageIcon: MessageSquare,
   NewFileIcon: FilePlus,
   NewFolderIcon: FolderPlus,
   CollapseIcon: ChevronsDownUp,
@@ -184,6 +186,7 @@ export const RefreshIcon = icon(ICONS.RefreshIcon);
 export const WorktreeIcon = icon(ICONS.WorktreeIcon);
 export const SparkleIcon = icon(ICONS.SparkleIcon);
 export const PlusIcon = icon(ICONS.PlusIcon);
+export const MessageIcon = icon(ICONS.MessageIcon);
 export const NewFileIcon = icon(ICONS.NewFileIcon);
 export const NewFolderIcon = icon(ICONS.NewFolderIcon);
 export const CollapseIcon = icon(ICONS.CollapseIcon);

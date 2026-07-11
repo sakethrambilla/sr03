@@ -3,8 +3,7 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api.ts";
 import type { ChangedFile, Message, Thread } from "../lib/types.ts";
 import { useStore } from "../store.ts";
-import { Button } from "@/components/ui/button";
-import { CloseIcon, cn } from "./ui.tsx";
+import { cn } from "./ui.tsx";
 
 const NO_MESSAGES: Message[] = [];
 
@@ -138,10 +137,6 @@ export function FileView({
         {file?.truncated ? (
           <span className="shrink-0 font-mono text-[10.5px] text-git-modified">truncated</span>
         ) : null}
-        <div className="flex-1" />
-        <Button variant="ghost" onClick={onClose} aria-label="Back to the conversation">
-          <CloseIcon />
-        </Button>
       </header>
 
       <div className="min-h-0 flex-1 overflow-auto">

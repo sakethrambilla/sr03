@@ -14,10 +14,14 @@ import { Separator } from "@/components/ui/separator";
 import {
   ChangesIcon,
   ChevronIcon,
+  CloseIcon,
   CodeIcon,
+  FileIcon,
   FolderIcon,
+  MessageIcon,
   StatusDot,
   TerminalIcon,
+  cn,
   usePersistedState,
 } from "./ui.tsx";
 import {
@@ -135,12 +139,117 @@ function OpenMenu({ thread }: { thread: Thread }) {
   );
 }
 
+
+function EditorTabs({
+  title,
+  files,
+  active,
+  onSelect,
+  onClose,
+}: {
+  title: string;
+  files: string[];
+  active: string | null;
+  onSelect: (path: string | null) => void;
+  onClose: (path: string) => void;
+}) {
+  return (
+    <div className="flex shrink-0 items-stretch overflow-x-auto border-b border-border/60 bg-background">
+      <button
+        onClick={() => onSelect(null)}
+        title={title}
+        className={cn(
+          "flex h-8 shrink-0 items-center gap-1.5 border-r border-border/60 px-3 text-[12px] transition",
+          active === null
+            ? "bg-card text-foreground shadow-[inset_0_1px_0_var(--color-primary)]"
+            : "text-muted-foreground hover:text-foreground",
+        )}
+      >
+        <MessageIcon className="size-3.5" />
+        <span className="max-w-40 truncate">{title}</span>
+      </button>
+
+      {files.map((path) => {
+        const name = path.slice(path.lastIndexOf("/") + 1);
+        return (
+          <div
+            key={path}
+            onAuxClick={(event) => {
+              if (event.button === 1) onClose(path);
+            }}
+            className={cn(
+              "group/tab flex h-8 shrink-0 items-center gap-1.5 border-r border-border/60 pr-1.5 pl-3 transition",
+              path === active
+                ? "bg-card shadow-[inset_0_1px_0_var(--color-primary)]"
+                : "hover:bg-card/50",
+            )}
+          >
+            <button
+              onClick={() => onSelect(path)}
+              title={path}
+              className="flex min-w-0 items-center gap-1.5 text-[12px]"
+            >
+              <FileIcon name={name} />
+              <span
+                className={cn(
+                  "max-w-40 truncate",
+                  path === active ? "text-foreground" : "text-muted-foreground",
+                )}
+              >
+                {name}
+              </span>
+            </button>
+            <button
+              onClick={() => onClose(path)}
+              aria-label={`Close ${name}`}
+              className={cn(
+                "grid size-4 shrink-0 place-items-center rounded text-faint transition hover:bg-accent hover:text-foreground",
+                path === active ? "" : "opacity-0 group-hover/tab:opacity-100",
+              )}
+            >
+              <CloseIcon className="size-3" />
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function ChatView({ thread }: { thread: Thread }) {
   const messages = useStore((state) => state.messagesByThread[thread.id] ?? NO_MESSAGES);
   const streaming = useStore((state) => state.streamByThread[thread.id] ?? "");
   const [treeOpen, setTreeOpen] = usePersistedState<boolean>("file-tree", false);
   const [terminalOpen, setTerminalOpen] = usePersistedState<boolean>("terminal", false);
-  const [openFile, setOpenFile] = useState<string | null>(null);
+  const [openFiles, setOpenFiles] = useState<string[]>([]);
+  const [active, setActive] = useState<string | null>(null);
+
+  const openFile = (path: string) => {
+    setOpenFiles((files) => (files.includes(path) ? files : [...files, path]));
+    setActive(path);
+  };
+
+  // closing the active tab lands on its neighbour, falling back to the chat
+  const closeFile = (path: string) => {
+    const index = openFiles.indexOf(path);
+    const next = openFiles.filter((file) => file !== path);
+    setOpenFiles(next);
+    if (active === path) setActive(next[index] ?? next[index - 1] ?? null);
+  };
+
+  const renamed = (from: string, to: string) => {
+    const moved = (path: string) =>
+      path === from ? to : path.startsWith(`${from}/`) ? to + path.slice(from.length) : path;
+    setOpenFiles((files) => files.map(moved));
+    setActive((current) => (current === null ? null : moved(current)));
+  };
+
+  const deleted = (path: string) => {
+    const gone = (candidate: string) => candidate === path || candidate.startsWith(`${path}/`);
+    const next = openFiles.filter((file) => !gone(file));
+    setOpenFiles(next);
+    if (active !== null && gone(active)) setActive(next[0] ?? null);
+  };
 
   return (
     <>
@@ -162,8 +271,18 @@ export function ChatView({ thread }: { thread: Thread }) {
           </PanelToggle>
         </header>
 
-        {openFile ? (
-          <FileView thread={thread} path={openFile} onClose={() => setOpenFile(null)} />
+        {openFiles.length > 0 ? (
+          <EditorTabs
+            title={thread.title}
+            files={openFiles}
+            active={active}
+            onSelect={setActive}
+            onClose={closeFile}
+          />
+        ) : null}
+
+        {active ? (
+          <FileView thread={thread} path={active} onClose={() => closeFile(active)} />
         ) : (
           <>
             <Timeline messages={messages} streaming={streaming} running={thread.status === "running"} />
@@ -178,8 +297,10 @@ export function ChatView({ thread }: { thread: Thread }) {
       {treeOpen ? (
         <FileTree
           thread={thread}
-          openPath={openFile}
-          onOpenFile={setOpenFile}
+          openPath={active}
+          onOpenFile={openFile}
+          onRenamed={renamed}
+          onDeleted={deleted}
           onClose={() => setTreeOpen(false)}
         />
       ) : null}
