@@ -29,6 +29,15 @@
   --git-deleted: #c74e39;
   --git-untracked: #73c991;
   --git-ignored: #8c8c8c;
+  /* token hues from VS Code's Dark+ theme */
+  --code-comment: #6a9955;
+  --code-string: #ce9178;
+  --code-keyword: #569cd6;
+  --code-control: #c586c0;
+  --code-number: #b5cea8;
+  --code-type: #4ec9b0;
+  --code-function: #dcdcaa;
+  --code-property: #9cdcfe;
   /* file-type icon hues, in the spirit of VS Code's Seti theme */
   --file-code: #519aba;
   --file-data: #cbcb41;
@@ -64,6 +73,14 @@
   --color-git-deleted: var(--git-deleted);
   --color-git-untracked: var(--git-untracked);
   --color-git-ignored: var(--git-ignored);
+  --color-code-comment: var(--code-comment);
+  --color-code-string: var(--code-string);
+  --color-code-keyword: var(--code-keyword);
+  --color-code-control: var(--code-control);
+  --color-code-number: var(--code-number);
+  --color-code-type: var(--code-type);
+  --color-code-function: var(--code-function);
+  --color-code-property: var(--code-property);
   --color-file-code: var(--file-code);
   --color-file-data: var(--file-data);
   --color-file-style: var(--file-style);

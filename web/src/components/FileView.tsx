@@ -5,6 +5,7 @@ import type { ChangedFile, Message, Thread } from "../lib/types.ts";
 import { useStore } from "../store.ts";
 import { cn } from "./ui.tsx";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { TOKEN_CLASS, tokenize } from "../lib/highlight.ts";
 
 const NO_MESSAGES: Message[] = [];
 
@@ -134,7 +135,9 @@ export function FileView({
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [lineCount, setLineCount] = useState(1);
+  const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
+  const layer = useRef<HTMLPreElement>(null);
   // deliberately uncontrolled: a React-controlled value resets the browser's own
   // undo stack on every keystroke, which kills cmd+z
   const editor = useRef<HTMLTextAreaElement>(null);
@@ -151,7 +154,10 @@ export function FileView({
         if (!dirty && editor.current && editor.current.value !== next.text) {
           editor.current.value = next.text;
         }
-        if (!dirty) setLineCount(next.text.split("\n").length);
+        if (!dirty) {
+          setLineCount(next.text.split("\n").length);
+          setText(next.text);
+        }
       })
       .catch((cause: Error) => {
         if (!cancelled) setError(cause.message);
@@ -271,19 +277,38 @@ export function FileView({
                 );
               })}
             </div>
-            <textarea
-              ref={editor}
-              defaultValue={file.text}
-              onInput={(event) => {
-                const value = event.currentTarget.value;
-                setLineCount(value.split("\n").length);
-                setDirty(value !== file.text);
-              }}
-              wrap="off"
-              spellCheck={false}
-              rows={lineCount}
-              className="min-w-0 flex-1 resize-none overflow-x-auto overflow-y-hidden bg-transparent pl-1 font-mono text-[12px] leading-[1.5] text-foreground outline-none"
-            />
+            <div className="relative min-w-0 flex-1">
+              <pre
+                ref={layer}
+                aria-hidden
+                className="pointer-events-none absolute inset-0 m-0 overflow-hidden pl-1 font-mono text-[12px] leading-[1.5] whitespace-pre"
+              >
+                {tokenize(text, path).map((token, index) => (
+                  <span key={index} className={TOKEN_CLASS[token.kind]}>
+                    {token.text}
+                  </span>
+                ))}
+              </pre>
+              <textarea
+                  ref={editor}
+                defaultValue={file.text}
+                onInput={(event) => {
+                  const value = event.currentTarget.value;
+                  setLineCount(value.split("\n").length);
+                  setText(value);
+                  setDirty(value !== file.text);
+                }}
+                onScroll={(event) => {
+                  // the highlight layer sits behind the textarea and has to track its
+                  // horizontal scroll, since only the textarea scrolls sideways
+                  if (layer.current) layer.current.scrollLeft = event.currentTarget.scrollLeft;
+                }}
+                wrap="off"
+                spellCheck={false}
+                rows={lineCount}
+                  className="relative w-full resize-none overflow-x-auto overflow-y-hidden bg-transparent pl-1 font-mono text-[12px] leading-[1.5] text-transparent caret-foreground outline-none selection:bg-primary/30"
+                />
+            </div>
           </div>
         ) : null}
       </div>
