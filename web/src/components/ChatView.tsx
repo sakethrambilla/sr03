@@ -267,6 +267,7 @@ export function ChatView({ thread }: { thread: Thread }) {
     setOpenFiles(next);
     markDirty(path, false);
     if (active === path) setActive(next[index] ?? next[index - 1] ?? null);
+    promptNextDirty(next, path);
   };
 
   const requestClose = (path: string) => {
@@ -280,6 +281,67 @@ export function ChatView({ thread }: { thread: Thread }) {
     // a failed write keeps the tab open so the edits are not lost
     if (saved) closeFile(path);
   };
+
+  // closing several tabs asks about each unsaved one in turn, so nothing is lost
+  const closingAll = useRef(false);
+
+  const promptNextDirty = (remaining: string[], justClosed: string) => {
+    const next = remaining.find((file) => file !== justClosed && dirty.has(file));
+    if (closingAll.current && next) setPendingClose(next);
+    else closingAll.current = false;
+  };
+
+  const closeAll = () => {
+    const unsaved = openFiles.filter((file) => dirty.has(file));
+    setOpenFiles(unsaved);
+    setActive(unsaved[0] ?? null);
+    closingAll.current = unsaved.length > 0;
+    if (unsaved[0]) setPendingClose(unsaved[0]);
+  };
+
+  const chord = useRef<number | null>(null);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const meta = event.metaKey || event.ctrlKey;
+      const key = event.key.toLowerCase();
+
+      // cmd+k arms a chord; the next key decides what it meant
+      if (chord.current !== null) {
+        window.clearTimeout(chord.current);
+        chord.current = null;
+        if (key === "w") {
+          event.preventDefault();
+          closeAll();
+          return;
+        }
+      }
+      if (!meta) return;
+
+      if (key === "k") {
+        event.preventDefault();
+        chord.current = window.setTimeout(() => (chord.current = null), 2000);
+        return;
+      }
+      if (key === "b" && event.shiftKey) {
+        event.preventDefault();
+        setTreeOpen(!treeOpen);
+        return;
+      }
+      if (key === "j" && !event.shiftKey) {
+        event.preventDefault();
+        setTerminalOpen(!terminalOpen);
+        return;
+      }
+      // the chat tab is pinned, so cmd+w only ever closes a file
+      if (key === "w" && !event.shiftKey) {
+        event.preventDefault();
+        if (active) requestClose(active);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [active, treeOpen, terminalOpen, openFiles, dirty]);
 
   const renamed = (from: string, to: string) => {
     const moved = (path: string) =>

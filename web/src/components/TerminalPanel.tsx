@@ -184,7 +184,9 @@ export function TerminalPanel({ thread, onClose }: { thread: Thread; onClose: ()
                 id === active ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50",
               )}
             >
-              <button onClick={() => setTabs((prev) => ({ ...prev, active: id }))}>{index + 1}</button>
+              <button onClick={() => setTabs((prev) => ({ ...prev, active: id }))}>
+                Terminal {index + 1}
+              </button>
               <button
                 onClick={() => close(id)}
                 aria-label={`Close terminal ${index + 1}`}
