@@ -304,6 +304,7 @@ export function FileTree({
   onOpenFile,
   onRenamed,
   onDeleted,
+  refreshToken,
   onClose,
 }: {
   thread: Thread;
@@ -311,6 +312,7 @@ export function FileTree({
   onOpenFile: (path: string) => void;
   onRenamed: (from: string, to: string) => void;
   onDeleted: (path: string) => void;
+  refreshToken: number;
   onClose: () => void;
 }) {
   const messageCount = useStore((state) => (state.messagesByThread[thread.id] ?? NO_MESSAGES).length);
@@ -358,7 +360,7 @@ export function FileTree({
     return () => {
       cancelled = true;
     };
-  }, [thread.id, thread.status, messageCount, tick]);
+  }, [thread.id, thread.status, messageCount, tick, refreshToken]);
 
   // opening straight onto the changed files is the whole point of the panel in a session
   useEffect(() => {

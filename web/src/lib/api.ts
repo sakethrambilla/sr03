@@ -101,6 +101,12 @@ export const api = {
       status: ChangedFile["status"] | null;
       diff: string;
     }>(`/api/threads/${id}/file?path=${encodeURIComponent(path)}`),
+  saveFile: (id: string, path: string, text: string) =>
+    call<{ path: string; bytes: number }>(`/api/threads/${id}/file`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path, text }),
+    }),
   createEntry: (id: string, path: string, kind: "file" | "dir") =>
     post<TreeEntry>(`/api/threads/${id}/fs`, { path, kind }),
   renameEntry: (id: string, path: string, name: string) =>

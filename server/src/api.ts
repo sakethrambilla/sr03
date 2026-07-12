@@ -19,6 +19,7 @@ import {
   renameWorkspaceEntry,
   saveUpload,
   trashWorkspaceEntry,
+  writeWorkspaceFile,
 } from "./fsbrowse.ts";
 import { messages, projects, threads } from "./db.ts";
 import {
@@ -304,6 +305,16 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
         requireString(body, "path"),
         body.kind === "dir" ? "dir" : "file",
       );
+    },
+  },
+  {
+    method: "PUT",
+    pattern: /^\/api\/threads\/([^/]+)\/file$/,
+    handler: async ({ params, request }) => {
+      const thread = requireThread(params[0]!);
+      const body = await readBody(request);
+      if (typeof body.text !== "string") throw new HttpError(400, "`text` is required");
+      return writeWorkspaceFile(thread.cwd, requireString(body, "path"), body.text);
     },
   },
   {

@@ -273,3 +273,15 @@ export async function trashWorkspaceEntry(
     return { path: rel, trashed: false };
   }
 }
+
+export async function writeWorkspaceFile(
+  root: string,
+  rel: string,
+  text: string,
+): Promise<{ path: string; bytes: number }> {
+  const target = safeJoin(root, rel);
+  const stats = await fs.stat(target);
+  if (!stats.isFile()) throw new Error("That path is not a file");
+  await fs.writeFile(target, text, "utf8");
+  return { path: rel, bytes: Buffer.byteLength(text) };
+}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { api } from "../lib/api.ts";
@@ -13,6 +13,7 @@ import { SidebarToggle } from "./Sidebar.tsx";
 import { Separator } from "@/components/ui/separator";
 import {
   ChangesIcon,
+  Dialog,
   ChevronIcon,
   CloseIcon,
   CodeIcon,
@@ -144,12 +145,14 @@ function EditorTabs({
   title,
   files,
   active,
+  dirty,
   onSelect,
   onClose,
 }: {
   title: string;
   files: string[];
   active: string | null;
+  dirty: Set<string>;
   onSelect: (path: string | null) => void;
   onClose: (path: string) => void;
 }) {
@@ -202,12 +205,20 @@ function EditorTabs({
             <button
               onClick={() => onClose(path)}
               aria-label={`Close ${name}`}
+              title={dirty.has(path) ? "Unsaved changes — click to close" : `Close ${name}`}
               className={cn(
-                "grid size-4 shrink-0 place-items-center rounded text-faint transition hover:bg-accent hover:text-foreground",
-                path === active ? "" : "opacity-0 group-hover/tab:opacity-100",
+                "group/close grid size-4 shrink-0 place-items-center rounded text-faint transition hover:bg-accent hover:text-foreground",
+                path === active || dirty.has(path) ? "" : "opacity-0 group-hover/tab:opacity-100",
               )}
             >
-              <CloseIcon className="size-3" />
+              {dirty.has(path) ? (
+                <>
+                  <span className="size-1.5 rounded-full bg-git-modified group-hover/close:hidden" />
+                  <CloseIcon className="hidden size-3 group-hover/close:block" />
+                </>
+              ) : (
+                <CloseIcon className="size-3" />
+              )}
             </button>
           </div>
         );
@@ -223,6 +234,26 @@ export function ChatView({ thread }: { thread: Thread }) {
   const [terminalOpen, setTerminalOpen] = usePersistedState<boolean>("terminal", false);
   const [openFiles, setOpenFiles] = useState<string[]>([]);
   const [active, setActive] = useState<string | null>(null);
+  const [dirty, setDirty] = useState<Set<string>>(new Set());
+  const [pendingClose, setPendingClose] = useState<string | null>(null);
+  const [fsVersion, setFsVersion] = useState(0);
+
+  // each open FileView registers its own save, since only it holds the edited text
+  const savers = useRef(new Map<string, () => Promise<boolean>>());
+  const registerSave = useCallback((path: string, save: (() => Promise<boolean>) | null) => {
+    if (save) savers.current.set(path, save);
+    else savers.current.delete(path);
+  }, []);
+
+  const markDirty = useCallback((path: string, isDirty: boolean) => {
+    setDirty((current) => {
+      if (current.has(path) === isDirty) return current;
+      const next = new Set(current);
+      if (isDirty) next.add(path);
+      else next.delete(path);
+      return next;
+    });
+  }, []);
 
   const openFile = (path: string) => {
     setOpenFiles((files) => (files.includes(path) ? files : [...files, path]));
@@ -234,7 +265,20 @@ export function ChatView({ thread }: { thread: Thread }) {
     const index = openFiles.indexOf(path);
     const next = openFiles.filter((file) => file !== path);
     setOpenFiles(next);
+    markDirty(path, false);
     if (active === path) setActive(next[index] ?? next[index - 1] ?? null);
+  };
+
+  const requestClose = (path: string) => {
+    if (dirty.has(path)) setPendingClose(path);
+    else closeFile(path);
+  };
+
+  const saveAndClose = async (path: string) => {
+    const saved = await savers.current.get(path)?.();
+    setPendingClose(null);
+    // a failed write keeps the tab open so the edits are not lost
+    if (saved) closeFile(path);
   };
 
   const renamed = (from: string, to: string) => {
@@ -276,19 +320,36 @@ export function ChatView({ thread }: { thread: Thread }) {
             title={thread.title}
             files={openFiles}
             active={active}
+            dirty={dirty}
             onSelect={setActive}
-            onClose={closeFile}
+            onClose={requestClose}
           />
         ) : null}
 
-        {active ? (
-          <FileView thread={thread} path={active} onClose={() => closeFile(active)} />
-        ) : (
+        {/* every open file stays mounted so an unsaved draft survives a tab switch */}
+        {openFiles.map((path) => (
+          <div
+            key={path}
+            className={cn("flex min-h-0 flex-1 flex-col", path === active ? "" : "hidden")}
+          >
+            <FileView
+              thread={thread}
+              path={path}
+              active={path === active}
+              onClose={() => requestClose(path)}
+              onDirtyChange={(isDirty) => markDirty(path, isDirty)}
+              onSaved={() => setFsVersion((current) => current + 1)}
+              registerSave={registerSave}
+            />
+          </div>
+        ))}
+
+        {active === null ? (
           <>
             <Timeline messages={messages} streaming={streaming} running={thread.status === "running"} />
             <ThreadComposer thread={thread} />
           </>
-        )}
+        ) : null}
 
         {terminalOpen ? (
           <TerminalPanel thread={thread} onClose={() => setTerminalOpen(false)} />
@@ -301,8 +362,37 @@ export function ChatView({ thread }: { thread: Thread }) {
           onOpenFile={openFile}
           onRenamed={renamed}
           onDeleted={deleted}
+          refreshToken={fsVersion}
           onClose={() => setTreeOpen(false)}
         />
+      ) : null}
+
+      {pendingClose ? (
+        <Dialog
+          title="Save changes?"
+          onClose={() => setPendingClose(null)}
+          footer={
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  closeFile(pendingClose);
+                  setPendingClose(null);
+                }}
+              >
+                Undo changes
+              </Button>
+              <Button variant="default" onClick={() => void saveAndClose(pendingClose)}>
+                Save
+              </Button>
+            </div>
+          }
+        >
+          <p className="text-[13px] text-muted-foreground">
+            <span className="font-mono text-foreground">{pendingClose}</span> has edits that were
+            never saved.
+          </p>
+        </Dialog>
       ) : null}
     </>
   );
