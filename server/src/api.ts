@@ -450,7 +450,7 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
     handler: ({ params }) => {
       const thread = requireThread(params[0]!);
       claude.closeSession(thread.id);
-      pty.closeSession(thread.id);
+      pty.closeThread(thread.id);
       threads.remove(thread.id);
       publish({ type: "projects.changed" });
       return { ok: true };

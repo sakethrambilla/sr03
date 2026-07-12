@@ -57,20 +57,39 @@ function handleClientMessage(socket: { send: (data: string) => void }, raw: stri
   if (!thread) return;
 
   switch (message.type) {
+    case "pty.list":
+      socket.send(
+        JSON.stringify({ type: "pty.terminals", threadId: thread.id, ids: pty.listSessions(thread.id) }),
+      );
+      return;
+    case "pty.create": {
+      const terminalId = pty.createSession(thread.id, thread.cwd, message.cols, message.rows);
+      socket.send(JSON.stringify({ type: "pty.created", threadId: thread.id, terminalId }));
+      return;
+    }
     case "pty.open": {
       // the snapshot goes only to the socket that asked, so other clients keep their own scroll
-      const { data } = pty.openSession(thread.id, thread.cwd, message.cols, message.rows);
-      socket.send(JSON.stringify({ type: "pty.snapshot", threadId: thread.id, data }));
+      const attached = pty.attach(message.terminalId, message.cols, message.rows);
+      if (attached) {
+        socket.send(
+          JSON.stringify({
+            type: "pty.snapshot",
+            threadId: thread.id,
+            terminalId: message.terminalId,
+            data: attached.data,
+          }),
+        );
+      }
       return;
     }
     case "pty.input":
-      pty.write(thread.id, message.data);
+      pty.write(message.terminalId, message.data);
       return;
     case "pty.resize":
-      pty.resize(thread.id, message.cols, message.rows);
+      pty.resize(message.terminalId, message.cols, message.rows);
       return;
     case "pty.close":
-      pty.closeSession(thread.id);
+      pty.closeSession(message.terminalId);
       return;
   }
 }

@@ -56,14 +56,18 @@ export type ServerEvent =
   | { type: "thread.approval"; approval: PendingApproval }
   | { type: "thread.approval.resolved"; threadId: string; approvalId: string }
   | { type: "thread.updated"; thread: Thread }
-  | { type: "pty.data"; threadId: string; data: string }
-  | { type: "pty.snapshot"; threadId: string; data: string }
-  | { type: "pty.exit"; threadId: string; code: number }
+  | { type: "pty.data"; threadId: string; terminalId: string; data: string }
+  | { type: "pty.snapshot"; threadId: string; terminalId: string; data: string }
+  | { type: "pty.terminals"; threadId: string; ids: string[] }
+  | { type: "pty.created"; threadId: string; terminalId: string }
+  | { type: "pty.exit"; threadId: string; terminalId: string; code: number }
   | { type: "projects.changed" };
 
 // the only traffic that flows client -> server over the socket; everything else is REST
 export type ClientMessage =
-  | { type: "pty.open"; threadId: string; cols: number; rows: number }
-  | { type: "pty.input"; threadId: string; data: string }
-  | { type: "pty.resize"; threadId: string; cols: number; rows: number }
-  | { type: "pty.close"; threadId: string };
+  | { type: "pty.list"; threadId: string }
+  | { type: "pty.create"; threadId: string; cols: number; rows: number }
+  | { type: "pty.open"; threadId: string; terminalId: string; cols: number; rows: number }
+  | { type: "pty.input"; threadId: string; terminalId: string; data: string }
+  | { type: "pty.resize"; threadId: string; terminalId: string; cols: number; rows: number }
+  | { type: "pty.close"; threadId: string; terminalId: string };
