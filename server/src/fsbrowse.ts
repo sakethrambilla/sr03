@@ -67,11 +67,12 @@ export async function choosePath(kind: "folder" | "file"): Promise<string | null
   if (process.platform !== "darwin") throw new Error("The native picker needs macOS");
   const prompt = kind === "folder" ? "sr03 — choose a project folder" : "sr03 — choose a file";
   try {
+    // bare `activate` turns osascript itself into a GUI app, which costs ~2s before the dialog shows
     const { stdout } = await exec("osascript", [
       "-e",
-      "activate",
+      `tell application "System Events" to activate`,
       "-e",
-      `POSIX path of (choose ${kind} with prompt "${prompt}")`,
+      `tell application "System Events" to POSIX path of (choose ${kind} with prompt "${prompt}")`,
     ]);
     const chosen = stdout.trim();
     return chosen ? path.resolve(chosen) : null;
