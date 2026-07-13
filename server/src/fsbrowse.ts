@@ -159,6 +159,41 @@ export async function openIn(id: string, target: string): Promise<void> {
   await exec("open", ["-a", entry.bundle, target]);
 }
 
+const iconCache = new Map<string, Buffer | null>();
+
+// Resources holds a document icon per file type too, so only CFBundleIconFile names the app's own
+async function bundleIcon(bundle: string): Promise<string | null> {
+  const { stdout } = await exec("plutil", [
+    "-extract",
+    "CFBundleIconFile",
+    "raw",
+    "-o",
+    "-",
+    path.join(bundle, "Contents/Info.plist"),
+  ]).catch(() => ({ stdout: "" }));
+  const name = stdout.trim();
+  if (!name) return null;
+  const icns = path.join(bundle, "Contents/Resources", name.endsWith(".icns") ? name : `${name}.icns`);
+  return fs.stat(icns).then(() => icns).catch(() => null);
+}
+
+export async function appIcon(id: string): Promise<Buffer | null> {
+  const cached = iconCache.get(id);
+  if (cached !== undefined) return cached;
+  const entry = (await installedApps()).find((candidate) => candidate.app.id === id);
+  const icns = entry ? await bundleIcon(entry.bundle) : null;
+  let png: Buffer | null = null;
+  if (icns) {
+    const out = path.join(os.tmpdir(), `sr03-icon-${id}-${process.pid}.png`);
+    png = await exec("sips", ["-s", "format", "png", "--resampleHeightWidth", "64", "64", icns, "--out", out])
+      .then(() => fs.readFile(out))
+      .catch(() => null);
+    await fs.rm(out, { force: true });
+  }
+  iconCache.set(id, png);
+  return png;
+}
+
 export interface TreeEntry {
   name: string;
   path: string;

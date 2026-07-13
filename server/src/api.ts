@@ -11,6 +11,7 @@ import {
   choosePath,
   createWorkspaceEntry,
   isDirectory,
+  appIcon,
   listApps,
   listDirectory,
   listWorkspaceDir,
@@ -125,6 +126,20 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
     method: "GET",
     pattern: /^\/api\/providers$/,
     handler: () => listProviders().then((providers) => ({ providers })),
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/apps\/([^/]+)\/icon$/,
+    handler: async ({ params, response }) => {
+      const png = await appIcon(params[0]!);
+      if (!png) throw new HttpError(404, "No icon for that app");
+      response.writeHead(200, {
+        "content-type": "image/png",
+        "content-length": png.length,
+        "cache-control": "max-age=3600",
+      });
+      response.end(png);
+    },
   },
   {
     method: "GET",

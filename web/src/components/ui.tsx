@@ -22,6 +22,7 @@ import {
   GitBranch,
   MessageSquare,
   Mic,
+  MousePointer2,
   PanelLeft,
   Plus,
   RefreshCw,
@@ -30,6 +31,7 @@ import {
   SquareStack,
   SquareTerminal,
   X,
+  Zap,
   type LucideIcon,
 } from "lucide-react";
 
@@ -164,6 +166,8 @@ const ICONS = {
   NewFolderIcon: FolderPlus,
   CollapseIcon: ChevronsDownUp,
   ExpandIcon: ChevronsUpDown,
+  CursorIcon: MousePointer2,
+  ZedIcon: Zap,
 } as const;
 
 function icon(Source: LucideIcon) {
@@ -194,6 +198,8 @@ export const NewFileIcon = icon(ICONS.NewFileIcon);
 export const NewFolderIcon = icon(ICONS.NewFolderIcon);
 export const CollapseIcon = icon(ICONS.CollapseIcon);
 export const ExpandIcon = icon(ICONS.ExpandIcon);
+export const CursorIcon = icon(ICONS.CursorIcon);
+export const ZedIcon = icon(ICONS.ZedIcon);
 
 export interface MenuItem {
   id: string;

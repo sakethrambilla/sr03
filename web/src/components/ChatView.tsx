@@ -17,11 +17,13 @@ import {
   ChevronIcon,
   CloseIcon,
   CodeIcon,
+  CursorIcon,
   FileIcon,
   FolderIcon,
   MessageIcon,
   StatusDot,
   TerminalIcon,
+  ZedIcon,
   cn,
   usePersistedState,
 } from "./ui.tsx";
@@ -69,8 +71,27 @@ function PanelToggle({
   );
 }
 
+// lucide has no brand marks, so these only stand in when the real bundle icon can't be read
+const APP_ICONS: Record<string, typeof CodeIcon> = {
+  finder: FolderIcon,
+  cursor: CursorIcon,
+  zed: ZedIcon,
+  vscode: CodeIcon,
+};
+
 function AppIcon({ id }: { id: string }) {
-  return id === "finder" ? <FolderIcon /> : <CodeIcon />;
+  const [failed, setFailed] = useState(false);
+  const Fallback = APP_ICONS[id] ?? CodeIcon;
+
+  if (failed) return <Fallback />;
+  return (
+    <img
+      src={`/api/apps/${id}/icon`}
+      alt=""
+      onError={() => setFailed(true)}
+      className="size-4 shrink-0"
+    />
+  );
 }
 
 function OpenMenu({ thread }: { thread: Thread }) {
