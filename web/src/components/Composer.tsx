@@ -13,7 +13,6 @@ import {
   BranchIcon,
   Chip,
   CloseIcon,
-  FolderIcon,
   Menu,
   MicIcon,
   PlusIcon,
@@ -324,7 +323,7 @@ export function Composer({
         }}
       >
         {above}
-        {chips ? <div className="mb-2 flex flex-wrap items-center gap-1.5">{chips}</div> : null}
+        {chips ? <div className="mb-2 flex flex-wrap items-center gap-1.5 empty:hidden">{chips}</div> : null}
 
         <div
           className={cn(
@@ -508,7 +507,6 @@ function ApprovalPanel({ approval }: { approval: PendingApproval }) {
 
 // the session's folder, branch and worktree are settled once it exists, so these are read-only
 function ThreadChips({ thread }: { thread: Thread }) {
-  const project = useStore((state) => state.projects.find((item) => item.id === thread.projectId));
   const [dirty, setDirty] = useState(0);
 
   useEffect(() => {
@@ -530,7 +528,6 @@ function ThreadChips({ thread }: { thread: Thread }) {
 
   return (
     <>
-      <Chip icon={<FolderIcon />}>{project?.name ?? thread.cwd.split("/").pop()}</Chip>
       {thread.branch ? (
         <Chip
           icon={<BranchIcon />}

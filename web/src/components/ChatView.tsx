@@ -363,11 +363,10 @@ export function ChatView({ thread }: { thread: Thread }) {
         <header className="flex items-center gap-2.5 border-b border-border/60 px-5 py-3">
           <SidebarToggle />
           <StatusDot status={thread.status} />
-          <h1 className="min-w-0 truncate text-[13.5px] font-medium">{thread.title}</h1>
+          <h1 className="min-w-0 truncate text-[13.5px] font-medium" title={thread.cwd}>
+            {thread.title}
+          </h1>
           <div className="flex-1" />
-          <span className="truncate font-mono text-[11px] text-faint" title={thread.cwd}>
-            {thread.cwd.replace(/^\/Users\/[^/]+/, "~")}
-          </span>
           <OpenMenu thread={thread} />
           <PanelToggle pressed={terminalOpen} onPressedChange={setTerminalOpen} label="Terminal">
             <TerminalIcon className="size-4" />
