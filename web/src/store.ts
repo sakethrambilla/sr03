@@ -25,6 +25,7 @@ export interface Draft {
 interface Store extends AppState {
   connected: boolean;
   sidebarOpen: boolean;
+  settingsOpen: boolean;
   activeThreadId: string | null;
   draft: Draft | null;
   messagesByThread: Record<string, Message[]>;
@@ -48,6 +49,7 @@ interface Store extends AppState {
   respond: (approvalId: string, decision: "allow" | "always" | "deny") => Promise<void>;
   applyEvent: (event: ServerEvent) => void;
   toggleSidebar: () => void;
+  setSettingsOpen: (open: boolean) => void;
   setConnected: (connected: boolean) => void;
   setError: (error: string | null) => void;
 }
@@ -72,6 +74,7 @@ export const useStore = create<Store>((set, get) => ({
   ...EMPTY,
   connected: false,
   sidebarOpen: true,
+  settingsOpen: false,
   activeThreadId: null,
   draft: null,
   messagesByThread: {},
@@ -80,6 +83,7 @@ export const useStore = create<Store>((set, get) => ({
   error: null,
 
   toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
+  setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   setConnected: (connected) => set({ connected }),
   setError: (error) => set({ error }),
 

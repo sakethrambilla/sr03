@@ -26,6 +26,7 @@ import {
   Plus,
   RefreshCw,
   Sparkles,
+  Settings,
   SquareStack,
   SquareTerminal,
   X,
@@ -158,6 +159,7 @@ const ICONS = {
   SparkleIcon: Sparkles,
   PlusIcon: Plus,
   MessageIcon: MessageSquare,
+  SettingsIcon: Settings,
   NewFileIcon: FilePlus,
   NewFolderIcon: FolderPlus,
   CollapseIcon: ChevronsDownUp,
@@ -187,6 +189,7 @@ export const WorktreeIcon = icon(ICONS.WorktreeIcon);
 export const SparkleIcon = icon(ICONS.SparkleIcon);
 export const PlusIcon = icon(ICONS.PlusIcon);
 export const MessageIcon = icon(ICONS.MessageIcon);
+export const SettingsIcon = icon(ICONS.SettingsIcon);
 export const NewFileIcon = icon(ICONS.NewFileIcon);
 export const NewFolderIcon = icon(ICONS.NewFolderIcon);
 export const CollapseIcon = icon(ICONS.CollapseIcon);

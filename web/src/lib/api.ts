@@ -7,6 +7,7 @@ import type {
   Message,
   PermissionMode,
   Project,
+  ProviderStatus,
   Thread,
   TreeEntry,
   Worktree,
@@ -27,6 +28,9 @@ const post = <T>(path: string, body?: unknown) =>
 
 export const api = {
   state: () => call<AppState>("/api/state"),
+  providers: () => call<{ providers: ProviderStatus[] }>("/api/providers"),
+  logoutProvider: (id: string) =>
+    post<{ ok: boolean; output: string }>(`/api/providers/${id}/logout`),
   browse: (path?: string) =>
     call<DirListing>(`/api/fs${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   choosePath: (kind: "folder" | "file") => post<{ path: string | null }>("/api/fs/choose", { kind }),

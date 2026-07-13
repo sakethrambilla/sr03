@@ -16,6 +16,7 @@ import {
   ChevronIcon,
   DotsIcon,
   PlusIcon,
+  SettingsIcon,
   SidebarIcon,
   StatusDot,
   WorktreeIcon,
@@ -157,6 +158,7 @@ function ThreadRow({ thread }: { thread: Thread }) {
 export function Sidebar() {
   const { projects, threads, connected, draft } = useStore();
   const startDraft = useStore((state) => state.startDraft);
+  const setSettingsOpen = useStore((state) => state.setSettingsOpen);
   const [worktreeProject, setWorktreeProject] = useState<Project | null>(null);
   const [showArchived, setShowArchived] = useState(false);
 
@@ -274,6 +276,21 @@ export function Sidebar() {
           title={connected ? "Connected" : "Disconnected"}
         />
         <span className="text-[11px] text-faint">{connected ? "connected" : "reconnecting…"}</span>
+        <div className="flex-1" />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setSettingsOpen(true)}
+              aria-label="Settings"
+              className="size-6 text-faint"
+            >
+              <SettingsIcon className="size-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Settings</TooltipContent>
+        </Tooltip>
       </footer>
 
       {worktreeProject ? (

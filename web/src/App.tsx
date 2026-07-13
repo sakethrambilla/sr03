@@ -6,6 +6,7 @@ import { useActiveThread, useStore } from "./store.ts";
 import { ChatView } from "./components/ChatView.tsx";
 import { DraftView } from "./components/DraftView.tsx";
 import { Sidebar, SidebarToggle } from "./components/Sidebar.tsx";
+import { SettingsView } from "./components/SettingsView.tsx";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -19,6 +20,7 @@ export function App() {
   const draft = useStore((state) => state.draft);
   const startDraft = useStore((state) => state.startDraft);
   const sidebarOpen = useStore((state) => state.sidebarOpen);
+  const settingsOpen = useStore((state) => state.settingsOpen);
   const toggleSidebar = useStore((state) => state.toggleSidebar);
   const thread = useActiveThread();
 
@@ -49,7 +51,9 @@ export function App() {
     <TooltipProvider>
       <div className="flex h-full w-full overflow-hidden">
       {sidebarOpen ? <Sidebar /> : null}
-      {draft ? (
+      {settingsOpen ? (
+        <SettingsView />
+      ) : draft ? (
         <DraftView draft={draft} />
       ) : thread ? (
         <ChatView key={thread.id} thread={thread} />

@@ -149,3 +149,23 @@ export interface TreeEntry {
   isDir: boolean;
   ignored: boolean;
 }
+
+export interface ProviderAccount {
+  email: string | null;
+  organization: string | null;
+  plan: string | null;
+}
+
+export interface ProviderStatus {
+  id: string;
+  label: string;
+  state: "ready" | "signed-out" | "missing";
+  detail: string;
+  version: string | null;
+  binary: string | null;
+  account: ProviderAccount | null;
+  settingSources: string[];
+  models: ModelOption[];
+  defaults: { model: string; permissionMode: string; effort: string };
+  signInHint: string;
+}

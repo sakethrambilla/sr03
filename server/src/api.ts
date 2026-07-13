@@ -6,6 +6,7 @@ import { forkSession } from "@anthropic-ai/claude-agent-sdk";
 import * as claude from "./claude.ts";
 import * as git from "./git.ts";
 import * as pty from "./pty.ts";
+import { listProviders, logoutProvider } from "./providers.ts";
 import {
   choosePath,
   createWorkspaceEntry,
@@ -114,6 +115,16 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
         effort: DEFAULT_EFFORT,
       },
     }),
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/providers\/([^/]+)\/logout$/,
+    handler: ({ params }) => logoutProvider(params[0]!),
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/providers$/,
+    handler: () => listProviders().then((providers) => ({ providers })),
   },
   {
     method: "GET",
