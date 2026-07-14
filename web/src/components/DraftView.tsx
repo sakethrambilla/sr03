@@ -4,13 +4,19 @@ import { api } from "../lib/api.ts";
 import type { Branch, GitSnapshot } from "../lib/types.ts";
 import { useStore } from "../store.ts";
 import type { Draft } from "../store.ts";
-import { Input } from "@/components/ui/input";
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   BranchIcon,
+  CheckIcon,
   Chip,
   FolderIcon,
   PlusIcon,
@@ -48,59 +54,38 @@ function BranchMenu({
   const [query, setQuery] = useState("");
 
   const needle = query.trim();
-  const matches = branches.filter((branch) => branch.name.includes(needle));
   const isNew = needle.length > 0 && !branches.some((branch) => branch.name === needle);
 
   return (
-      <div>
-        <Input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter") return;
-            if (isNew) onPick({ name: needle, create: true });
-            else if (matches[0]) onPick(matches[0]);
-          }}
-          autoFocus
-          spellCheck={false}
-          placeholder="filter, or type a new branch name"
-          className="mb-1 h-8 font-mono text-[12px] placeholder:font-sans"
-        />
-        <ul className="max-h-64 overflow-y-auto">
-          {isNew ? (
-            <li>
-              <Button
-                variant="ghost"
-                onClick={() => onPick({ name: needle, create: true })}
-                className="h-auto w-full justify-start gap-2 px-2 py-1.5 text-[12.5px] font-normal"
-              >
-                <PlusIcon className="text-primary" />
-                <span className="min-w-0 flex-1 truncate font-mono">{needle}</span>
-                <span className="text-[11px] text-faint">new branch · worktree</span>
-              </Button>
-            </li>
-          ) : null}
-          {matches.map((branch) => (
-            <li key={branch.name}>
-              <Button
-                variant="ghost"
-                onClick={() => onPick(branch)}
-                className={cn(
-                  "h-auto w-full justify-start gap-2 px-2 py-1.5 text-[12.5px] font-normal",
-                  branch.name === selected && "bg-accent/70",
-                )}
-              >
-                <span className="min-w-0 flex-1 truncate font-mono">{branch.name}</span>
-                {branch.name === current ? <span className="text-[11px] text-faint">checked out</span> : null}
-                {linkedWorktree(branch) ? <WorktreeIcon className="size-3 text-primary" /> : null}
-              </Button>
-            </li>
-          ))}
-          {matches.length === 0 && !isNew ? (
-            <li className="px-2 py-3 text-center text-[12px] text-faint">No branches</li>
-          ) : null}
-        </ul>
-      </div>
+    // the search sits under the list, so its divider flips to the top edge
+    <Command className="[&_[data-slot=command-input-wrapper]]:border-t [&_[data-slot=command-input-wrapper]]:border-b-0">
+      <CommandList className="max-h-64 p-1">
+        <CommandEmpty className="py-4 text-center text-[12px] text-faint">No branches</CommandEmpty>
+        {isNew ? (
+          <CommandItem value={needle} onSelect={() => onPick({ name: needle, create: true })}>
+            <PlusIcon className="text-primary" />
+            <span className="min-w-0 flex-1 truncate font-mono text-[12.5px]">{needle}</span>
+            <span className="text-[11px] text-faint">new branch · worktree</span>
+          </CommandItem>
+        ) : null}
+        {branches.map((branch) => (
+          <CommandItem key={branch.name} value={branch.name} onSelect={() => onPick(branch)}>
+            <span className="min-w-0 flex-1 truncate font-mono text-[12.5px]">{branch.name}</span>
+            {branch.name === current ? (
+              <span className="text-[11px] text-faint">checked out</span>
+            ) : null}
+            {linkedWorktree(branch) ? <WorktreeIcon className="size-3 text-primary" /> : null}
+            {branch.name === selected ? <CheckIcon className="text-primary" /> : null}
+          </CommandItem>
+        ))}
+      </CommandList>
+      <CommandInput
+        autoFocus
+        value={query}
+        onValueChange={setQuery}
+        placeholder="Search branches, or type a new name…"
+      />
+    </Command>
   );
 }
 
@@ -224,7 +209,7 @@ function DraftChips({ draft }: { draft: Draft }) {
                 <span className="max-w-40 truncate font-mono">{selected ?? "detached"}</span>
                 {draft.createBranch ? <span className="text-[11px] text-primary">new</span> : null}
               </PopoverTrigger>
-              <PopoverContent align="start" side="top" className="w-80">
+              <PopoverContent align="start" side="top" className="w-80 p-0">
                 <BranchMenu
                   branches={branches}
                   current={current}
