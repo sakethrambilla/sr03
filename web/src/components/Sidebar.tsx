@@ -4,6 +4,13 @@ import type { Project, Thread } from "../lib/types.ts";
 import { useStore } from "../store.ts";
 import { Button } from "@/components/ui/button";
 import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -11,16 +18,20 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
+  CheckIcon,
   ChevronIcon,
   DotsIcon,
+  FolderIcon,
   PlusIcon,
   SettingsIcon,
   SidebarIcon,
   StatusDot,
   WorktreeIcon,
   cn,
+  usePersistedState,
 } from "./ui.tsx";
 import { WorktreePanel } from "./WorktreePanel.tsx";
 
@@ -155,26 +166,157 @@ function ThreadRow({ thread }: { thread: Thread }) {
   );
 }
 
+function WorktreeButton({
+  project,
+  onOpen,
+  hover,
+}: {
+  project: Project;
+  onOpen: (project: Project) => void;
+  hover?: boolean;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => onOpen(project)}
+          aria-label="Worktrees"
+          className={cn("size-6 shrink-0 text-faint", hover && "opacity-0 group-hover:opacity-100")}
+        >
+          <WorktreeIcon className="size-3.5" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>Worktrees</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function NewSessionButton({ project }: { project: Project }) {
+  const startDraft = useStore((state) => state.startDraft);
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => startDraft({ projectId: project.id })}
+          aria-label="New session in this folder"
+          className="size-6 shrink-0 text-faint"
+        >
+          <PlusIcon className="size-3.5" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>New session in this folder</TooltipContent>
+    </Tooltip>
+  );
+}
+
+const ALL_PROJECTS = "all";
+
+function ProjectFilter({
+  projects,
+  selected,
+  onSelect,
+}: {
+  projects: Project[];
+  selected: Project | null;
+  onSelect: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  const pick = (id: string) => {
+    onSelect(id);
+    setOpen(false);
+  };
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" className="h-8 w-full justify-start gap-2 px-2 font-normal">
+          <FolderIcon className="text-faint" />
+          <span className="min-w-0 flex-1 truncate text-left text-[13px]">
+            {selected ? selected.name : "All projects"}
+          </span>
+          <ChevronIcon className="size-3 text-faint" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-(--radix-popover-trigger-width) p-0">
+        <Command>
+          <CommandInput placeholder="Search projects…" />
+          <CommandList>
+            <CommandEmpty className="py-4 text-center text-[12px] text-faint">
+              No projects.
+            </CommandEmpty>
+            <CommandItem value="All projects" onSelect={() => pick(ALL_PROJECTS)}>
+              <FolderIcon className="text-faint" />
+              <span className="min-w-0 flex-1 truncate text-[13px]">All projects</span>
+              {selected ? null : <CheckIcon className="text-primary" />}
+            </CommandItem>
+            {projects.map((project) => (
+              <CommandItem
+                key={project.id}
+                // searchable by either, since a folder is as often known by its path
+                value={`${project.name} ${project.path}`}
+                onSelect={() => pick(project.id)}
+              >
+                <FolderIcon className="text-faint" />
+                <span className="min-w-0 flex-1 truncate text-[13px]" title={project.path}>
+                  {project.name}
+                </span>
+                {project.id === selected?.id ? <CheckIcon className="text-primary" /> : null}
+              </CommandItem>
+            ))}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export function Sidebar() {
   const { projects, threads, connected, draft } = useStore();
   const startDraft = useStore((state) => state.startDraft);
   const setSettingsOpen = useStore((state) => state.setSettingsOpen);
   const [worktreeProject, setWorktreeProject] = useState<Project | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+  const [projectFilter, setProjectFilter] = usePersistedState<string>("sidebar.project", ALL_PROJECTS);
+
+  const [foldedIds, setFoldedIds] = usePersistedState<string>("sidebar.collapsed", "");
+
+  // a filter left pointing at a removed folder falls back to showing everything
+  const selected = projects.find((project) => project.id === projectFilter) ?? null;
+
+  const collapsed = useMemo(() => new Set(foldedIds.split(",").filter(Boolean)), [foldedIds]);
+
+  const toggleCollapsed = (id: string) => {
+    const next = new Set(collapsed);
+    if (!next.delete(id)) next.add(id);
+    setFoldedIds([...next].join(","));
+  };
 
   // folders are derived from threads — a folder with no session isn't listed
   const grouped = useMemo(
     () =>
       projects
+        .filter((project) => !selected || project.id === selected.id)
         .map((project) => ({
           project,
           threads: threads.filter((thread) => thread.projectId === project.id && !thread.archived),
         }))
         .filter((group) => group.threads.length > 0),
-    [projects, threads],
+    [projects, threads, selected],
   );
 
-  const archived = useMemo(() => threads.filter((thread) => thread.archived), [threads]);
+  const archived = useMemo(
+    () =>
+      threads.filter(
+        (thread) => thread.archived && (!selected || thread.projectId === selected.id),
+      ),
+    [threads, selected],
+  );
 
   return (
     <aside className="flex h-full w-72 shrink-0 flex-col border-r border-border/60 bg-card">
@@ -182,7 +324,7 @@ export function Sidebar() {
         <span className="font-mono text-[13px] font-semibold tracking-tight">sr03</span>
       </header>
 
-      <div className="px-2 pb-2">
+      <div className="px-2 pb-1">
         <Button
           variant="secondary"
           onClick={() => startDraft()}
@@ -193,61 +335,55 @@ export function Sidebar() {
         </Button>
       </div>
 
+      <div className="flex items-center gap-0.5 px-2 pb-1">
+        <div className="min-w-0 flex-1">
+          <ProjectFilter projects={projects} selected={selected} onSelect={setProjectFilter} />
+        </div>
+        {selected?.isGit ? <WorktreeButton project={selected} onOpen={setWorktreeProject} /> : null}
+        {selected ? <NewSessionButton project={selected} /> : null}
+      </div>
+
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {grouped.length === 0 && archived.length === 0 ? (
           <p className="px-2 py-6 text-center text-[12px] text-faint">
-            No sessions yet. Start one with New.
+            {selected ? "No sessions in this folder." : "No sessions yet. Start one with New."}
           </p>
         ) : null}
 
-        {grouped.map(({ project, threads: projectThreads }) => (
-          <section key={project.id} className="mb-4">
-            <div className="group flex items-center gap-0.5 px-2 py-1">
-              <span
-                className="min-w-0 flex-1 truncate text-[12px] font-medium text-faint"
-                title={project.path}
-              >
-                {project.name}
-              </span>
-              {project.isGit ? (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setWorktreeProject(project)}
-                      aria-label="Worktrees"
-                      className="size-6 text-faint opacity-0 group-hover:opacity-100"
-                    >
-                      <WorktreeIcon className="size-3.5" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Worktrees</TooltipContent>
-                </Tooltip>
-              ) : null}
-              <Tooltip>
-                <TooltipTrigger asChild>
+        {grouped.map(({ project, threads: projectThreads }) => {
+          // the filter already names the folder when one is picked, so it has no header to collapse
+          const folded = !selected && collapsed.has(project.id);
+          return (
+            <section key={project.id} className="mb-4">
+              {selected ? null : (
+                <div className="group flex items-center gap-0.5">
                   <Button
                     variant="ghost"
-                    size="icon"
-                    onClick={() => startDraft({ projectId: project.id })}
-                    aria-label="New thread"
-                    className="size-6 text-faint"
+                    onClick={() => toggleCollapsed(project.id)}
+                    title={project.path}
+                    className="h-auto min-w-0 flex-1 justify-start gap-1 px-2 py-1 text-[12px] font-medium text-faint"
                   >
-                    <PlusIcon className="size-3.5" />
+                    <span className="min-w-0 truncate text-left">{project.name}</span>
+                    <ChevronIcon className={cn("size-3 transition-transform", folded && "-rotate-90")} />
+                    {folded ? <span>({projectThreads.length})</span> : null}
                   </Button>
-                </TooltipTrigger>
-                <TooltipContent>New thread</TooltipContent>
-              </Tooltip>
-            </div>
+                  {project.isGit ? (
+                    <WorktreeButton project={project} onOpen={setWorktreeProject} hover />
+                  ) : null}
+                  <NewSessionButton project={project} />
+                </div>
+              )}
 
-            <ul className="mt-0.5">
-              {projectThreads.map((thread) => (
-                <ThreadRow key={thread.id} thread={thread} />
-              ))}
-            </ul>
-          </section>
-        ))}
+              {folded ? null : (
+                <ul className="mt-0.5">
+                  {projectThreads.map((thread) => (
+                    <ThreadRow key={thread.id} thread={thread} />
+                  ))}
+                </ul>
+              )}
+            </section>
+          );
+        })}
 
         {archived.length > 0 ? (
           <section className="mb-4">
