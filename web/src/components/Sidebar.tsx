@@ -193,7 +193,7 @@ function WorktreeButton({
   );
 }
 
-function NewSessionButton({ project }: { project: Project }) {
+function NewSessionButton({ project, hover }: { project: Project; hover?: boolean }) {
   const startDraft = useStore((state) => state.startDraft);
 
   return (
@@ -204,7 +204,7 @@ function NewSessionButton({ project }: { project: Project }) {
           size="icon"
           onClick={() => startDraft({ projectId: project.id })}
           aria-label="New session in this folder"
-          className="size-6 shrink-0 text-faint"
+          className={cn("size-6 shrink-0 text-faint", hover && "opacity-0 group-hover:opacity-100")}
         >
           <PlusIcon className="size-3.5" />
         </Button>
@@ -364,13 +364,18 @@ export function Sidebar() {
                     className="h-auto min-w-0 flex-1 justify-start gap-1 px-2 py-1 text-[12px] font-medium text-faint"
                   >
                     <span className="min-w-0 truncate text-left">{project.name}</span>
-                    <ChevronIcon className={cn("size-3 transition-transform", folded && "-rotate-90")} />
+                    <ChevronIcon
+                      className={cn(
+                        "size-3 opacity-0 transition group-hover:opacity-100",
+                        folded && "-rotate-90",
+                      )}
+                    />
                     {folded ? <span>({projectThreads.length})</span> : null}
                   </Button>
                   {project.isGit ? (
                     <WorktreeButton project={project} onOpen={setWorktreeProject} hover />
                   ) : null}
-                  <NewSessionButton project={project} />
+                  <NewSessionButton project={project} hover />
                 </div>
               )}
 
