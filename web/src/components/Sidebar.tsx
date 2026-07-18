@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   CheckIcon,
@@ -350,11 +351,12 @@ export function Sidebar() {
           </p>
         ) : null}
 
-        {grouped.map(({ project, threads: projectThreads }) => {
+        {grouped.map(({ project, threads: projectThreads }, index) => {
           // the filter already names the folder when one is picked, so it has no header to collapse
           const folded = !selected && collapsed.has(project.id);
           return (
-            <section key={project.id} className="mb-4">
+            <section key={project.id} className="mb-2">
+              {index > 0 ? <Separator className="mb-2" /> : null}
               {selected ? null : (
                 <div className="group flex items-center gap-0.5">
                   <Button
@@ -375,7 +377,7 @@ export function Sidebar() {
                   {project.isGit ? (
                     <WorktreeButton project={project} onOpen={setWorktreeProject} hover />
                   ) : null}
-                  <NewSessionButton project={project} hover />
+                  <NewSessionButton project={project} />
                 </div>
               )}
 
