@@ -327,7 +327,7 @@ export function Composer({
 
         <div
           className={cn(
-            "rounded-lg border bg-card/80 shadow-lg shadow-black/20 transition",
+            "rounded-lg border bg-input/30 shadow-lg shadow-black/20 transition",
             dragging ? "border-primary" : "border-border focus-within:border-border/90",
           )}
         >
@@ -382,7 +382,7 @@ export function Composer({
               }}
               rows={1}
               placeholder={placeholder}
-              className="max-h-[220px] min-h-8 w-full flex-1 resize-none rounded-none border-0 bg-transparent px-0 py-1.5 text-[14px] leading-relaxed shadow-none focus-visible:ring-0 placeholder:text-faint"
+              className="max-h-[220px] min-h-8 w-full flex-1 resize-none rounded-none border-0 bg-transparent px-0 py-1.5 text-[14px] leading-relaxed shadow-none focus-visible:ring-0 placeholder:text-faint dark:bg-transparent"
             />
             {running && onInterrupt ? (
               <Button variant="destructive" onClick={onInterrupt} className="mb-1 h-7">
