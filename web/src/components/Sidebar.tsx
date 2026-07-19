@@ -356,7 +356,7 @@ export function Sidebar() {
           const folded = !selected && collapsed.has(project.id);
           return (
             <section key={project.id} className="mb-2">
-              {index > 0 ? <Separator className="mb-2" /> : null}
+              {index > 0 ? <Separator className="mb-2 bg-border/50" /> : null}
               {selected ? null : (
                 <div className="group flex items-center gap-0.5">
                   <Button
