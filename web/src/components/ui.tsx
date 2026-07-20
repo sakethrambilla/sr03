@@ -97,9 +97,9 @@ export function StatusDot({ status }: { status: "idle" | "running" | "error" }) 
     <span
       className={cn(
         "size-[7px] shrink-0 rounded-full",
-        status === "running" && "animate-pulse bg-primary",
+        status === "running" && "animate-pulse border border-faint/70",
         status === "error" && "bg-destructive",
-        status === "idle" && "border border-faint/70",
+        status === "idle" && "bg-status-done",
       )}
     />
   );

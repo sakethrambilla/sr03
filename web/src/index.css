@@ -23,6 +23,8 @@
   --input: oklch(0.33 0.005 75);
   --ring: oklch(0.66 0.12 41);
   --faint: oklch(0.57 0.006 75);
+  /* a turn that has finished, as opposed to one still running */
+  --status-done: oklch(0.82 0.11 85);
   /* VS Code's own gitDecoration.* dark defaults, so the file tree reads the way the editor does */
   --git-added: #81b88b;
   --git-modified: #e2c08d;
@@ -68,6 +70,7 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-faint: var(--faint);
+  --color-status-done: var(--status-done);
   --color-git-added: var(--git-added);
   --color-git-modified: var(--git-modified);
   --color-git-deleted: var(--git-deleted);
