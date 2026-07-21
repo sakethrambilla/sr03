@@ -458,7 +458,7 @@ export function Composer({
             align="end"
             title="Model"
             heading="Models"
-            trigger={models.find((option) => option.slug === model)?.label ?? model}
+            trigger={models.find((option) => option.slug === model || option.resolved === model)?.label ?? model}
             items={models.map((option) => ({
               id: option.slug,
               label: option.label,

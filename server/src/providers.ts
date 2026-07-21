@@ -9,7 +9,7 @@ import {
   DEFAULT_MODEL,
   DEFAULT_PERMISSION_MODE,
   EFFORT_LEVELS,
-  MODELS,
+  listModels,
   PERMISSION_MODES,
 } from "./models.ts";
 import type { ModelOption } from "./models.ts";
@@ -116,7 +116,7 @@ export async function listProviders(): Promise<ProviderStatus[]> {
       binary,
       account,
       settingSources: SETTING_SOURCES,
-      models: MODELS,
+      models: await listModels(),
       defaults: {
         model: DEFAULT_MODEL,
         permissionMode: DEFAULT_PERMISSION_MODE,
@@ -128,7 +128,7 @@ export async function listProviders(): Promise<ProviderStatus[]> {
   ];
 }
 
-export const PROVIDER_OPTIONS = { models: MODELS, permissionModes: PERMISSION_MODES, efforts: EFFORT_LEVELS };
+export const PROVIDER_OPTIONS = { permissionModes: PERMISSION_MODES, efforts: EFFORT_LEVELS };
 
 // logout is the CLI's own `auth logout`, so the credentials are cleared the same way
 // the CLI would clear them — this never touches the keychain directly

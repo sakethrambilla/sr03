@@ -49,6 +49,7 @@ export interface ModelOption {
   slug: string;
   label: string;
   hint: string;
+  resolved?: string;
 }
 
 export interface PermissionModeOption {

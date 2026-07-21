@@ -29,7 +29,7 @@ import {
   DEFAULT_MODEL,
   DEFAULT_PERMISSION_MODE,
   EFFORT_LEVELS,
-  MODELS,
+  listModels,
   PERMISSION_MODES,
   isEffort,
   isPermissionMode,
@@ -106,7 +106,7 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
     handler: async () => ({
       projects: projects.list(),
       threads: threads.list(),
-      models: MODELS,
+      models: await listModels(),
       permissionModes: PERMISSION_MODES,
       effortLevels: EFFORT_LEVELS,
       apps: await listApps(),
