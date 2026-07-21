@@ -28,6 +28,7 @@ import {
   RefreshCw,
   Sparkles,
   Settings,
+  Square,
   SquareStack,
   SquareTerminal,
   X,
@@ -92,14 +93,20 @@ export function Dialog({
   );
 }
 
-export function StatusDot({ status }: { status: "idle" | "running" | "error" }) {
+export function StatusDot({
+  status,
+  done,
+}: {
+  status: "idle" | "running" | "error";
+  done?: boolean;
+}) {
   return (
     <span
       className={cn(
         "size-[7px] shrink-0 rounded-full",
-        status === "running" && "animate-pulse border border-faint/70",
+        status === "running" && "animate-pulse bg-faint",
         status === "error" && "bg-destructive",
-        status === "idle" && "bg-status-done",
+        status === "idle" && (done ? "bg-status-done" : "border border-faint/70"),
       )}
     />
   );
@@ -167,6 +174,7 @@ const ICONS = {
   CollapseIcon: ChevronsDownUp,
   ExpandIcon: ChevronsUpDown,
   CursorIcon: MousePointer2,
+  StopIcon: Square,
   ZedIcon: Zap,
 } as const;
 
@@ -199,6 +207,7 @@ export const NewFolderIcon = icon(ICONS.NewFolderIcon);
 export const CollapseIcon = icon(ICONS.CollapseIcon);
 export const ExpandIcon = icon(ICONS.ExpandIcon);
 export const CursorIcon = icon(ICONS.CursorIcon);
+export const StopIcon = icon(ICONS.StopIcon);
 export const ZedIcon = icon(ICONS.ZedIcon);
 
 export interface MenuItem {

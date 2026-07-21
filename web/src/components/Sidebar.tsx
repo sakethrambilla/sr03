@@ -64,6 +64,7 @@ function ThreadRow({ thread }: { thread: Thread }) {
   const renameThread = useStore((state) => state.renameThread);
   const forkThread = useStore((state) => state.forkThread);
   const setArchived = useStore((state) => state.setArchived);
+  const done = useStore((state) => Boolean(state.finished[thread.id]));
   const [menuOpen, setMenuOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
 
@@ -91,7 +92,7 @@ function ThreadRow({ thread }: { thread: Thread }) {
         )}
         onClick={() => void openThread(thread.id)}
       >
-        <StatusDot status={thread.status} />
+        <StatusDot status={thread.status} done={done} />
         <div className="min-w-0 flex-1">
           {renaming ? (
             <Input

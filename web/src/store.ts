@@ -31,6 +31,8 @@ interface Store extends AppState {
   messagesByThread: Record<string, Message[]>;
   streamByThread: Record<string, string>;
   approvalsByThread: Record<string, PendingApproval[]>;
+  // threads whose turn ended while you were somewhere else, cleared when you open them
+  finished: Record<string, true>;
   error: string | null;
 
   bootstrap: () => Promise<void>;
@@ -80,6 +82,7 @@ export const useStore = create<Store>((set, get) => ({
   messagesByThread: {},
   streamByThread: {},
   approvalsByThread: {},
+  finished: {},
   error: null,
 
   toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
@@ -104,7 +107,11 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   openThread: async (id) => {
-    set({ activeThreadId: id, draft: null });
+    set((state) => {
+      const finished = { ...state.finished };
+      delete finished[id];
+      return { activeThreadId: id, draft: null, finished };
+    });
     try {
       const { thread, messages } = await api.thread(id);
       set((state) => ({
@@ -283,6 +290,13 @@ export const useStore = create<Store>((set, get) => ({
       }
       case "thread.status": {
         set((state) => ({
+          // a turn you watched finish needs no marker; one you missed does
+          finished:
+            state.threads.find((thread) => thread.id === event.threadId)?.status === "running" &&
+            event.status === "idle" &&
+            state.activeThreadId !== event.threadId
+              ? { ...state.finished, [event.threadId]: true as const }
+              : state.finished,
           threads: state.threads.map((thread) =>
             thread.id === event.threadId
               ? {
