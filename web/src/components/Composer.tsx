@@ -10,14 +10,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Toggle } from "@/components/ui/toggle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
-  BranchIcon,
-  Chip,
   CloseIcon,
   Menu,
   MicIcon,
   PlusIcon,
   SendIcon,
-  WorktreeIcon,
+  StopIcon,
   cn,
 } from "./ui.tsx";
 
@@ -385,9 +383,20 @@ export function Composer({
               className="max-h-[220px] min-h-8 w-full flex-1 resize-none rounded-none border-0 bg-transparent px-0 py-1.5 text-[14px] leading-relaxed shadow-none focus-visible:ring-0 placeholder:text-faint dark:bg-transparent"
             />
             {running && onInterrupt ? (
-              <Button variant="destructive" onClick={onInterrupt} className="mb-1 h-7">
-                Stop
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={onInterrupt}
+                    aria-label="Stop"
+                    className="mb-1 size-7 shrink-0"
+                  >
+                    <StopIcon className="size-3" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Stop</TooltipContent>
+              </Tooltip>
             ) : (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -505,45 +514,6 @@ function ApprovalPanel({ approval }: { approval: PendingApproval }) {
   );
 }
 
-// the session's folder, branch and worktree are settled once it exists, so these are read-only
-function ThreadChips({ thread }: { thread: Thread }) {
-  const [dirty, setDirty] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    const poll = () =>
-      api
-        .threadGit(thread.id)
-        .then((snapshot) => {
-          if (!cancelled) setDirty(snapshot.dirty ?? 0);
-        })
-        .catch(() => undefined);
-    poll();
-    const timer = window.setInterval(poll, 5000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [thread.id, thread.status]);
-
-  return (
-    <>
-      {thread.branch ? (
-        <Chip
-          icon={<BranchIcon />}
-          className={thread.isWorktree ? "border-primary/40 text-primary" : undefined}
-        >
-          {thread.branch}
-        </Chip>
-      ) : null}
-      {thread.isWorktree ? <Chip icon={<WorktreeIcon />} className="border-primary/40 text-primary">
-          worktree
-        </Chip> : null}
-      {dirty ? <Chip>{dirty} changed</Chip> : null}
-    </>
-  );
-}
-
 export function ThreadComposer({ thread }: { thread: Thread }) {
   const send = useStore((state) => state.send);
   const interrupt = useStore((state) => state.interrupt);
@@ -553,7 +523,6 @@ export function ThreadComposer({ thread }: { thread: Thread }) {
 
   return (
     <Composer
-      chips={<ThreadChips thread={thread} />}
       above={approvals.map((approval) => (
         <ApprovalPanel key={approval.id} approval={approval} />
       ))}
