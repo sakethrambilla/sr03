@@ -119,12 +119,6 @@ function ThreadRow({ thread }: { thread: Thread }) {
               {thread.title}
             </p>
           )}
-          {thread.isWorktree && thread.branch ? (
-            <p className="flex items-center gap-1 truncate font-mono text-[10px] text-faint">
-                          <WorktreeIcon className="size-2.5" />
-                          {thread.branch}
-                        </p>
-          ) : null}
         </div>
 
         <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>

@@ -66,6 +66,28 @@ const EMPTY: AppState = {
   defaults: { model: "", permissionMode: "default", effort: "high" },
 };
 
+// the finished markers outlive a reload, so a session that ended while the app was
+// closed still asks for attention when you come back
+const FINISHED_KEY = "sr03:finished";
+
+function loadFinished(): Record<string, true> {
+  try {
+    const stored = localStorage.getItem(FINISHED_KEY);
+    return stored ? (JSON.parse(stored) as Record<string, true>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveFinished(finished: Record<string, true>): Record<string, true> {
+  try {
+    localStorage.setItem(FINISHED_KEY, JSON.stringify(finished));
+  } catch {
+    // private browsing, or the quota is gone — the markers just stop persisting
+  }
+  return finished;
+}
+
 function upsertThread(threads: Thread[], thread: Thread): Thread[] {
   const next = threads.filter((item) => item.id !== thread.id);
   next.unshift(thread);
@@ -82,7 +104,7 @@ export const useStore = create<Store>((set, get) => ({
   messagesByThread: {},
   streamByThread: {},
   approvalsByThread: {},
-  finished: {},
+  finished: loadFinished(),
   error: null,
 
   toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
@@ -100,7 +122,12 @@ export const useStore = create<Store>((set, get) => ({
 
   refreshState: async () => {
     try {
-      set(await api.state());
+      const next = await api.state();
+      const live = new Set(next.threads.map((thread) => thread.id));
+      const finished = Object.fromEntries(
+        Object.entries(get().finished).filter(([id]) => live.has(id)),
+      ) as Record<string, true>;
+      set({ ...next, finished: saveFinished(finished) });
     } catch (error) {
       set({ error: (error as Error).message });
     }
@@ -110,7 +137,7 @@ export const useStore = create<Store>((set, get) => ({
     set((state) => {
       const finished = { ...state.finished };
       delete finished[id];
-      return { activeThreadId: id, draft: null, finished };
+      return { activeThreadId: id, draft: null, finished: saveFinished(finished) };
     });
     try {
       const { thread, messages } = await api.thread(id);
@@ -295,7 +322,7 @@ export const useStore = create<Store>((set, get) => ({
             state.threads.find((thread) => thread.id === event.threadId)?.status === "running" &&
             event.status === "idle" &&
             state.activeThreadId !== event.threadId
-              ? { ...state.finished, [event.threadId]: true as const }
+              ? saveFinished({ ...state.finished, [event.threadId]: true as const })
               : state.finished,
           threads: state.threads.map((thread) =>
             thread.id === event.threadId
