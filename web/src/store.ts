@@ -353,6 +353,15 @@ export const useStore = create<Store>((set, get) => ({
         }));
         return;
       }
+      // the server is authoritative for what is still outstanding, so this replaces rather than merges
+      case "thread.approvals": {
+        const byThread: Record<string, PendingApproval[]> = {};
+        for (const approval of event.approvals) {
+          (byThread[approval.threadId] ??= []).push(approval);
+        }
+        set({ approvalsByThread: byThread });
+        return;
+      }
       case "thread.approval.resolved": {
         set((state) => ({
           approvalsByThread: {

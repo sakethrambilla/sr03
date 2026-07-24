@@ -55,6 +55,7 @@ export type ServerEvent =
   | { type: "thread.delta.end"; threadId: string }
   | { type: "thread.approval"; approval: PendingApproval }
   | { type: "thread.approval.resolved"; threadId: string; approvalId: string }
+  | { type: "thread.approvals"; approvals: PendingApproval[] }
   | { type: "thread.updated"; thread: Thread }
   | { type: "pty.data"; threadId: string; terminalId: string; data: string }
   | { type: "pty.snapshot"; threadId: string; terminalId: string; data: string }

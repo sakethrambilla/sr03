@@ -6,11 +6,12 @@ import { WebSocketServer } from "ws";
 
 import { PORT } from "./config.ts";
 import { handleApiRequest } from "./api.ts";
+import { pendingApprovals } from "./claude.ts";
 import { subscribe } from "./bus.ts";
 import { threads } from "./db.ts";
 import { listModels } from "./models.ts";
 import * as pty from "./pty.ts";
-import type { ClientMessage } from "./types.ts";
+import type { ClientMessage, ServerEvent } from "./types.ts";
 
 const WEB_DIST = path.resolve(fileURLToPath(new URL("../../web/dist", import.meta.url)));
 
@@ -99,6 +100,10 @@ websockets.on("connection", (socket) => {
   const unsubscribe = subscribe((event) => {
     if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(event));
   });
+  // a reload or a dropped socket misses whatever was published while it was gone; an approval
+  // nobody can answer leaves its turn parked forever, so every new socket is told what is open
+  const snapshot: ServerEvent = { type: "thread.approvals", approvals: pendingApprovals() };
+  socket.send(JSON.stringify(snapshot));
   socket.on("message", (raw) => {
     try {
       handleClientMessage(socket, raw.toString());

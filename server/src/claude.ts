@@ -55,7 +55,7 @@ interface Session {
   input: InputQueue;
   query: Query;
   abort: AbortController;
-  approvals: Map<string, (decision: ApprovalDecision) => void>;
+  approvals: Map<string, { approval: PendingApproval; resolve: (decision: ApprovalDecision) => void }>;
   alwaysAllow: Set<string>;
   interrupted: boolean;
 }
@@ -94,7 +94,7 @@ function makeCanUseTool(session: Session): CanUseTool {
     publish({ type: "thread.approval", approval });
 
     const decision = await new Promise<ApprovalDecision>((resolve) => {
-      session.approvals.set(approval.id, resolve);
+      session.approvals.set(approval.id, { approval, resolve });
       options.signal.addEventListener("abort", () => {
         if (!session.approvals.delete(approval.id)) return;
         publish({
@@ -233,6 +233,14 @@ export function sendTurn(thread: Thread, text: string): void {
   } as SDKUserMessage);
 }
 
+// a turn parks inside canUseTool until someone answers, and the prompt only ever reached the
+// client as an event — so a socket that reconnects has to be told what is still outstanding
+export function pendingApprovals(): PendingApproval[] {
+  return [...sessions.values()].flatMap((session) =>
+    [...session.approvals.values()].map((pending) => pending.approval),
+  );
+}
+
 export async function interrupt(threadId: string): Promise<void> {
   const session = sessions.get(threadId);
   if (!session) {
@@ -240,10 +248,10 @@ export async function interrupt(threadId: string): Promise<void> {
     return;
   }
   session.interrupted = true;
-  for (const [approvalId, resolve] of session.approvals) {
+  for (const [approvalId, pending] of session.approvals) {
     session.approvals.delete(approvalId);
     publish({ type: "thread.approval.resolved", threadId, approvalId });
-    resolve("deny");
+    pending.resolve("deny");
   }
   try {
     await session.query.interrupt();
@@ -259,11 +267,11 @@ export function resolveApproval(
   decision: ApprovalDecision,
 ): boolean {
   const session = sessions.get(threadId);
-  const resolve = session?.approvals.get(approvalId);
-  if (!session || !resolve) return false;
+  const pending = session?.approvals.get(approvalId);
+  if (!session || !pending) return false;
   session.approvals.delete(approvalId);
   publish({ type: "thread.approval.resolved", threadId, approvalId });
-  resolve(decision);
+  pending.resolve(decision);
   return true;
 }
 
