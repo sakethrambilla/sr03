@@ -12,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  BranchIcon,
   ChevronIcon,
   CloseIcon,
   Dialog,
@@ -23,6 +24,7 @@ import {
   NewFileIcon,
   NewFolderIcon,
   RefreshIcon,
+  WorktreeIcon,
   cn,
 } from "./ui.tsx";
 
@@ -319,6 +321,7 @@ export function FileTree({
   const [dirs, setDirs] = useState<Record<string, TreeEntry[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set([""]));
   const [changes, setChanges] = useState<Map<string, Status>>(new Map());
+  const [branch, setBranch] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const [creating, setCreating] = useState<{ parent: string; kind: "file" | "dir" } | null>(null);
@@ -345,6 +348,7 @@ export function FileTree({
       .then(([next, listings]) => {
         if (cancelled) return;
         setChanges(new Map(next.files.map((file) => [file.path, file.status])));
+        setBranch(next.branch);
         setDirs((current) => {
           const merged = { ...current };
           listings.forEach((listing, index) => {
@@ -499,11 +503,9 @@ export function FileTree({
 
   return (
     <aside className="flex h-full w-[300px] shrink-0 flex-col border-l border-border/60 bg-card">
-      <header className="flex items-center gap-2 border-b border-border/60 px-3 py-2.5">
-        <h2 className="text-[12px] font-semibold tracking-wide text-muted-foreground uppercase">Files</h2>
-        {changes.size > 0 ? (
-          <span className="font-mono text-[10.5px] text-git-modified">{changes.size} changed</span>
-        ) : null}
+      <header className="flex flex-col gap-1 border-b border-border/60 px-3 py-2.5">
+        <div className="flex items-center gap-2">
+        <h2 className="shrink-0 text-[12px] font-semibold tracking-wide text-muted-foreground uppercase">Files</h2>
         <div className="flex-1" />
         <RowAction label="New file" onClick={() => startCreate("", "file")}>
           <NewFileIcon className="size-3.5" />
@@ -520,6 +522,34 @@ export function FileTree({
         <Button variant="ghost" onClick={onClose} aria-label="Close files">
           <CloseIcon />
         </Button>
+        </div>
+
+        {/* the branch needs the full panel width, so it sits under the title rather than beside it */}
+        {branch || changes.size > 0 ? (
+          <div className="flex items-center gap-2">
+            {branch ? (
+              <span
+                title={thread.isWorktree ? `Worktree on ${branch}` : `On ${branch}`}
+                className={cn(
+                  "flex min-w-0 items-center gap-1 font-mono text-[10.5px]",
+                  thread.isWorktree ? "text-primary" : "text-faint",
+                )}
+              >
+                {thread.isWorktree ? (
+                  <WorktreeIcon className="size-2.5 shrink-0" />
+                ) : (
+                  <BranchIcon className="size-2.5 shrink-0" />
+                )}
+                <span className="truncate">{branch}</span>
+              </span>
+            ) : null}
+            {changes.size > 0 ? (
+              <span className="shrink-0 font-mono text-[10.5px] text-git-modified">
+                {changes.size} changed
+              </span>
+            ) : null}
+          </div>
+        ) : null}
       </header>
 
       <div className="min-h-0 flex-1 overflow-auto py-1">
