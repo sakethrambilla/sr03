@@ -388,13 +388,16 @@ export function ChatView({ thread }: { thread: Thread }) {
             {thread.title}
           </h1>
           <div className="flex-1" />
-          <OpenMenu thread={thread} />
-          <PanelToggle pressed={terminalOpen} onPressedChange={setTerminalOpen} label="Terminal">
-            <TerminalIcon className="size-4" />
-          </PanelToggle>
-          <PanelToggle pressed={treeOpen} onPressedChange={setTreeOpen} label="Files">
-            <ChangesIcon className="size-4" />
-          </PanelToggle>
+          {/* the toggles are icon buttons with padding of their own, so they sit tighter than the header gap */}
+          <div className="flex items-center gap-1">
+            <OpenMenu thread={thread} />
+            <PanelToggle pressed={terminalOpen} onPressedChange={setTerminalOpen} label="Terminal">
+              <TerminalIcon className="size-4" />
+            </PanelToggle>
+            <PanelToggle pressed={treeOpen} onPressedChange={setTreeOpen} label="Files">
+              <ChangesIcon className="size-4" />
+            </PanelToggle>
+          </div>
         </header>
 
         {openFiles.length > 0 ? (
