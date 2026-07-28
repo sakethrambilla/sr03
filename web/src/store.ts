@@ -9,6 +9,8 @@ import type {
   PermissionMode,
   ServerEvent,
   Thread,
+  ThreadTask,
+  Usage,
 } from "./lib/types.ts";
 
 export interface Draft {
@@ -31,6 +33,8 @@ interface Store extends AppState {
   messagesByThread: Record<string, Message[]>;
   streamByThread: Record<string, string>;
   approvalsByThread: Record<string, PendingApproval[]>;
+  tasksByThread: Record<string, ThreadTask[]>;
+  usage: Usage | null;
   // threads whose turn ended while you were somewhere else, cleared when you open them
   finished: Record<string, true>;
   error: string | null;
@@ -49,6 +53,7 @@ interface Store extends AppState {
   interrupt: () => Promise<void>;
   patchActive: (patch: { model?: string; permissionMode?: PermissionMode; effort?: Effort }) => Promise<void>;
   respond: (approvalId: string, decision: "allow" | "always" | "deny") => Promise<void>;
+  refreshUsage: () => Promise<void>;
   applyEvent: (event: ServerEvent) => void;
   toggleSidebar: () => void;
   setSettingsOpen: (open: boolean) => void;
@@ -88,6 +93,47 @@ function saveFinished(finished: Record<string, true>): Record<string, true> {
   return finished;
 }
 
+// the agent SDK hands over whole paragraphs at a time — roughly 135 characters, once or twice
+// a second — so text is buffered and let out a slice per frame instead of landing in lumps
+const buffered = new Map<string, string>();
+let frame: number | null = null;
+
+// a sixth of what is waiting, so a backlog drains fast while a trickle still reads as typing
+function slice(text: string): number {
+  return Math.min(text.length, Math.max(2, Math.ceil(text.length / 6)));
+}
+
+// a hidden tab gets no animation frames at all, and the stream would sit unrendered until the
+// turn ended — so the reveal falls back to a timer whenever the page is not being painted
+function nextFrame(run: () => void): number {
+  if (document.visibilityState === "hidden") return window.setTimeout(run, 16);
+  return requestAnimationFrame(run);
+}
+
+function drain(set: (partial: (state: Store) => Partial<Store>) => void): void {
+  if (frame !== null) return;
+  frame = nextFrame(() => {
+    frame = null;
+    const reveal: Array<[string, string]> = [];
+    for (const [threadId, text] of buffered) {
+      const take = slice(text);
+      reveal.push([threadId, text.slice(0, take)]);
+      if (take < text.length) buffered.set(threadId, text.slice(take));
+      else buffered.delete(threadId);
+    }
+    if (reveal.length > 0) {
+      set((state) => {
+        const streamByThread = { ...state.streamByThread };
+        for (const [threadId, text] of reveal) {
+          streamByThread[threadId] = (streamByThread[threadId] ?? "") + text;
+        }
+        return { streamByThread };
+      });
+    }
+    if (buffered.size > 0) drain(set);
+  });
+}
+
 function upsertThread(threads: Thread[], thread: Thread): Thread[] {
   const next = threads.filter((item) => item.id !== thread.id);
   next.unshift(thread);
@@ -104,6 +150,8 @@ export const useStore = create<Store>((set, get) => ({
   messagesByThread: {},
   streamByThread: {},
   approvalsByThread: {},
+  tasksByThread: {},
+  usage: null,
   finished: loadFinished(),
   error: null,
 
@@ -140,11 +188,13 @@ export const useStore = create<Store>((set, get) => ({
       return { activeThreadId: id, draft: null, finished: saveFinished(finished) };
     });
     try {
-      const { thread, messages } = await api.thread(id);
+      const { thread, messages, tasks } = await api.thread(id);
       set((state) => ({
         threads: upsertThread(state.threads, thread),
         messagesByThread: { ...state.messagesByThread, [id]: messages },
+        tasksByThread: { ...state.tasksByThread, [id]: tasks },
       }));
+      void get().refreshUsage();
     } catch (error) {
       set({ error: (error as Error).message });
     }
@@ -288,9 +338,16 @@ export const useStore = create<Store>((set, get) => ({
     );
   },
 
+  // context is per-session and the plan windows are account-wide, so both come from one read
+  refreshUsage: async () => {
+    const usage = await api.usage(get().activeThreadId).catch(() => null);
+    if (usage) set({ usage });
+  },
+
   applyEvent: (event) => {
     switch (event.type) {
       case "thread.message": {
+        buffered.delete(event.threadId);
         set((state) => ({
           messagesByThread: {
             ...state.messagesByThread,
@@ -301,15 +358,12 @@ export const useStore = create<Store>((set, get) => ({
         return;
       }
       case "thread.delta": {
-        set((state) => ({
-          streamByThread: {
-            ...state.streamByThread,
-            [event.threadId]: (state.streamByThread[event.threadId] ?? "") + event.text,
-          },
-        }));
+        buffered.set(event.threadId, (buffered.get(event.threadId) ?? "") + event.text);
+        drain(set);
         return;
       }
       case "thread.delta.end": {
+        buffered.delete(event.threadId);
         set((state) => ({
           streamByThread: { ...state.streamByThread, [event.threadId]: "" },
         }));
@@ -350,6 +404,17 @@ export const useStore = create<Store>((set, get) => ({
               event.approval,
             ],
           },
+        }));
+        return;
+      }
+      case "usage": {
+        if (event.threadId && event.threadId !== get().activeThreadId) return;
+        set({ usage: event.usage });
+        return;
+      }
+      case "thread.tasks": {
+        set((state) => ({
+          tasksByThread: { ...state.tasksByThread, [event.threadId]: event.tasks },
         }));
         return;
       }
