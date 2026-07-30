@@ -4,13 +4,23 @@ import {
   type CanUseTool,
   type PermissionUpdate,
   type Query,
+  type SDKControlGetUsageResponse,
   type SDKMessage,
+  type SDKRateLimitInfo,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 
 import { publish } from "./bus.ts";
 import { messages as messageStore, threads as threadStore } from "./db.ts";
-import type { Effort, PendingApproval, PermissionMode, Thread } from "./types.ts";
+import type {
+  Effort,
+  PendingApproval,
+  PermissionMode,
+  Thread,
+  ThreadTask,
+  Usage,
+  UsageWindow,
+} from "./types.ts";
 
 interface InputQueue extends AsyncIterable<SDKUserMessage> {
   push(message: SDKUserMessage): void;
@@ -81,6 +91,244 @@ function setStatus(threadId: string, status: Thread["status"], sessionId?: strin
   publish({ type: "thread.status", threadId, status, sessionId });
 }
 
+type SystemMessage = Extract<SDKMessage, { type: "system" }>;
+
+// subagents live only as long as the server does, so they stay in memory rather than in sqlite
+const tasksByThread = new Map<string, Map<string, ThreadTask>>();
+
+const TASK_STATUS: Record<string, ThreadTask["status"]> = {
+  pending: "running",
+  running: "running",
+  paused: "running",
+  completed: "done",
+  failed: "failed",
+  killed: "failed",
+  stopped: "failed",
+};
+
+export function threadTasks(threadId: string): ThreadTask[] {
+  return [...(tasksByThread.get(threadId)?.values() ?? [])];
+}
+
+function saveTask(threadId: string, task: ThreadTask): void {
+  const tasks = tasksByThread.get(threadId) ?? new Map<string, ThreadTask>();
+  tasks.set(task.id, task);
+  tasksByThread.set(threadId, tasks);
+  publish({ type: "thread.tasks", threadId, tasks: [...tasks.values()] });
+}
+
+// the CLI reports shell and housekeeping tasks on the same stream; only Task-tool agents belong here
+function trackTask(threadId: string, message: SystemMessage): void {
+  const known = (id: string) => tasksByThread.get(threadId)?.get(id) ?? null;
+
+  switch (message.subtype) {
+    case "task_started": {
+      if (message.ambient || (!message.subagent_type && message.task_type !== "local_agent")) return;
+      saveTask(threadId, {
+        id: message.task_id,
+        description: message.description,
+        agentType: message.subagent_type ?? null,
+        status: "running",
+        tokens: 0,
+        toolUses: 0,
+        lastTool: null,
+        error: null,
+        depth: message.spawn_depth ?? 1,
+        startedAt: Date.now(),
+        endedAt: null,
+      });
+      return;
+    }
+    case "task_progress": {
+      const task = known(message.task_id);
+      if (!task) return;
+      saveTask(threadId, {
+        ...task,
+        description: message.description || task.description,
+        agentType: message.subagent_type ?? task.agentType,
+        tokens: message.usage.total_tokens,
+        toolUses: message.usage.tool_uses,
+        lastTool: message.last_tool_name ?? task.lastTool,
+      });
+      return;
+    }
+    case "task_updated": {
+      const task = known(message.task_id);
+      if (!task) return;
+      const status = message.patch.status ? TASK_STATUS[message.patch.status] : task.status;
+      saveTask(threadId, {
+        ...task,
+        status: status ?? task.status,
+        description: message.patch.description ?? task.description,
+        error: message.patch.error ?? task.error,
+        endedAt: status === "running" ? null : (message.patch.end_time ?? task.endedAt ?? Date.now()),
+      });
+      return;
+    }
+    case "task_notification": {
+      const task = known(message.task_id);
+      if (!task) return;
+      saveTask(threadId, {
+        ...task,
+        status: TASK_STATUS[message.status] ?? task.status,
+        tokens: message.usage?.total_tokens ?? task.tokens,
+        toolUses: message.usage?.tool_uses ?? task.toolUses,
+        endedAt: task.endedAt ?? Date.now(),
+      });
+      return;
+    }
+    default:
+      return;
+  }
+}
+
+// a subagent outlives its turn only when backgrounded, which sr03 never does — so anything
+// still marked running once the turn ends never had its closing event delivered
+function settleTasks(threadId: string, interrupted: boolean): void {
+  const tasks = tasksByThread.get(threadId);
+  if (!tasks) return;
+  for (const task of tasks.values()) {
+    if (task.status !== "running") continue;
+    saveTask(threadId, {
+      ...task,
+      status: interrupted ? "failed" : "done",
+      endedAt: Date.now(),
+    });
+  }
+}
+
+// plan limits belong to the account, not the thread, so the newest read is shared by every thread
+let limits: Pick<Usage, "plan" | "windows" | "credits"> | null = null;
+const contextByThread = new Map<string, NonNullable<Usage["context"]>>();
+const costByThread = new Map<string, number>();
+
+const WINDOW_LABELS: Record<string, string> = {
+  five_hour: "5-hour limit",
+  seven_day: "Weekly · all models",
+  seven_day_oauth_apps: "Weekly · apps",
+  seven_day_opus: "Weekly · Opus",
+  seven_day_sonnet: "Weekly · Sonnet",
+  seven_day_overage_included: "Weekly · extra usage",
+  overage: "Extra usage",
+};
+
+const RESPONSE_WINDOWS = [
+  "five_hour",
+  "seven_day",
+  "seven_day_oauth_apps",
+  "seven_day_opus",
+  "seven_day_sonnet",
+] as const;
+
+function millis(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const at = Date.parse(iso);
+  return Number.isNaN(at) ? null : at;
+}
+
+function readLimits(response: SDKControlGetUsageResponse): Pick<Usage, "plan" | "windows" | "credits"> {
+  const rates = response.rate_limits;
+  const windows: UsageWindow[] = [];
+  for (const id of RESPONSE_WINDOWS) {
+    const window = rates?.[id];
+    if (typeof window?.utilization !== "number") continue;
+    windows.push({
+      id,
+      label: WINDOW_LABELS[id]!,
+      utilization: window.utilization,
+      resetsAt: millis(window.resets_at),
+    });
+  }
+  for (const window of rates?.model_scoped ?? []) {
+    if (typeof window.utilization !== "number") continue;
+    windows.push({
+      id: `model:${window.display_name}`,
+      label: `Weekly · ${window.display_name}`,
+      utilization: window.utilization,
+      resetsAt: millis(window.resets_at),
+    });
+  }
+  const extra = rates?.extra_usage;
+  return {
+    plan: response.subscription_type,
+    windows,
+    // the endpoint counts credits in minor units — 6162 is $61.62
+    credits: extra?.is_enabled
+      ? {
+          spent: typeof extra.used_credits === "number" ? extra.used_credits / 100 : null,
+          limit: typeof extra.monthly_limit === "number" ? extra.monthly_limit / 100 : null,
+          currency: extra.currency ?? null,
+        }
+      : null,
+  };
+}
+
+function snapshot(threadId: string | null): Usage {
+  return {
+    context: (threadId ? contextByThread.get(threadId) : null) ?? null,
+    sessionCostUsd: (threadId ? costByThread.get(threadId) : null) ?? null,
+    plan: limits?.plan ?? null,
+    windows: limits?.windows ?? [],
+    credits: limits?.credits ?? null,
+    updatedAt: Date.now(),
+  };
+}
+
+// the CLI answers both questions over the control channel, so a live session is the only way to
+// ask — a thread without one shows whatever the last read left behind
+export async function readUsage(threadId: string | null): Promise<Usage> {
+  const own = threadId ? (sessions.get(threadId) ?? null) : null;
+  const any = own ?? [...sessions.values()][0] ?? null;
+
+  if (own) {
+    // 'summary' answers from the last response instead of re-counting every category
+    await own.query
+      .getContextUsage({ detail: "summary" })
+      .then((context) =>
+        contextByThread.set(own.threadId, {
+          used: context.totalTokens,
+          max: context.rawMaxTokens,
+          percentage: context.percentage,
+        }),
+      )
+      .catch(() => undefined);
+  }
+
+  if (any) {
+    await any.query
+      .usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()
+      .then((usage) => {
+        limits = readLimits(usage);
+        if (own) costByThread.set(own.threadId, usage.session.total_cost_usd);
+      })
+      .catch(() => undefined);
+  }
+
+  const usage = snapshot(threadId);
+  publish({ type: "usage", threadId, usage });
+  return usage;
+}
+
+// the stream reports a window the moment the API pushes back on it, which is fresher than the
+// read at the end of the turn
+function foldRateLimit(threadId: string, info: SDKRateLimitInfo): void {
+  const id = info.rateLimitType;
+  const utilization = info.utilization;
+  if (!id || typeof utilization !== "number") return;
+  // the field has arrived as both seconds and milliseconds; anything this small is seconds
+  const resetsAt = info.resetsAt ? (info.resetsAt < 1e12 ? info.resetsAt * 1000 : info.resetsAt) : null;
+  const known = limits?.windows ?? [];
+  const window = { id, label: WINDOW_LABELS[id] ?? id, utilization, resetsAt };
+  limits = {
+    plan: limits?.plan ?? null,
+    credits: limits?.credits ?? null,
+    windows: known.some((entry) => entry.id === id)
+      ? known.map((entry) => (entry.id === id ? window : entry))
+      : [...known, window],
+  };
+  publish({ type: "usage", threadId, usage: snapshot(threadId) });
+}
+
 function makeCanUseTool(session: Session): CanUseTool {
   return async (toolName, input, options) => {
     if (session.alwaysAllow.has(toolName)) return { behavior: "allow", updatedInput: input };
@@ -126,7 +374,9 @@ function handleMessage(session: Session, message: SDKMessage): void {
       if (message.subtype === "init") {
         threadStore.update(threadId, { sessionId: message.session_id });
         publish({ type: "thread.status", threadId, status: "running", sessionId: message.session_id });
+        return;
       }
+      trackTask(threadId, message);
       return;
     }
     case "stream_event": {
@@ -151,7 +401,13 @@ function handleMessage(session: Session, message: SDKMessage): void {
       }
       return;
     }
+    case "rate_limit_event": {
+      foldRateLimit(threadId, message.rate_limit_info);
+      return;
+    }
     case "result": {
+      settleTasks(threadId, session.interrupted);
+      void readUsage(threadId);
       if (session.interrupted) {
         session.interrupted = false;
         appendMessage(threadId, "system", "Stopped by user");
@@ -295,4 +551,7 @@ export function closeSession(threadId: string): void {
   session.query.close();
   session.abort.abort();
   sessions.delete(threadId);
+  tasksByThread.delete(threadId);
+  contextByThread.delete(threadId);
+  costByThread.delete(threadId);
 }

@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { api } from "../lib/api.ts";
 import type { Effort, PendingApproval, PermissionMode, Thread } from "../lib/types.ts";
 import { useStore } from "../store.ts";
+import { UsageMeter } from "./UsageMeter.tsx";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
@@ -477,6 +478,7 @@ export function Composer({
             onPick={onModel}
           />
           <EffortPicker effort={effort} onPick={onEffort} />
+          <UsageMeter />
         </div>
       </div>
 

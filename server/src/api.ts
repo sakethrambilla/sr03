@@ -291,7 +291,20 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
     handler: async ({ params }) => {
       const thread = requireThread(params[0]!);
       const [info, diff] = await Promise.all([git.repoInfo(thread.cwd), git.diffStat(thread.cwd)]);
-      return { thread, messages: messages.list(thread.id), git: { ...info, diff } };
+      return {
+        thread,
+        messages: messages.list(thread.id),
+        tasks: claude.threadTasks(thread.id),
+        git: { ...info, diff },
+      };
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/usage$/,
+    handler: ({ url }) => {
+      const threadId = url.searchParams.get("thread");
+      return claude.readUsage(threadId && threads.byId(threadId) ? threadId : null);
     },
   },
   {

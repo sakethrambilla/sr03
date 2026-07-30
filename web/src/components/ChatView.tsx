@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { api } from "../lib/api.ts";
-import type { Message, Thread } from "../lib/types.ts";
+import type { Message, Thread, ThreadTask } from "../lib/types.ts";
 import { useStore } from "../store.ts";
+import { AgentsPanel } from "./AgentsPanel.tsx";
 import { ThreadComposer } from "./Composer.tsx";
 import { FileTree } from "./FileTree.tsx";
 import { FileView } from "./FileView.tsx";
@@ -12,6 +13,7 @@ import { Timeline } from "./Timeline.tsx";
 import { SidebarToggle } from "./Sidebar.tsx";
 import { Separator } from "@/components/ui/separator";
 import {
+  AgentIcon,
   ChangesIcon,
   Dialog,
   ChevronIcon,
@@ -39,6 +41,7 @@ import { Toggle } from "@/components/ui/toggle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 const NO_MESSAGES: Message[] = [];
+const NO_TASKS: ThreadTask[] = [];
 
 function PanelToggle({
   pressed,
@@ -251,8 +254,10 @@ function EditorTabs({
 export function ChatView({ thread }: { thread: Thread }) {
   const messages = useStore((state) => state.messagesByThread[thread.id] ?? NO_MESSAGES);
   const streaming = useStore((state) => state.streamByThread[thread.id] ?? "");
+  const tasks = useStore((state) => state.tasksByThread[thread.id] ?? NO_TASKS);
   const [treeOpen, setTreeOpen] = usePersistedState<boolean>("file-tree", false);
   const [terminalOpen, setTerminalOpen] = usePersistedState<boolean>("terminal", false);
+  const [agentsOpen, setAgentsOpen] = usePersistedState<boolean>("agents", false);
   const [openFiles, setOpenFiles] = useState<string[]>([]);
   const [active, setActive] = useState<string | null>(null);
   const [dirty, setDirty] = useState<Set<string>>(new Set());
@@ -320,6 +325,15 @@ export function ChatView({ thread }: { thread: Thread }) {
     if (unsaved[0]) setPendingClose(unsaved[0]);
   };
 
+  // a fresh burst of subagents pops the panel open; closing it mid-burst keeps it closed
+  const working = tasks.filter((task) => task.status === "running").length;
+  const wasWorking = useRef(0);
+
+  useEffect(() => {
+    if (working > 0 && wasWorking.current === 0) setAgentsOpen(true);
+    wasWorking.current = working;
+  }, [working]);
+
   const chord = useRef<number | null>(null);
 
   useEffect(() => {
@@ -349,6 +363,11 @@ export function ChatView({ thread }: { thread: Thread }) {
         setTreeOpen(!treeOpen);
         return;
       }
+      if (key === "a" && event.shiftKey) {
+        event.preventDefault();
+        setAgentsOpen(!agentsOpen);
+        return;
+      }
       if (key === "j" && !event.shiftKey) {
         event.preventDefault();
         setTerminalOpen(!terminalOpen);
@@ -362,7 +381,7 @@ export function ChatView({ thread }: { thread: Thread }) {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [active, treeOpen, terminalOpen, openFiles, dirty]);
+  }, [active, treeOpen, terminalOpen, agentsOpen, openFiles, dirty]);
 
   const renamed = (from: string, to: string) => {
     const moved = (path: string) =>
@@ -391,6 +410,9 @@ export function ChatView({ thread }: { thread: Thread }) {
           {/* the toggles are icon buttons with padding of their own, so they sit tighter than the header gap */}
           <div className="flex items-center gap-1">
             <OpenMenu thread={thread} />
+            <PanelToggle pressed={agentsOpen} onPressedChange={setAgentsOpen} label="Agents">
+              <AgentIcon className="size-4" />
+            </PanelToggle>
             <PanelToggle pressed={terminalOpen} onPressedChange={setTerminalOpen} label="Terminal">
               <TerminalIcon className="size-4" />
             </PanelToggle>
@@ -431,7 +453,12 @@ export function ChatView({ thread }: { thread: Thread }) {
 
         {active === null ? (
           <>
-            <Timeline messages={messages} streaming={streaming} running={thread.status === "running"} />
+            <Timeline
+              threadId={thread.id}
+              messages={messages}
+              streaming={streaming}
+              running={thread.status === "running"}
+            />
             <ThreadComposer thread={thread} />
           </>
         ) : null}
@@ -440,6 +467,7 @@ export function ChatView({ thread }: { thread: Thread }) {
           <TerminalPanel thread={thread} onClose={() => setTerminalOpen(false)} />
         ) : null}
       </main>
+      {agentsOpen ? <AgentsPanel thread={thread} onClose={() => setAgentsOpen(false)} /> : null}
       {treeOpen ? (
         <FileTree
           thread={thread}

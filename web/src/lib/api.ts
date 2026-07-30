@@ -9,7 +9,9 @@ import type {
   Project,
   ProviderStatus,
   Thread,
+  ThreadTask,
   TreeEntry,
+  Usage,
   Worktree,
 } from "./types.ts";
 
@@ -64,9 +66,11 @@ export const api = {
     title?: string;
   }) => post<Thread>("/api/threads", input),
   thread: (id: string) =>
-    call<{ thread: Thread; messages: Message[]; git: GitSnapshot & { diff: { files: number; insertions: number; deletions: number } } }>(
+    call<{ thread: Thread; messages: Message[]; tasks: ThreadTask[]; git: GitSnapshot & { diff: { files: number; insertions: number; deletions: number } } }>(
       `/api/threads/${id}`,
     ),
+  usage: (threadId?: string | null) =>
+    call<Usage>(`/api/usage${threadId ? `?thread=${encodeURIComponent(threadId)}` : ""}`),
   threadGit: (id: string) =>
     call<{ branch: string | null; dirty: number; diff: { files: number; insertions: number; deletions: number } }>(
       `/api/threads/${id}/git`,

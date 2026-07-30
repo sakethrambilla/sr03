@@ -45,6 +45,20 @@ export interface PendingApproval {
   input: unknown;
 }
 
+export interface ThreadTask {
+  id: string;
+  description: string;
+  agentType: string | null;
+  status: "running" | "done" | "failed";
+  tokens: number;
+  toolUses: number;
+  lastTool: string | null;
+  error: string | null;
+  depth: number;
+  startedAt: number;
+  endedAt: number | null;
+}
+
 export interface ModelOption {
   slug: string;
   label: string;
@@ -121,6 +135,23 @@ export interface DirListing {
   entries: DirEntry[];
 }
 
+// one plan rate-limit window, as the /usage control request reports it
+export interface UsageWindow {
+  id: string;
+  label: string;
+  utilization: number;
+  resetsAt: number | null;
+}
+
+export interface Usage {
+  context: { used: number; max: number; percentage: number } | null;
+  sessionCostUsd: number | null;
+  plan: string | null;
+  windows: UsageWindow[];
+  credits: { spent: number | null; limit: number | null; currency: string | null } | null;
+  updatedAt: number;
+}
+
 export type ServerEvent =
   | { type: "thread.status"; threadId: string; status: ThreadStatus; sessionId?: string | null }
   | { type: "thread.message"; threadId: string; message: Message }
@@ -129,6 +160,8 @@ export type ServerEvent =
   | { type: "thread.approval"; approval: PendingApproval }
   | { type: "thread.approval.resolved"; threadId: string; approvalId: string }
   | { type: "thread.approvals"; approvals: PendingApproval[] }
+  | { type: "thread.tasks"; threadId: string; tasks: ThreadTask[] }
+  | { type: "usage"; threadId: string | null; usage: Usage }
   | { type: "thread.updated"; thread: Thread }
   | { type: "pty.data"; threadId: string; terminalId: string; data: string }
   | { type: "pty.snapshot"; threadId: string; terminalId: string; data: string }

@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import {
   ArrowUp,
+  Bot,
   Check,
   ChevronDown,
   ChevronsDownUp,
@@ -151,6 +152,7 @@ export function Chip({
 }
 
 const ICONS = {
+  AgentIcon: Bot,
   FolderIcon: Folder,
   BranchIcon: GitBranch,
   MicIcon: Mic,
@@ -184,6 +186,7 @@ function icon(Source: LucideIcon) {
   };
 }
 
+export const AgentIcon = icon(ICONS.AgentIcon);
 export const FolderIcon = icon(ICONS.FolderIcon);
 export const BranchIcon = icon(ICONS.BranchIcon);
 export const MicIcon = icon(ICONS.MicIcon);
