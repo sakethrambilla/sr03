@@ -25,6 +25,7 @@ import {
   CheckIcon,
   ChevronIcon,
   DotsIcon,
+  FilterIcon,
   FolderIcon,
   PlusIcon,
   SettingsIcon,
@@ -212,6 +213,52 @@ function NewSessionButton({ project, hover }: { project: Project; hover?: boolea
 
 const ALL_PROJECTS = "all";
 
+type StatusFilter = "all" | "active" | "archived";
+
+const STATUS_FILTERS: Array<{ id: StatusFilter; label: string }> = [
+  { id: "all", label: "All" },
+  { id: "active", label: "Active" },
+  { id: "archived", label: "Archived" },
+];
+
+function StatusFilterMenu({
+  value,
+  onSelect,
+}: {
+  value: StatusFilter;
+  onSelect: (value: StatusFilter) => void;
+}) {
+  const current = STATUS_FILTERS.find((item) => item.id === value) ?? STATUS_FILTERS[0];
+
+  return (
+    <DropdownMenu>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Filter sessions"
+              className={cn("size-6 shrink-0", value === "all" ? "text-faint" : "text-primary")}
+            >
+              <FilterIcon className="size-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent>{`Filter: ${current.label}`}</TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="end" className="min-w-36">
+        {STATUS_FILTERS.map((item) => (
+          <DropdownMenuItem key={item.id} onSelect={() => onSelect(item.id)} className="gap-3">
+            <span className="min-w-0 flex-1 text-[13px]">{item.label}</span>
+            {item.id === value ? <CheckIcon className="text-primary" /> : null}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function ProjectFilter({
   projects,
   selected,
@@ -279,6 +326,7 @@ export function Sidebar() {
   const [worktreeProject, setWorktreeProject] = useState<Project | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [projectFilter, setProjectFilter] = usePersistedState<string>("sidebar.project", ALL_PROJECTS);
+  const [statusFilter, setStatusFilter] = usePersistedState<StatusFilter>("sidebar.status", "all");
 
   const [foldedIds, setFoldedIds] = usePersistedState<string>("sidebar.collapsed", "");
 
@@ -300,18 +348,25 @@ export function Sidebar() {
         .filter((project) => !selected || project.id === selected.id)
         .map((project) => ({
           project,
-          threads: threads.filter((thread) => thread.projectId === project.id && !thread.archived),
+          threads: threads.filter(
+            (thread) =>
+              thread.projectId === project.id &&
+              (statusFilter === "archived" ? thread.archived : !thread.archived),
+          ),
         }))
         .filter((group) => group.threads.length > 0),
-    [projects, threads, selected],
+    [projects, threads, selected, statusFilter],
   );
 
+  // under "all" the archived ones keep their own collapsed section below the active folders
   const archived = useMemo(
     () =>
-      threads.filter(
-        (thread) => thread.archived && (!selected || thread.projectId === selected.id),
-      ),
-    [threads, selected],
+      statusFilter === "all"
+        ? threads.filter(
+            (thread) => thread.archived && (!selected || thread.projectId === selected.id),
+          )
+        : [],
+    [threads, selected, statusFilter],
   );
 
   return (
@@ -335,6 +390,7 @@ export function Sidebar() {
         <div className="min-w-0 flex-1">
           <ProjectFilter projects={projects} selected={selected} onSelect={setProjectFilter} />
         </div>
+        <StatusFilterMenu value={statusFilter} onSelect={setStatusFilter} />
         {selected?.isGit ? <WorktreeButton project={selected} onOpen={setWorktreeProject} /> : null}
         {selected ? <NewSessionButton project={selected} /> : null}
       </div>
@@ -342,7 +398,11 @@ export function Sidebar() {
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {grouped.length === 0 && archived.length === 0 ? (
           <p className="px-2 py-6 text-center text-[12px] text-faint">
-            {selected ? "No sessions in this folder." : "No sessions yet. Start one with New."}
+            {statusFilter === "archived"
+              ? "No archived sessions."
+              : selected
+                ? "No sessions in this folder."
+                : "No sessions yet. Start one with New."}
           </p>
         ) : null}
 

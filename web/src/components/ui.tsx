@@ -21,6 +21,7 @@ import {
   Folder,
   FolderPlus,
   GitBranch,
+  ListFilter,
   MessageSquare,
   Mic,
   MousePointer2,
@@ -155,6 +156,7 @@ const ICONS = {
   AgentIcon: Bot,
   FolderIcon: Folder,
   BranchIcon: GitBranch,
+  FilterIcon: ListFilter,
   MicIcon: Mic,
   CloseIcon: X,
   DotsIcon: EllipsisVertical,
@@ -189,6 +191,7 @@ function icon(Source: LucideIcon) {
 export const AgentIcon = icon(ICONS.AgentIcon);
 export const FolderIcon = icon(ICONS.FolderIcon);
 export const BranchIcon = icon(ICONS.BranchIcon);
+export const FilterIcon = icon(ICONS.FilterIcon);
 export const MicIcon = icon(ICONS.MicIcon);
 export const CloseIcon = icon(ICONS.CloseIcon);
 export const DotsIcon = icon(ICONS.DotsIcon);
