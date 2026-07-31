@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "./ui.tsx";
 
 // the mask keeps the middle transparent, so the ring sits on the button's own hover colour
@@ -115,17 +116,23 @@ export function UsageMeter() {
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          title="Context and usage limits"
-          aria-label="Context and usage limits"
-          className="size-7"
-        >
-          <Ring percentage={context?.percentage ?? 0} />
-        </Button>
-      </PopoverTrigger>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Context and usage limits"
+              className="size-7"
+            >
+              <Ring percentage={context?.percentage ?? 0} />
+            </Button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent>
+          {context ? `Context ${context.percentage}% used` : "Context and usage limits"}
+        </TooltipContent>
+      </Tooltip>
       <PopoverContent align="end" side="top" className="w-80">
         {!context && !windows.length ? (
           <p className="text-[12px] text-faint">Send a turn to see context and plan usage.</p>
