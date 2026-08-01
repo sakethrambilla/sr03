@@ -43,6 +43,9 @@ desktop      Electron shell — a window over the ordinary server, nothing app-s
   payload.mjs collects web/dist + a symlink-free server copy into desktop/payload
 ```
 
+`desktop` is deliberately **outside** the pnpm workspace, with its own `pnpm-workspace.yaml` and
+lockfile, so an ordinary `pnpm install` never pulls Electron's ~200M. `pnpm dmg` installs it.
+
 `@/` resolves to `web/src` (tsconfig paths + vite alias), which is what the shadcn generator emits.
 
 REST for commands, WebSocket (`/ws`) for everything the server pushes back. Wire event types live in
@@ -95,6 +98,9 @@ REST for commands, WebSocket (`/ws`) for everything the server pushes back. Wire
   it an nvm or homebrew node is invisible, and the Claude CLI the server spawns can't find git.
 - The window gets a free port, not 3399, so a packaged app and `pnpm dev` can run side by side.
   Both share `~/.sr03`.
+- Electron 44 ships no postinstall, so its binary never lands from a plain install — `desktop`'s own
+  `postinstall` runs `install-electron` to fetch it. electron-builder downloads its own copy anyway,
+  so this only matters for `pnpm -C desktop dev`.
 - `payload.mjs` deploys the server with a filtered `--prod` install, which pnpm records as the
   workspace's install state — every later `pnpm <script>` would then want a production install and
   try to purge `node_modules`. The plain `pnpm install` right after the deploy undoes that; don't

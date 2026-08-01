@@ -6,7 +6,7 @@
     "dev": "concurrently -n server,web -c cyan,magenta \"pnpm -C server dev\" \"pnpm -C web dev\"",
     "build": "pnpm -C web build",
     "start": "pnpm -C server start",
-    "dmg": "pnpm -C desktop dmg",
+    "dmg": "pnpm -C desktop install && pnpm -C desktop dmg",
     "typecheck": "pnpm -C server typecheck && pnpm -C web typecheck"
   },
   "devDependencies": {

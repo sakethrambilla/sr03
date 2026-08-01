@@ -5,10 +5,12 @@
   "description": "Electron shell around the sr03 server",
   "main": "main.js",
   "scripts": {
+    "postinstall": "install-electron",
     "payload": "node payload.mjs",
     "dev": "pnpm payload && electron .",
     "dmg": "pnpm payload && electron-builder --mac dmg --arm64"
   },
+  "packageManager": "pnpm@11.10.0",
   "build": {
     "appId": "dev.sr03.app",
     "productName": "sr03",

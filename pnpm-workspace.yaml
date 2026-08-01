@@ -1,15 +1,11 @@
 packages:
   - server
   - web
-  - desktop
 
 allowBuilds:
-  electron: true
-  electron-winstaller: false
   esbuild: true
   node-pty: true
 
 onlyBuiltDependencies:
-  - electron
   - esbuild
   - node-pty
