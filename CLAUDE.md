@@ -5,7 +5,7 @@ git worktrees. Modelled on [t3code](https://github.com/pingdotgg/t3code)'s shape
 everything, the client is a thin view over one WebSocket — but deliberately much smaller.
 
 **Out of scope.** Ask before building any of these: remote control / relay / Tailscale, mobile app,
-Electron shell, providers other than Claude, checkpointing and turn revert, MCP
+providers other than Claude, checkpointing and turn revert, MCP
 servers, PR integration. t3code is Effect-based and event-sourced; sr03 is not, and shouldn't become
 so.
 
@@ -16,6 +16,7 @@ pnpm dev         # server :3399 + Vite :5399 (open http://localhost:5399)
 pnpm typecheck   # both packages
 pnpm build       # web → web/dist, which the server then serves itself
 pnpm start       # server only, serving web/dist
+pnpm dmg         # desktop/dist/sr03-<version>-arm64.dmg (arm64, ad-hoc signed)
 ```
 
 `SR03_PORT` moves the server port (Vite proxies to it); `SR03_DATA_DIR` moves state, default
@@ -37,6 +38,9 @@ web/src      Vite + React 19 + Tailwind v4 + shadcn/ui + zustand
   lib/utils.ts   cn() — clsx + tailwind-merge
   components/ui  shadcn/ui, generated — don't hand-edit, re-add instead
   components/ui.tsx  app-level wrappers over shadcn (Dialog, Menu, Chip) + lucide icon aliases
+desktop      Electron shell — a window over the ordinary server, nothing app-specific in it
+  main.js    resolves the login shell's PATH, spawns the server, opens the window
+  payload.mjs collects web/dist + a symlink-free server copy into desktop/payload
 ```
 
 `@/` resolves to `web/src` (tsconfig paths + vite alias), which is what the shadcn generator emits.
@@ -81,6 +85,20 @@ REST for commands, WebSocket (`/ws`) for everything the server pushes back. Wire
   `~/.claude` permission rules, so pre-approved tools never reach our approval prompt.
 - `canUseTool` is only consulted in `default` and `plan` modes; `acceptEdits` and `bypassPermissions`
   auto-approve before the callback runs.
+
+## Desktop shell
+
+- The shell does not host the server in Electron's Node — it spawns the machine's own `node` as a
+  child, the same command `pnpm start` runs. Type stripping, `node:sqlite` and node-pty's ABI all
+  want the real thing.
+- A GUI launch inherits a bare `PATH`, so `main.js` reads the login shell's (`$SHELL -ilc`). Without
+  it an nvm or homebrew node is invisible, and the Claude CLI the server spawns can't find git.
+- The window gets a free port, not 3399, so a packaged app and `pnpm dev` can run side by side.
+  Both share `~/.sr03`.
+- `payload.mjs` deploys the server with a filtered `--prod` install, which pnpm records as the
+  workspace's install state — every later `pnpm <script>` would then want a production install and
+  try to purge `node_modules`. The plain `pnpm install` right after the deploy undoes that; don't
+  drop it.
 
 ## Testing changes
 

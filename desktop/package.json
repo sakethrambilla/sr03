@@ -1,0 +1,49 @@
+{
+  "name": "@sr03/desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Electron shell around the sr03 server",
+  "main": "main.js",
+  "scripts": {
+    "payload": "node payload.mjs",
+    "dev": "pnpm payload && electron .",
+    "dmg": "pnpm payload && electron-builder --mac dmg --arm64"
+  },
+  "build": {
+    "appId": "dev.sr03.app",
+    "productName": "sr03",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js"
+    ],
+    "extraResources": [
+      {
+        "from": "payload",
+        "to": "payload"
+      }
+    ],
+    "npmRebuild": false,
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.developer-tools",
+      "identity": "-",
+      "hardenedRuntime": false
+    },
+    "dmg": {
+      "title": "sr03"
+    }
+  },
+  "devDependencies": {
+    "electron": "^44.1.1",
+    "electron-builder": "^26.15.3"
+  }
+}
