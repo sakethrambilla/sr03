@@ -400,7 +400,7 @@ export function ChatView({ thread }: { thread: Thread }) {
   return (
     <>
       <main className="flex h-full min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-2.5 border-b border-border/60 px-5 py-3">
+        <header className="flex h-15 shrink-0 items-center gap-2.5 border-b border-border/60 px-5">
           <SidebarToggle />
           <StatusDot status={thread.status} />
           <h1 className="min-w-0 truncate text-[13.5px] font-medium" title={thread.cwd}>

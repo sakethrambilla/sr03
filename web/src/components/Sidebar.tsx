@@ -371,11 +371,11 @@ export function Sidebar() {
 
   return (
     <aside className="flex h-full w-72 shrink-0 flex-col border-r border-border/60 bg-card">
-      <header className="flex items-center gap-2 px-4 pt-3.5 pb-2">
+      <header className="flex h-15 shrink-0 items-center gap-2 border-b border-border/60 px-4">
         <span className="font-mono text-[13px] font-semibold tracking-tight">sr03</span>
       </header>
 
-      <div className="px-2 pb-1">
+      <div className="px-2 pt-2 pb-1">
         <Button
           variant="secondary"
           onClick={() => startDraft()}

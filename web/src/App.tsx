@@ -59,7 +59,7 @@ export function App() {
         <ChatView key={thread.id} thread={thread} />
       ) : (
         <main className="flex h-full min-w-0 flex-1 flex-col">
-          <header className="flex items-center gap-2.5 border-b border-border/60 px-5 py-3">
+          <header className="flex h-15 shrink-0 items-center gap-2.5 border-b border-border/60 px-5">
             <SidebarToggle />
           </header>
           <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">
