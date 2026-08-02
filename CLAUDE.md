@@ -101,6 +101,8 @@ REST for commands, WebSocket (`/ws`) for everything the server pushes back. Wire
 - Electron 44 ships no postinstall, so its binary never lands from a plain install — `desktop`'s own
   `postinstall` runs `install-electron` to fetch it. electron-builder downloads its own copy anyway,
   so this only matters for `pnpm -C desktop dev`.
+- `desktop/build/icon.png` is the app icon (1024², dark squircle + the mono `S`); electron-builder
+  picks it up by convention and converts it to `.icns` itself.
 - `payload.mjs` deploys the server with a filtered `--prod` install, which pnpm records as the
   workspace's install state — every later `pnpm <script>` would then want a production install and
   try to purge `node_modules`. The plain `pnpm install` right after the deploy undoes that; don't
