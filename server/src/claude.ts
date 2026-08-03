@@ -91,6 +91,13 @@ function setStatus(threadId: string, status: Thread["status"], sessionId?: strin
   publish({ type: "thread.status", threadId, status, sessionId });
 }
 
+// the SDK ends a turn on a recoverable API error and then carries on streaming the same one, so
+// model output for an idle thread is proof the turn is still alive
+function ensureRunning(threadId: string): void {
+  if (threadStore.byId(threadId)?.status === "running") return;
+  setStatus(threadId, "running");
+}
+
 type SystemMessage = Extract<SDKMessage, { type: "system" }>;
 
 // subagents live only as long as the server does, so they stay in memory rather than in sqlite
@@ -369,11 +376,11 @@ function makeCanUseTool(session: Session): CanUseTool {
 
 function handleMessage(session: Session, message: SDKMessage): void {
   const { threadId } = session;
+  if (message.type === "stream_event" || message.type === "assistant") ensureRunning(threadId);
   switch (message.type) {
     case "system": {
       if (message.subtype === "init") {
-        threadStore.update(threadId, { sessionId: message.session_id });
-        publish({ type: "thread.status", threadId, status: "running", sessionId: message.session_id });
+        setStatus(threadId, "running", message.session_id);
         return;
       }
       trackTask(threadId, message);
