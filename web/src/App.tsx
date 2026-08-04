@@ -32,7 +32,7 @@ export function App() {
   // the sidebar lives in the store, so its shortcut works even with nothing open
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.shiftKey || event.key.toLowerCase() !== "b") return;
+      if (!(event.metaKey || event.ctrlKey) || !event.shiftKey || event.key.toLowerCase() !== "b") return;
       event.preventDefault();
       toggleSidebar();
     };

@@ -358,7 +358,7 @@ export function ChatView({ thread }: { thread: Thread }) {
         chord.current = window.setTimeout(() => (chord.current = null), 2000);
         return;
       }
-      if (key === "b" && event.shiftKey) {
+      if (key === "b" && !event.shiftKey) {
         event.preventDefault();
         setTreeOpen(!treeOpen);
         return;
