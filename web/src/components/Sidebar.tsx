@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import type { Project, Thread } from "../lib/types.ts";
 import { useStore } from "../store.ts";
@@ -68,6 +68,7 @@ function ThreadRow({ thread }: { thread: Thread }) {
   const done = useStore((state) => Boolean(state.finished[thread.id]));
   const [menuOpen, setMenuOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
+  const renameRef = useRef<HTMLInputElement>(null);
 
   const active = thread.id === activeThreadId;
 
@@ -97,6 +98,7 @@ function ThreadRow({ thread }: { thread: Thread }) {
         <div className="min-w-0 flex-1">
           {renaming ? (
             <Input
+              ref={renameRef}
               autoFocus
               defaultValue={thread.title}
               spellCheck={false}
@@ -141,6 +143,13 @@ function ThreadRow({ thread }: { thread: Thread }) {
             align="end"
             className="min-w-44"
             onClick={(event) => event.stopPropagation()}
+            // the menu's focus trap outlives its own close animation, so it takes focus off the
+            // freshly mounted rename input. taking it back here is what lets a click on another
+            // session blur the input, and so put the rename away
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              renameRef.current?.focus();
+            }}
             onKeyDown={(event) => {
               const action = actions.find((item) => item.key === event.key.toLowerCase());
               if (!action) return;
