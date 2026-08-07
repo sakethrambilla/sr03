@@ -301,6 +301,15 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
   },
   {
     method: "GET",
+    pattern: /^\/api\/commands$/,
+    handler: ({ url }) => {
+      const cwd = url.searchParams.get("cwd");
+      if (!cwd) throw new HttpError(400, "A cwd is required");
+      return claude.listCommands(cwd).then((commands) => ({ commands }));
+    },
+  },
+  {
+    method: "GET",
     pattern: /^\/api\/usage$/,
     handler: ({ url }) => {
       const threadId = url.searchParams.get("thread");

@@ -291,6 +291,7 @@ export function DraftView({ draft }: { draft: Draft }) {
 
       <Composer
         chips={<DraftChips draft={draft} />}
+        cwd={draft.worktreePath ?? project?.path}
         model={draft.model}
         permissionMode={draft.permissionMode}
         effort={draft.effort}

@@ -8,6 +8,7 @@ import type {
   PendingApproval,
   PermissionMode,
   ServerEvent,
+  SlashCommand,
   Thread,
   ThreadTask,
   Usage,
@@ -34,6 +35,8 @@ interface Store extends AppState {
   streamByThread: Record<string, string>;
   approvalsByThread: Record<string, PendingApproval[]>;
   tasksByThread: Record<string, ThreadTask[]>;
+  // slash commands belong to the folder, not the session — every thread in one shares a list
+  commandsByCwd: Record<string, SlashCommand[]>;
   usage: Usage | null;
   // threads whose turn ended while you were somewhere else, cleared when you open them
   finished: Record<string, true>;
@@ -54,6 +57,7 @@ interface Store extends AppState {
   patchActive: (patch: { model?: string; permissionMode?: PermissionMode; effort?: Effort }) => Promise<void>;
   respond: (approvalId: string, decision: "allow" | "always" | "deny") => Promise<void>;
   refreshUsage: () => Promise<void>;
+  loadCommands: (cwd: string) => Promise<void>;
   applyEvent: (event: ServerEvent) => void;
   toggleSidebar: () => void;
   setSettingsOpen: (open: boolean) => void;
@@ -151,6 +155,7 @@ export const useStore = create<Store>((set, get) => ({
   streamByThread: {},
   approvalsByThread: {},
   tasksByThread: {},
+  commandsByCwd: {},
   usage: null,
   finished: loadFinished(),
   error: null,
@@ -338,6 +343,16 @@ export const useStore = create<Store>((set, get) => ({
     );
   },
 
+  // a cold read spawns a CLI of its own, so a folder is only ever asked once
+  loadCommands: async (cwd) => {
+    if (get().commandsByCwd[cwd]) return;
+    const commands = await api.commands(cwd).then(
+      (body) => body.commands,
+      () => null,
+    );
+    if (commands) set((state) => ({ commandsByCwd: { ...state.commandsByCwd, [cwd]: commands } }));
+  },
+
   // context is per-session and the plan windows are account-wide, so both come from one read
   refreshUsage: async () => {
     const usage = await api.usage(get().activeThreadId).catch(() => null);
@@ -416,6 +431,13 @@ export const useStore = create<Store>((set, get) => ({
         set((state) => ({
           tasksByThread: { ...state.tasksByThread, [event.threadId]: event.tasks },
         }));
+        return;
+      }
+      // the CLI re-sends the whole list whenever it changes, so this replaces rather than merges
+      case "thread.commands": {
+        const cwd = get().threads.find((thread) => thread.id === event.threadId)?.cwd;
+        if (!cwd) return;
+        set((state) => ({ commandsByCwd: { ...state.commandsByCwd, [cwd]: event.commands } }));
         return;
       }
       // the server is authoritative for what is still outstanding, so this replaces rather than merges

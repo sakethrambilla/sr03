@@ -1,11 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { api } from "../lib/api.ts";
-import type { Effort, PendingApproval, PermissionMode, Thread } from "../lib/types.ts";
+import type { Effort, PendingApproval, PermissionMode, SlashCommand, Thread } from "../lib/types.ts";
 import { useStore } from "../store.ts";
 import { UsageMeter } from "./UsageMeter.tsx";
 import { Button } from "@/components/ui/button";
+import { Command, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import { Toggle } from "@/components/ui/toggle";
@@ -21,6 +22,7 @@ import {
 } from "./ui.tsx";
 
 const NO_APPROVALS: PendingApproval[] = [];
+const NO_COMMANDS: SlashCommand[] = [];
 
 interface Recognizer {
   lang: string;
@@ -177,9 +179,55 @@ function ImageViewer({ item, onClose }: { item: Attachment; onClose: () => void 
   );
 }
 
+// the CLI runs whatever text it is sent, so a command is picked by writing it into the box —
+// the list only ever stands in for the name, and hands the caret back straight after
+function CommandMenu({
+  matches,
+  active,
+  onPick,
+}: {
+  matches: SlashCommand[];
+  active: SlashCommand;
+  onPick: (command: SlashCommand) => void;
+}) {
+  return (
+    <Command
+      shouldFilter={false}
+      value={active.name}
+      className="mb-2 rounded-lg border border-border bg-popover shadow-lg shadow-black/20"
+    >
+      <CommandList className="max-h-64 p-1">
+        {matches.map((command) => (
+          <CommandItem
+            key={command.name}
+            value={command.name}
+            // the caret never leaves the box, so the click must not take focus with it
+            onMouseDown={(event) => event.preventDefault()}
+            onSelect={() => onPick(command)}
+            className="gap-3"
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-mono text-[12.5px]">
+                /{command.name}
+                {command.argumentHint ? (
+                  <span className="text-faint"> {command.argumentHint}</span>
+                ) : null}
+              </span>
+              {command.description ? (
+                <span className="block truncate text-[11px] text-faint">{command.description}</span>
+              ) : null}
+            </span>
+          </CommandItem>
+        ))}
+      </CommandList>
+    </Command>
+  );
+}
+
 export function Composer({
   chips,
   above,
+  cwd,
   model,
   permissionMode,
   effort,
@@ -194,6 +242,7 @@ export function Composer({
 }: {
   chips?: ReactNode;
   above?: ReactNode;
+  cwd?: string;
   model: string;
   permissionMode: PermissionMode;
   effort: Effort;
@@ -209,6 +258,8 @@ export function Composer({
   const models = useStore((state) => state.models);
   const permissionModes = useStore((state) => state.permissionModes);
   const setError = useStore((state) => state.setError);
+  const loadCommands = useStore((state) => state.loadCommands);
+  const commands = useStore((state) => (cwd ? state.commandsByCwd[cwd] : null) ?? NO_COMMANDS);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false);
@@ -218,7 +269,33 @@ export function Composer({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const dictationRef = useRef<Recognizer | null>(null);
 
+  const [picked, setPicked] = useState(0);
+  const [dismissed, setDismissed] = useState(false);
+
   useEffect(() => () => dictationRef.current?.stop(), []);
+
+  // reading the list spawns a CLI of its own, so it is asked for on mount rather than on the "/"
+  useEffect(() => {
+    if (cwd) void loadCommands(cwd);
+  }, [cwd, loadCommands]);
+
+  // the menu only stands in for the command name, so it goes away as soon as arguments start
+  const typing = /^\/(\S*)$/.exec(text)?.[1] ?? null;
+
+  const matches = useMemo(() => {
+    if (typing === null) return NO_COMMANDS;
+    const needle = typing.toLowerCase();
+    return commands.filter((command) => command.name.toLowerCase().includes(needle));
+  }, [typing, commands]);
+
+  const menu = !dismissed && matches.length > 0;
+  const active = matches[Math.min(picked, matches.length - 1)] ?? null;
+
+  const pickCommand = (command: SlashCommand) => {
+    setText(`/${command.name} `);
+    setPicked(0);
+    inputRef.current?.focus();
+  };
 
   useLayoutEffect(() => {
     const input = inputRef.current;
@@ -323,6 +400,9 @@ export function Composer({
       >
         {above}
         {chips ? <div className="mb-2 flex flex-wrap items-center gap-1.5 empty:hidden">{chips}</div> : null}
+        {menu && active ? (
+          <CommandMenu matches={matches} active={active} onPick={pickCommand} />
+        ) : null}
 
         <div
           className={cn(
@@ -366,8 +446,34 @@ export function Composer({
             <Textarea
               ref={inputRef}
               value={text}
-              onChange={(event) => setText(event.target.value)}
+              onChange={(event) => {
+                setText(event.target.value);
+                setPicked(0);
+                setDismissed(false);
+              }}
               onKeyDown={(event) => {
+                if (menu && active) {
+                  const step =
+                    event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
+                  if (step) {
+                    event.preventDefault();
+                    setPicked((current) => {
+                      const at = Math.min(current, matches.length - 1) + step;
+                      return (at + matches.length) % matches.length;
+                    });
+                    return;
+                  }
+                  if (event.key === "Enter" || event.key === "Tab") {
+                    event.preventDefault();
+                    pickCommand(active);
+                    return;
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setDismissed(true);
+                    return;
+                  }
+                }
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
                   void submit();
@@ -528,6 +634,7 @@ export function ThreadComposer({ thread }: { thread: Thread }) {
       above={approvals.map((approval) => (
         <ApprovalPanel key={approval.id} approval={approval} />
       ))}
+      cwd={thread.cwd}
       model={thread.model}
       permissionMode={thread.permissionMode}
       effort={thread.effort}

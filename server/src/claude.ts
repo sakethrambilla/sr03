@@ -16,6 +16,7 @@ import type {
   Effort,
   PendingApproval,
   PermissionMode,
+  SlashCommand,
   Thread,
   ThreadTask,
   Usage,
@@ -336,6 +337,65 @@ function foldRateLimit(threadId: string, info: SDKRateLimitInfo): void {
   publish({ type: "usage", threadId, usage: snapshot(threadId) });
 }
 
+// a few of the CLI's commands only mean anything inside a terminal (/exit, /statusline). the
+// init message names them, and it is the only place they are named — so the set fills in as
+// sessions run, and a list read before any of them has run may still carry one
+const terminalOnly = new Set<string>();
+
+// commands come from the folder as much as from the CLI — skills and the project's own commands
+// live in it — so a cold read is cached per cwd for the life of the server
+const commandsByCwd = new Map<string, Promise<SlashCommand[]>>();
+
+function toCommands(commands: SlashCommand[]): SlashCommand[] {
+  return commands
+    .filter((command) => !terminalOnly.has(command.name))
+    .map(({ name, description, argumentHint }) => ({ name, description, argumentHint }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+// a throwaway session, the way the model catalog is read — the CLI only answers this over the
+// control channel, so asking is the only way to know
+async function readCommands(cwd: string): Promise<SlashCommand[]> {
+  const session = query({
+    prompt: (async function* () {})(),
+    options: {
+      cwd,
+      systemPrompt: { type: "preset", preset: "claude_code" },
+      settingSources: ["user", "project", "local"],
+    },
+  });
+  try {
+    return toCommands(await session.supportedCommands());
+  } finally {
+    session.close();
+  }
+}
+
+function cachedCommands(cwd: string): Promise<SlashCommand[]> {
+  let pending = commandsByCwd.get(cwd);
+  if (pending) return pending;
+  pending = readCommands(cwd).catch((error: Error) => {
+    console.error("[commands] could not read the CLI list:", error.message);
+    commandsByCwd.delete(cwd);
+    return [];
+  });
+  commandsByCwd.set(cwd, pending);
+  return pending;
+}
+
+// a live session in that folder answers instead of a second CLI: it is already warm, and it knows
+// about anything discovered mid-turn
+export function listCommands(cwd: string): Promise<SlashCommand[]> {
+  const live = [...sessions.values()].find(
+    (session) => threadStore.byId(session.threadId)?.cwd === cwd,
+  );
+  if (!live) return cachedCommands(cwd);
+  return live.query
+    .supportedCommands()
+    .then(toCommands)
+    .catch(() => cachedCommands(cwd));
+}
+
 function makeCanUseTool(session: Session): CanUseTool {
   return async (toolName, input, options) => {
     if (session.alwaysAllow.has(toolName)) return { behavior: "allow", updatedInput: input };
@@ -380,7 +440,17 @@ function handleMessage(session: Session, message: SDKMessage): void {
   switch (message.type) {
     case "system": {
       if (message.subtype === "init") {
+        for (const name of message.terminal_slash_commands ?? []) terminalOnly.add(name);
         setStatus(threadId, "running", message.session_id);
+        return;
+      }
+      if (message.subtype === "commands_changed") {
+        publish({ type: "thread.commands", threadId, commands: toCommands(message.commands) });
+        return;
+      }
+      // a local command (/usage, /cost) never reaches the model, so its output is the whole turn
+      if (message.subtype === "local_command_output") {
+        appendMessage(threadId, "assistant", message.content);
         return;
       }
       trackTask(threadId, message);

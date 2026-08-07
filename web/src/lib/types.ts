@@ -93,6 +93,13 @@ export interface AppState {
   defaults: { model: string; permissionMode: PermissionMode; effort: Effort };
 }
 
+// one row of the CLI's slash-command list: built-ins, skills, and the folder's own commands
+export interface SlashCommand {
+  name: string;
+  description: string;
+  argumentHint: string;
+}
+
 export interface Branch {
   name: string;
   isCurrent: boolean;
@@ -161,6 +168,7 @@ export type ServerEvent =
   | { type: "thread.approval.resolved"; threadId: string; approvalId: string }
   | { type: "thread.approvals"; approvals: PendingApproval[] }
   | { type: "thread.tasks"; threadId: string; tasks: ThreadTask[] }
+  | { type: "thread.commands"; threadId: string; commands: SlashCommand[] }
   | { type: "usage"; threadId: string | null; usage: Usage }
   | { type: "thread.updated"; thread: Thread }
   | { type: "pty.data"; threadId: string; terminalId: string; data: string }

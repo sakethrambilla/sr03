@@ -8,6 +8,7 @@ import type {
   PermissionMode,
   Project,
   ProviderStatus,
+  SlashCommand,
   Thread,
   ThreadTask,
   TreeEntry,
@@ -69,6 +70,8 @@ export const api = {
     call<{ thread: Thread; messages: Message[]; tasks: ThreadTask[]; git: GitSnapshot & { diff: { files: number; insertions: number; deletions: number } } }>(
       `/api/threads/${id}`,
     ),
+  commands: (cwd: string) =>
+    call<{ commands: SlashCommand[] }>(`/api/commands?cwd=${encodeURIComponent(cwd)}`),
   usage: (threadId?: string | null) =>
     call<Usage>(`/api/usage${threadId ? `?thread=${encodeURIComponent(threadId)}` : ""}`),
   threadGit: (id: string) =>
