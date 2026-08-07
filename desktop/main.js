@@ -117,7 +117,10 @@ async function start() {
     minWidth: 720,
     minHeight: 480,
     backgroundColor: "#1f1e1c",
-    titleBarStyle: "hiddenInset",
+    // the app's own 60px header stands in for the title bar, so the traffic lights are placed on
+    // its centre line rather than left at the inset default, which sits ~10px higher
+    titleBarStyle: "hidden",
+    trafficLightPosition: { x: 20, y: 22 },
     title: "sr03",
   });
   window.webContents.setWindowOpenHandler(({ url }) => {

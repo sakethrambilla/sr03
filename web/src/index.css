@@ -133,3 +133,18 @@ select option {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* the desktop shell hides the native title bar, so the app's own headers stand in for one:
+   these are what the window is dragged and double-clicked (to zoom) by */
+.electron [data-titlebar] {
+  -webkit-app-region: drag;
+}
+.electron [data-titlebar] :is(button, a, input, label, [role="slider"]) {
+  -webkit-app-region: no-drag;
+}
+
+/* the traffic lights run to roughly 78px in from the window's left corner, so whichever pane is
+   leftmost keeps its header clear of them — the sidebar, or the main pane once it is hidden */
+.electron :is(aside, main):first-child > [data-titlebar] {
+  padding-left: 108px;
+}

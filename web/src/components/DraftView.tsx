@@ -262,7 +262,7 @@ export function DraftView({ draft }: { draft: Draft }) {
 
   return (
     <main className="flex h-full min-w-0 flex-1 flex-col">
-      <header className="flex h-15 shrink-0 items-center gap-2.5 border-b border-border/60 px-5">
+      <header data-titlebar className="flex h-15 shrink-0 items-center gap-2.5 border-b border-border/60 px-5">
         <SidebarToggle />
         <StatusDot status="idle" />
         <h1 className="min-w-0 truncate text-[13.5px] font-medium">New session</h1>
