@@ -192,20 +192,15 @@ function WorktreeButton({
   hover?: boolean;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => onOpen(project)}
-          aria-label="Worktrees"
-          className={cn("size-6 shrink-0 text-faint", hover && "opacity-0 group-hover:opacity-100")}
-        >
-          <WorktreeIcon className="size-3.5" />
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>Worktrees</TooltipContent>
-    </Tooltip>
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={() => onOpen(project)}
+      aria-label="Worktrees"
+      className={cn("size-6 shrink-0 text-faint", hover && "opacity-0 group-hover:opacity-100")}
+    >
+      <WorktreeIcon className="size-3.5" />
+    </Button>
   );
 }
 
@@ -213,20 +208,15 @@ function NewSessionButton({ project, hover }: { project: Project; hover?: boolea
   const startDraft = useStore((state) => state.startDraft);
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => startDraft({ projectId: project.id })}
-          aria-label="New session in this folder"
-          className={cn("size-6 shrink-0 text-faint", hover && "opacity-0 group-hover:opacity-100")}
-        >
-          <PlusIcon className="size-3.5" />
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>New session in this folder</TooltipContent>
-    </Tooltip>
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={() => startDraft({ projectId: project.id })}
+      aria-label="New session in this folder"
+      className={cn("size-6 shrink-0 text-faint", hover && "opacity-0 group-hover:opacity-100")}
+    >
+      <PlusIcon className="size-3.5" />
+    </Button>
   );
 }
 
@@ -494,20 +484,15 @@ export function Sidebar() {
         />
         <span className="text-[11px] text-faint">{connected ? "connected" : "reconnecting…"}</span>
         <div className="flex-1" />
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setSettingsOpen(true)}
-              aria-label="Settings"
-              className="size-6 text-faint"
-            >
-              <SettingsIcon className="size-3.5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>Settings</TooltipContent>
-        </Tooltip>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => setSettingsOpen(true)}
+          aria-label="Settings"
+          className="size-6 text-faint"
+        >
+          <SettingsIcon className="size-3.5" />
+        </Button>
       </footer>
 
       {worktreeProject ? (

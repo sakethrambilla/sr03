@@ -55,22 +55,15 @@ function PanelToggle({
   children: ReactNode;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span className="inline-flex">
-          <Toggle
-            size="sm"
-            pressed={pressed}
-            onPressedChange={onPressedChange}
-            aria-label={label}
-            className="text-faint data-[state=on]:text-foreground"
-          >
-            {children}
-          </Toggle>
-        </span>
-      </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
+    <Toggle
+      size="sm"
+      pressed={pressed}
+      onPressedChange={onPressedChange}
+      aria-label={label}
+      className="text-faint data-[state=on]:text-foreground"
+    >
+      {children}
+    </Toggle>
   );
 }
 

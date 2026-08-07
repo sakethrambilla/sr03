@@ -490,20 +490,15 @@ export function Composer({
               className="max-h-[220px] min-h-8 w-full flex-1 resize-none rounded-none border-0 bg-transparent px-0 py-1.5 text-[14px] leading-relaxed shadow-none focus-visible:ring-0 placeholder:text-faint dark:bg-transparent"
             />
             {running && onInterrupt ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={onInterrupt}
-                    aria-label="Stop"
-                    className="mb-1 size-7 shrink-0"
-                  >
-                    <StopIcon className="size-3" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Stop</TooltipContent>
-              </Tooltip>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={onInterrupt}
+                aria-label="Stop"
+                className="mb-1 size-7 shrink-0"
+              >
+                <StopIcon className="size-3" />
+              </Button>
             ) : (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -537,37 +532,25 @@ export function Composer({
             }))}
             onPick={(id) => onPermissionMode(id as PermissionMode)}
           />
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => void attach()}
-                aria-label="Attach a file"
-                className="size-7 text-faint"
-              >
-                <PlusIcon />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Attach a file</TooltipContent>
-          </Tooltip>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => void attach()}
+            aria-label="Attach a file"
+            className="size-7 text-faint"
+          >
+            <PlusIcon />
+          </Button>
           {Dictation ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="inline-flex">
-                  <Toggle
-                    size="sm"
-                    pressed={listening}
-                    onPressedChange={toggleDictation}
-                    aria-label="Dictate a message"
-                    className="size-7 min-w-7 text-faint data-[state=on]:text-primary"
-                  >
-                    <MicIcon />
-                  </Toggle>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>{listening ? "Stop dictation" : "Dictate a message"}</TooltipContent>
-            </Tooltip>
+            <Toggle
+              size="sm"
+              pressed={listening}
+              onPressedChange={toggleDictation}
+              aria-label={listening ? "Stop dictation" : "Dictate a message"}
+              className="size-7 min-w-7 text-faint data-[state=on]:text-primary"
+            >
+              <MicIcon />
+            </Toggle>
           ) : null}
           <div className="flex-1" />
           <Menu
