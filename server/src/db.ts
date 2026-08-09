@@ -48,6 +48,10 @@ db.exec(`
     created_at INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS messages_thread_seq ON messages(thread_id, seq);
+  CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
 `);
 
 // sqlite has no ADD COLUMN IF NOT EXISTS, so additive migrations check first
@@ -107,6 +111,24 @@ function toMessage(row: Row): Message {
     createdAt: row.created_at as number,
   };
 }
+
+// the desktop shell loads a new port every launch, so the browser's own storage starts empty
+// each time — anything meant to outlive a restart has to live here
+export const settings = {
+  all(): Record<string, string> {
+    const rows = db.prepare("SELECT key, value FROM settings").all() as Array<{
+      key: string;
+      value: string;
+    }>;
+    return Object.fromEntries(rows.map((row) => [row.key, row.value]));
+  },
+
+  set(key: string, value: string): void {
+    db.prepare(
+      "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    ).run(key, value);
+  },
+};
 
 export const projects = {
   list(): Project[] {

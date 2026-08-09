@@ -11,6 +11,19 @@ import { CloseIcon, PlusIcon, TerminalIcon, cn } from "./ui.tsx";
 
 // xterm needs a literal color, and canvas normalises any CSS color the browser understands —
 // so the oklch theme tokens can drive the terminal without being duplicated as hex
+function monoFamily(): string {
+  return getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim();
+}
+
+function terminalTheme() {
+  return {
+    background: themeColor("--color-card", "#1a1a19"),
+    foreground: themeColor("--color-foreground", "#f0efed"),
+    cursor: themeColor("--color-primary", "#d9743f"),
+    selectionBackground: themeColor("--color-accent", "#3a3937"),
+  };
+}
+
 function themeColor(name: string, fallback: string): string {
   const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const probe = document.createElement("canvas").getContext("2d");
@@ -33,23 +46,19 @@ function TerminalView({
 }) {
   const host = useRef<HTMLDivElement>(null);
   const fitted = useRef<{ term: Terminal; fit: FitAddon } | null>(null);
+  const appearance = useStore((state) => state.appearance);
 
   useEffect(() => {
     const container = host.current;
     if (!container) return;
 
     const term = new Terminal({
-      fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim(),
+      fontFamily: monoFamily(),
       fontSize: 12,
       lineHeight: 1.25,
       cursorBlink: true,
       scrollback: 5000,
-      theme: {
-        background: themeColor("--color-card", "#1a1a19"),
-        foreground: themeColor("--color-foreground", "#f0efed"),
-        cursor: themeColor("--color-primary", "#d9743f"),
-        selectionBackground: themeColor("--color-accent", "#3a3937"),
-      },
+      theme: terminalTheme(),
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -95,6 +104,18 @@ function TerminalView({
     const { term } = fitted.current;
     sendClientMessage({ type: "pty.open", threadId, terminalId, cols: term.cols, rows: term.rows });
   }, [connected, threadId, terminalId]);
+
+  // xterm reads the palette once at construction, so a theme or font change has to be handed
+  // over — and a new family changes the cell size, which the shell has to be told about
+  useEffect(() => {
+    const entry = fitted.current;
+    if (!entry) return;
+    entry.term.options.theme = terminalTheme();
+    entry.term.options.fontFamily = monoFamily();
+    if (host.current?.offsetParent === null) return;
+    entry.fit.fit();
+    sendClientMessage({ type: "pty.resize", threadId, terminalId, cols: entry.term.cols, rows: entry.term.rows });
+  }, [appearance, threadId, terminalId]);
 
   // coming back to a tab that was hidden needs a fresh measurement
   useEffect(() => {

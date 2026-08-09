@@ -24,7 +24,7 @@ import {
   walkWorkspaceFiles,
   writeWorkspaceFile,
 } from "./fsbrowse.ts";
-import { messages, projects, threads } from "./db.ts";
+import { messages, projects, settings, threads } from "./db.ts";
 import {
   DEFAULT_EFFORT,
   DEFAULT_MODEL,
@@ -400,6 +400,21 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
         git.fileState(thread.cwd, rel),
       ]);
       return { path: rel, ...file, ...state };
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/settings$/,
+    handler: async () => ({ settings: settings.all() }),
+  },
+  {
+    method: "PUT",
+    pattern: /^\/api\/settings$/,
+    handler: async ({ request }) => {
+      const body = await readBody(request);
+      if (typeof body.value !== "string") throw new HttpError(400, "`value` is required");
+      settings.set(requireString(body, "key"), body.value);
+      return { ok: true };
     },
   },
   {

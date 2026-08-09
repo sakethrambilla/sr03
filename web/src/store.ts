@@ -1,6 +1,8 @@
 import { create } from "zustand";
 
 import { api } from "./lib/api.ts";
+import { applyAppearance, loadAppearance, saveAppearance } from "./lib/appearance.ts";
+import type { Appearance } from "./lib/appearance.ts";
 import type {
   AppState,
   Effort,
@@ -40,6 +42,7 @@ interface Store extends AppState {
   // every file in the folder, so a path a message mentions can be recognised as one
   filesByCwd: Record<string, string[]>;
   usage: Usage | null;
+  appearance: Appearance;
   // threads whose turn ended while you were somewhere else, cleared when you open them
   finished: Record<string, true>;
   error: string | null;
@@ -61,6 +64,8 @@ interface Store extends AppState {
   refreshUsage: () => Promise<void>;
   loadCommands: (cwd: string) => Promise<void>;
   loadFiles: (threadId: string, cwd: string) => Promise<void>;
+  setAppearance: (patch: Partial<Appearance>) => void;
+  restoreAppearance: () => Promise<void>;
   applyEvent: (event: ServerEvent) => void;
   toggleSidebar: () => void;
   setSettingsOpen: (open: boolean) => void;
@@ -147,6 +152,12 @@ function upsertThread(threads: Thread[], thread: Thread): Thread[] {
   return next.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+const APPEARANCE_KEY = "appearance";
+
+// applied as the module loads rather than from an effect, so the first paint is already themed
+const startingAppearance = loadAppearance();
+applyAppearance(startingAppearance);
+
 export const useStore = create<Store>((set, get) => ({
   ...EMPTY,
   connected: false,
@@ -161,6 +172,7 @@ export const useStore = create<Store>((set, get) => ({
   commandsByCwd: {},
   filesByCwd: {},
   usage: null,
+  appearance: startingAppearance,
   finished: loadFinished(),
   error: null,
 
@@ -169,7 +181,17 @@ export const useStore = create<Store>((set, get) => ({
   setConnected: (connected) => set({ connected }),
   setError: (error) => set({ error }),
 
+  // localStorage is what paints the first frame; the server is what survives the desktop
+  // shell's next launch, since that arrives on a different port with empty browser storage
+  setAppearance: (patch) => {
+    const appearance = { ...get().appearance, ...patch };
+    applyAppearance(appearance);
+    set({ appearance: saveAppearance(appearance) });
+    void api.saveSetting(APPEARANCE_KEY, JSON.stringify(appearance)).catch(() => undefined);
+  },
+
   bootstrap: async () => {
+    await get().restoreAppearance();
     await get().refreshState();
     const { threads, activeThreadId } = get();
     const next = activeThreadId ?? threads[0]?.id ?? null;
@@ -355,6 +377,19 @@ export const useStore = create<Store>((set, get) => ({
       () => null,
     );
     if (commands) set((state) => ({ commandsByCwd: { ...state.commandsByCwd, [cwd]: commands } }));
+  },
+
+  restoreAppearance: async () => {
+    const stored = await api.settings().then(
+      (body) => body.settings[APPEARANCE_KEY],
+      () => undefined,
+    );
+    if (!stored) return;
+    try {
+      get().setAppearance(JSON.parse(stored) as Partial<Appearance>);
+    } catch {
+      // a value we can't read is a value we leave alone
+    }
   },
 
   // a turn can add or delete files, so this is re-read rather than cached for the session

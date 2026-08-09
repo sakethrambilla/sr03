@@ -99,6 +99,13 @@ export const api = {
     call<{ file: string; diff: string }>(
       `/api/threads/${id}/diff?file=${encodeURIComponent(file)}${untracked ? "&untracked=1" : ""}`,
     ),
+  settings: () => call<{ settings: Record<string, string> }>("/api/settings"),
+  saveSetting: (key: string, value: string) =>
+    call<{ ok: true }>("/api/settings", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ key, value }),
+    }),
   files: (id: string) => call<{ files: string[] }>(`/api/threads/${id}/files`),
   tree: (id: string, path: string) =>
     call<{ path: string; entries: TreeEntry[] }>(
