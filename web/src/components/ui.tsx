@@ -8,6 +8,7 @@ import {
   ChevronsDownUp,
   ChevronsUpDown,
   Code,
+  Copy,
   EllipsisVertical,
   FileDiff,
   File,
@@ -26,6 +27,7 @@ import {
   Mic,
   MousePointer2,
   PanelLeft,
+  Play,
   Plus,
   RefreshCw,
   Sparkles,
@@ -165,6 +167,8 @@ const ICONS = {
   TerminalIcon: SquareTerminal,
   ChangesIcon: FileDiff,
   CodeIcon: Code,
+  CopyIcon: Copy,
+  RunIcon: Play,
   CheckIcon: Check,
   ChevronIcon: ChevronDown,
   RefreshIcon: RefreshCw,
@@ -200,6 +204,8 @@ export const SendIcon = icon(ICONS.SendIcon);
 export const TerminalIcon = icon(ICONS.TerminalIcon);
 export const ChangesIcon = icon(ICONS.ChangesIcon);
 export const CodeIcon = icon(ICONS.CodeIcon);
+export const CopyIcon = icon(ICONS.CopyIcon);
+export const RunIcon = icon(ICONS.RunIcon);
 export const CheckIcon = icon(ICONS.CheckIcon);
 export const ChevronIcon = icon(ICONS.ChevronIcon);
 export const RefreshIcon = icon(ICONS.RefreshIcon);

@@ -330,3 +330,21 @@ export async function ignoredPaths(cwd: string, paths: string[]): Promise<Set<st
   ).catch(() => "");
   return new Set(out.split("\0").filter((entry) => entry.length > 0));
 }
+
+// every file git would show — tracked plus untracked, minus whatever is ignored
+export async function listedFiles(cwd: string): Promise<string[] | null> {
+  try {
+    const out = await git(cwd, [
+      "-c",
+      "core.quotepath=false",
+      "ls-files",
+      "--cached",
+      "--others",
+      "--exclude-standard",
+      "-z",
+    ]);
+    return out.split("\0").filter(Boolean);
+  } catch {
+    return null;
+  }
+}

@@ -108,7 +108,15 @@ function TerminalView({
   return <div ref={host} className={cn("min-h-0 flex-1 px-2 py-1", visible ? "" : "hidden")} />;
 }
 
-export function TerminalPanel({ thread, onClose }: { thread: Thread; onClose: () => void }) {
+export function TerminalPanel({
+  thread,
+  command,
+  onClose,
+}: {
+  thread: Thread;
+  command: { text: string; key: number } | null;
+  onClose: () => void;
+}) {
   const connected = useStore((state) => state.connected);
   // ids and the active one move together, so they share a single updater
   const [tabs, setTabs] = useState<{ ids: string[]; active: string | null }>({ ids: [], active: null });
@@ -166,9 +174,23 @@ export function TerminalPanel({ thread, onClose }: { thread: Thread; onClose: ()
     drop(terminalId);
   };
 
-  // the panel exists to hold terminals; the last one closing takes it with them
+  // a command run from the chat waits for the shell it landed on to exist, which it does not
+  // yet when the click is what opened this panel
+  const ran = useRef<number | null>(null);
   useEffect(() => {
-    if (ready && ids.length === 0) onClose();
+    if (!command || !active || ran.current === command.key) return;
+    ran.current = command.key;
+    const data = `${command.text.replace(/\r?\n/g, "\r").replace(/\r+$/, "")}\r`;
+    sendClientMessage({ type: "pty.input", threadId: thread.id, terminalId: active, data });
+  }, [command, active, thread.id]);
+
+  // the panel exists to hold terminals; the last one closing takes it with them. opening it
+  // on a thread that has none is not that — the first shell is still being spawned
+  const spawned = useRef(false);
+  if (ids.length > 0) spawned.current = true;
+
+  useEffect(() => {
+    if (ready && spawned.current && ids.length === 0) onClose();
   }, [ready, ids.length]);
 
   return (

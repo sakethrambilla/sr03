@@ -40,6 +40,8 @@
   --code-type: #4ec9b0;
   --code-function: #dcdcaa;
   --code-property: #9cdcfe;
+  /* prose code, which is a chip in running text rather than a token in a listing */
+  --code-inline: oklch(0.74 0.12 28);
   /* file-type icon hues, in the spirit of VS Code's Seti theme */
   --file-code: #519aba;
   --file-data: #cbcb41;
@@ -84,6 +86,7 @@
   --color-code-type: var(--code-type);
   --color-code-function: var(--code-function);
   --color-code-property: var(--code-property);
+  --color-code-inline: var(--code-inline);
   --color-file-code: var(--file-code);
   --color-file-data: var(--file-data);
   --color-file-style: var(--file-style);

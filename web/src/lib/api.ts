@@ -99,6 +99,7 @@ export const api = {
     call<{ file: string; diff: string }>(
       `/api/threads/${id}/diff?file=${encodeURIComponent(file)}${untracked ? "&untracked=1" : ""}`,
     ),
+  files: (id: string) => call<{ files: string[] }>(`/api/threads/${id}/files`),
   tree: (id: string, path: string) =>
     call<{ path: string; entries: TreeEntry[] }>(
       `/api/threads/${id}/tree${path ? `?path=${encodeURIComponent(path)}` : ""}`,

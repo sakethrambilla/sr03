@@ -21,6 +21,7 @@ import {
   renameWorkspaceEntry,
   saveUpload,
   trashWorkspaceEntry,
+  walkWorkspaceFiles,
   writeWorkspaceFile,
 } from "./fsbrowse.ts";
 import { messages, projects, threads } from "./db.ts";
@@ -399,6 +400,15 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
         git.fileState(thread.cwd, rel),
       ]);
       return { path: rel, ...file, ...state };
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/threads\/([^/]+)\/files$/,
+    handler: async ({ params }) => {
+      const thread = requireThread(params[0]!);
+      const files = (await git.listedFiles(thread.cwd)) ?? (await walkWorkspaceFiles(thread.cwd));
+      return { files };
     },
   },
   {

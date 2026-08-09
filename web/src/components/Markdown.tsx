@@ -1,6 +1,11 @@
+import { createContext, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
-import { cn } from "./ui.tsx";
+import { FILE_REF_SOURCE } from "../lib/fileref.ts";
+import type { FileLinks, FileRef } from "../lib/fileref.ts";
+import { TOKEN_CLASS, tokenize } from "../lib/highlight.ts";
+import { CheckIcon, CopyIcon, RunIcon, cn } from "./ui.tsx";
+import { Button } from "@/components/ui/button";
 
 const FENCE = /^ {0,3}```+\s*(\S*)/;
 const HEADING = /^ {0,3}(#{1,6})\s+(.*)$/;
@@ -9,7 +14,140 @@ const ORDERED = /^(\s*)\d+[.)]\s+(.*)$/;
 const QUOTE = /^ {0,3}>\s?(.*)$/;
 const RULE = /^ {0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/;
 const INLINE =
-  "`([^`]+)`|\\*\\*([\\s\\S]+?)\\*\\*|~~([\\s\\S]+?)~~|\\*([^\\s*][^*\\n]*?)\\*|\\[([^\\]]*)\\]\\(([^)\\s]+)\\)|(https?:\\/\\/[^\\s<>)\\]]+)";
+  "`([^`]+)`|\\*\\*([\\s\\S]+?)\\*\\*|~~([\\s\\S]+?)~~|\\*([^\\s*][^*\\n]*?)\\*|\\[([^\\]]*)\\]\\(([^)\\s]+)\\)|(https?:\\/\\/[^\\s<>)\\]]+)" +
+  `|(${FILE_REF_SOURCE})`;
+const SCHEME = /^(?:[a-z][\w+.-]*:|\/\/)/i;
+
+// the whole subtree of one message shares these, so neither has to be threaded down
+// through every nested list and quote
+const Links = createContext<FileLinks | null>(null);
+const Run = createContext<((command: string) => void) | null>(null);
+
+function useTarget(text: string): [FileLinks, FileRef] | null {
+  const links = useContext(Links);
+  const target = links?.resolve(text);
+  return links && target ? [links, target] : null;
+}
+
+function label(ref: FileRef): string {
+  return `Open ${ref.path}${ref.line ? `:${ref.line}` : ""}`;
+}
+
+const CODE = "rounded bg-accent/70 px-1 py-0.5 font-mono text-[0.86em] text-code-inline";
+
+function CodeSpan({ text }: { text: string }) {
+  const hit = useTarget(text);
+  if (!hit) return <code className={CODE}>{text}</code>;
+  const [links, target] = hit;
+  return (
+    <button
+      type="button"
+      onClick={() => links.open(target)}
+      title={label(target)}
+      className="group cursor-pointer align-baseline leading-[inherit]"
+    >
+      <code className={cn(CODE, "underline-offset-2 group-hover:underline")}>{text}</code>
+    </button>
+  );
+}
+
+function PathSpan({ text }: { text: string }) {
+  const hit = useTarget(text);
+  if (!hit) return <>{text}</>;
+  const [links, target] = hit;
+  return (
+    <button
+      type="button"
+      onClick={() => links.open(target)}
+      title={label(target)}
+      className="cursor-pointer align-baseline font-mono text-[0.92em] leading-[inherit] text-primary underline decoration-dotted underline-offset-2 hover:decoration-solid"
+    >
+      {text}
+    </button>
+  );
+}
+
+function LinkSpan({ href, children }: { href: string; children: ReactNode }) {
+  const hit = useTarget(href);
+  if (hit) {
+    const [links, target] = hit;
+    return (
+      <button
+        type="button"
+        onClick={() => links.open(target)}
+        title={label(target)}
+        className="cursor-pointer align-baseline leading-[inherit] text-primary underline underline-offset-2"
+      >
+        {children}
+      </button>
+    );
+  }
+  // a relative href that resolves to nothing would navigate away from the app
+  if (!SCHEME.test(href)) return <>{children}</>;
+  return (
+    <a href={href} target="_blank" rel="noreferrer" className="text-primary underline underline-offset-2">
+      {children}
+    </a>
+  );
+}
+
+const SHELL_FENCES = new Set(["sh", "bash", "zsh", "fish", "shell", "console"]);
+
+function CodeBlock({ lang, body }: { lang: string; body: string }) {
+  const run = useContext(Run);
+  const [copied, setCopied] = useState(false);
+  const runnable = run && SHELL_FENCES.has(lang.toLowerCase()) && body.trim().length > 0;
+
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1400);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+
+  return (
+    <div className="group relative">
+      <pre className="overflow-x-auto rounded-lg border border-border bg-background px-3 py-2.5">
+        <code className="font-mono text-[12.5px] leading-relaxed">
+          {tokenize(body, lang).map((token, index) => (
+            <span key={index} className={TOKEN_CLASS[token.kind]}>
+              {token.text}
+            </span>
+          ))}
+        </code>
+      </pre>
+      <div className="absolute top-1.5 right-1.5 flex gap-0.5 rounded-md bg-background/90 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+        {runnable ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Run in terminal"
+            title="Run in terminal"
+            onClick={() => run(body)}
+            className="size-6 text-faint hover:text-foreground"
+          >
+            <RunIcon className="size-3" />
+          </Button>
+        ) : null}
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Copy"
+          title="Copy"
+          onClick={() => {
+            navigator.clipboard.writeText(body).then(
+              () => setCopied(true),
+              // a clipboard write only fails on a window that isn't focused, which a click implies
+              () => undefined,
+            );
+          }}
+          className="size-6 text-faint hover:text-foreground"
+        >
+          {copied ? <CheckIcon className="size-3 text-git-added" /> : <CopyIcon className="size-3" />}
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 function isTableRule(line: string): boolean {
   return line.includes("|") && line.includes("-") && /^[\s|:-]+$/.test(line);
@@ -61,13 +199,9 @@ function inline(text: string, key: string): ReactNode[] {
   while ((match = re.exec(text))) {
     if (match.index > last) out.push(text.slice(last, match.index));
     const k = `${key}i${n++}`;
-    const [, code, strong, strike, em, linkText, href, bare] = match;
+    const [, code, strong, strike, em, linkText, href, bare, path] = match;
     if (code !== undefined) {
-      out.push(
-        <code key={k} className="rounded bg-accent px-1 py-0.5 font-mono text-[0.86em]">
-          {code}
-        </code>,
-      );
+      out.push(<CodeSpan key={k} text={code} />);
     } else if (strong !== undefined) {
       out.push(
         <strong key={k} className="font-semibold text-foreground">
@@ -84,9 +218,9 @@ function inline(text: string, key: string): ReactNode[] {
       out.push(<em key={k}>{inline(em, k)}</em>);
     } else if (linkText !== undefined) {
       out.push(
-        <a key={k} href={href} target="_blank" rel="noreferrer" className="text-primary underline underline-offset-2">
+        <LinkSpan key={k} href={href}>
           {inline(linkText, k)}
-        </a>,
+        </LinkSpan>,
       );
     } else if (bare !== undefined) {
       out.push(
@@ -94,6 +228,8 @@ function inline(text: string, key: string): ReactNode[] {
           {bare}
         </a>,
       );
+    } else if (path !== undefined) {
+      out.push(<PathSpan key={k} text={path} />);
     }
     last = re.lastIndex;
   }
@@ -115,16 +251,13 @@ function blocks(lines: string[], key: string): ReactNode[] {
       continue;
     }
 
-    if (FENCE.test(line)) {
+    const fence = FENCE.exec(line);
+    if (fence) {
       i++;
       const body: string[] = [];
       while (i < lines.length && !FENCE.test(lines[i])) body.push(lines[i++]);
       i++;
-      out.push(
-        <pre key={k} className="overflow-x-auto rounded-lg border border-border bg-background px-3 py-2.5">
-          <code className="font-mono text-[12.5px] leading-relaxed">{body.join("\n")}</code>
-        </pre>,
-      );
+      out.push(<CodeBlock key={k} lang={fence[1]} body={body.join("\n")} />);
       continue;
     }
 
@@ -262,8 +395,24 @@ function blocks(lines: string[], key: string): ReactNode[] {
   return out;
 }
 
-export function Markdown({ text, className }: { text: string; className?: string }) {
+export function Markdown({
+  text,
+  className,
+  files,
+  onRun,
+}: {
+  text: string;
+  className?: string;
+  files?: FileLinks;
+  onRun?: (command: string) => void;
+}) {
   return (
-    <div className={cn("min-w-0 space-y-3 break-words", className)}>{blocks(text.split("\n"), "md")}</div>
+    <Links.Provider value={files ?? null}>
+      <Run.Provider value={onRun ?? null}>
+        <div className={cn("min-w-0 space-y-3 break-words", className)}>
+          {blocks(text.split("\n"), "md")}
+        </div>
+      </Run.Provider>
+    </Links.Provider>
   );
 }

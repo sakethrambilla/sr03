@@ -37,6 +37,8 @@ interface Store extends AppState {
   tasksByThread: Record<string, ThreadTask[]>;
   // slash commands belong to the folder, not the session — every thread in one shares a list
   commandsByCwd: Record<string, SlashCommand[]>;
+  // every file in the folder, so a path a message mentions can be recognised as one
+  filesByCwd: Record<string, string[]>;
   usage: Usage | null;
   // threads whose turn ended while you were somewhere else, cleared when you open them
   finished: Record<string, true>;
@@ -58,6 +60,7 @@ interface Store extends AppState {
   respond: (approvalId: string, decision: "allow" | "always" | "deny") => Promise<void>;
   refreshUsage: () => Promise<void>;
   loadCommands: (cwd: string) => Promise<void>;
+  loadFiles: (threadId: string, cwd: string) => Promise<void>;
   applyEvent: (event: ServerEvent) => void;
   toggleSidebar: () => void;
   setSettingsOpen: (open: boolean) => void;
@@ -156,6 +159,7 @@ export const useStore = create<Store>((set, get) => ({
   approvalsByThread: {},
   tasksByThread: {},
   commandsByCwd: {},
+  filesByCwd: {},
   usage: null,
   finished: loadFinished(),
   error: null,
@@ -351,6 +355,15 @@ export const useStore = create<Store>((set, get) => ({
       () => null,
     );
     if (commands) set((state) => ({ commandsByCwd: { ...state.commandsByCwd, [cwd]: commands } }));
+  },
+
+  // a turn can add or delete files, so this is re-read rather than cached for the session
+  loadFiles: async (threadId, cwd) => {
+    const files = await api.files(threadId).then(
+      (body) => body.files,
+      () => null,
+    );
+    if (files) set((state) => ({ filesByCwd: { ...state.filesByCwd, [cwd]: files } }));
   },
 
   // context is per-session and the plan windows are account-wide, so both come from one read

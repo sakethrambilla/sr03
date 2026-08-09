@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 
+import type { FileLinks } from "../lib/fileref.ts";
 import type { Message } from "../lib/types.ts";
 import { Markdown } from "./Markdown.tsx";
 import { ChevronIcon, cn } from "./ui.tsx";
@@ -143,7 +144,15 @@ const ToolGroup = memo(function ToolGroup({ messages }: { messages: Message[] })
 
 // a settled message never changes, but a streaming token rerenders the whole timeline —
 // without this every bubble reparses its markdown for each token that arrives
-const Bubble = memo(function Bubble({ message }: { message: Message }) {
+const Bubble = memo(function Bubble({
+  message,
+  files,
+  onRun,
+}: {
+  message: Message;
+  files: FileLinks;
+  onRun: (command: string) => void;
+}) {
   if (message.role === "system") {
     return <p className="text-center text-[11px] text-faint">{message.text}</p>;
   }
@@ -161,6 +170,8 @@ const Bubble = memo(function Bubble({ message }: { message: Message }) {
   return (
     <Markdown
       text={message.text}
+      files={files}
+      onRun={onRun}
       className={cn(
         "text-[14px] leading-[1.65]",
         message.role === "error"
@@ -193,11 +204,15 @@ export function Timeline({
   messages,
   streaming,
   running,
+  files,
+  onRun,
 }: {
   threadId: string;
   messages: Message[];
   streaming: string;
   running: boolean;
+  files: FileLinks;
+  onRun: (command: string) => void;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const opened = useRef<string | null>(null);
@@ -229,11 +244,16 @@ export function Timeline({
           "tools" in row ? (
             <ToolGroup key={row.id} messages={row.tools} />
           ) : (
-            <Bubble key={row.id} message={row.message} />
+            <Bubble key={row.id} message={row.message} files={files} onRun={onRun} />
           ),
         )}
         {streaming ? (
-          <Markdown text={`${streaming}▏`} className="text-[14px] leading-[1.65] text-foreground" />
+          <Markdown
+            text={`${streaming}▏`}
+            files={files}
+            onRun={onRun}
+            className="text-[14px] leading-[1.65] text-foreground"
+          />
         ) : running ? (
           <p className="text-[12px] text-faint">Working…</p>
         ) : null}

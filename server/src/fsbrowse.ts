@@ -321,3 +321,36 @@ export async function writeWorkspaceFile(
   await fs.writeFile(target, text, "utf8");
   return { path: rel, bytes: Buffer.byteLength(text) };
 }
+
+const WALK_SKIP = new Set([
+  ".git",
+  "node_modules",
+  "dist",
+  "build",
+  "out",
+  ".next",
+  ".venv",
+  "venv",
+  "__pycache__",
+  ".turbo",
+  ".cache",
+]);
+const WALK_LIMIT = 20000;
+
+// the fallback for a folder git knows nothing about, so it has to guess what to skip
+export async function walkWorkspaceFiles(root: string): Promise<string[]> {
+  const files: string[] = [];
+  const queue = [""];
+
+  while (queue.length > 0 && files.length < WALK_LIMIT) {
+    const rel = queue.shift()!;
+    const dirents = await fs.readdir(path.join(root, rel), { withFileTypes: true }).catch(() => []);
+    for (const entry of dirents) {
+      if (WALK_SKIP.has(entry.name)) continue;
+      const next = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) queue.push(next);
+      else if (entry.isFile()) files.push(next);
+    }
+  }
+  return files;
+}

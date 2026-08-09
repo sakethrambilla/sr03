@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { api } from "../lib/api.ts";
+import { createFileIndex } from "../lib/fileref.ts";
+import type { FileRef } from "../lib/fileref.ts";
 import type { Message, Thread, ThreadTask } from "../lib/types.ts";
 import { useStore } from "../store.ts";
 import { AgentsPanel } from "./AgentsPanel.tsx";
@@ -42,6 +44,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 
 const NO_MESSAGES: Message[] = [];
 const NO_TASKS: ThreadTask[] = [];
+const NO_FILES: string[] = [];
 
 function PanelToggle({
   pressed,
@@ -248,11 +251,15 @@ export function ChatView({ thread }: { thread: Thread }) {
   const messages = useStore((state) => state.messagesByThread[thread.id] ?? NO_MESSAGES);
   const streaming = useStore((state) => state.streamByThread[thread.id] ?? "");
   const tasks = useStore((state) => state.tasksByThread[thread.id] ?? NO_TASKS);
+  const workspace = useStore((state) => state.filesByCwd[thread.cwd] ?? NO_FILES);
+  const loadFiles = useStore((state) => state.loadFiles);
   const [treeOpen, setTreeOpen] = usePersistedState<boolean>("file-tree", false);
   const [terminalOpen, setTerminalOpen] = usePersistedState<boolean>("terminal", false);
   const [agentsOpen, setAgentsOpen] = usePersistedState<boolean>("agents", false);
   const [openFiles, setOpenFiles] = useState<string[]>([]);
   const [active, setActive] = useState<string | null>(null);
+  const [reveal, setReveal] = useState<{ path: string; line: number; key: number } | null>(null);
+  const [command, setCommand] = useState<{ text: string; key: number } | null>(null);
   const [dirty, setDirty] = useState<Set<string>>(new Set());
   const [pendingClose, setPendingClose] = useState<string | null>(null);
   const [fsVersion, setFsVersion] = useState(0);
@@ -274,10 +281,12 @@ export function ChatView({ thread }: { thread: Thread }) {
     });
   }, []);
 
-  const openFile = (path: string) => {
+  const openFile = useCallback((path: string, line?: number) => {
     setOpenFiles((files) => (files.includes(path) ? files : [...files, path]));
     setActive(path);
-  };
+    // the key is what makes clicking the same reference twice jump again
+    if (line) setReveal((current) => ({ path, line, key: (current?.key ?? 0) + 1 }));
+  }, []);
 
   // closing the active tab lands on its neighbour, falling back to the chat
   const closeFile = (path: string) => {
@@ -317,6 +326,26 @@ export function ChatView({ thread }: { thread: Thread }) {
     closingAll.current = unsaved.length > 0;
     if (unsaved[0]) setPendingClose(unsaved[0]);
   };
+
+  // a finished turn may have added or renamed files, so the index is re-read with each one
+  useEffect(() => {
+    void loadFiles(thread.id, thread.cwd);
+  }, [loadFiles, thread.id, thread.cwd, thread.status, fsVersion]);
+
+  // the panel owns the terminals, so it is left to decide which one a command lands in
+  const runCommand = useCallback(
+    (text: string) => {
+      setTerminalOpen(true);
+      setCommand((current) => ({ text, key: (current?.key ?? 0) + 1 }));
+    },
+    [setTerminalOpen],
+  );
+
+  const index = useMemo(() => createFileIndex(workspace), [workspace]);
+  const links = useMemo(
+    () => ({ resolve: index.resolve, open: (ref: FileRef) => openFile(ref.path, ref.line) }),
+    [index, openFile],
+  );
 
   // a fresh burst of subagents pops the panel open; closing it mid-burst keeps it closed
   const working = tasks.filter((task) => task.status === "running").length;
@@ -440,6 +469,7 @@ export function ChatView({ thread }: { thread: Thread }) {
               onDirtyChange={(isDirty) => markDirty(path, isDirty)}
               onSaved={() => setFsVersion((current) => current + 1)}
               registerSave={registerSave}
+              reveal={reveal?.path === path ? reveal : null}
             />
           </div>
         ))}
@@ -451,13 +481,15 @@ export function ChatView({ thread }: { thread: Thread }) {
               messages={messages}
               streaming={streaming}
               running={thread.status === "running"}
+              files={links}
+              onRun={runCommand}
             />
             <ThreadComposer thread={thread} />
           </>
         ) : null}
 
         {terminalOpen ? (
-          <TerminalPanel thread={thread} onClose={() => setTerminalOpen(false)} />
+          <TerminalPanel thread={thread} command={command} onClose={() => setTerminalOpen(false)} />
         ) : null}
       </main>
       {agentsOpen ? <AgentsPanel thread={thread} onClose={() => setAgentsOpen(false)} /> : null}

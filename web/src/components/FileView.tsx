@@ -18,6 +18,9 @@ interface Block {
 
 type BlockKind = "added" | "modified" | "deleted";
 
+// 12px text at leading-1.5, which the gutter rows hard-code as h-[18px]
+const LINE = 18;
+
 function kindOf(block: Block): BlockKind {
   if (block.end < block.start) return "deleted";
   return block.removed.length === 0 ? "added" : "modified";
@@ -115,6 +118,7 @@ export function FileView({
   onDirtyChange,
   onSaved,
   registerSave,
+  reveal,
 }: {
   thread: Thread;
   path: string;
@@ -123,6 +127,7 @@ export function FileView({
   onDirtyChange: (dirty: boolean) => void;
   onSaved: () => void;
   registerSave: (path: string, save: (() => Promise<boolean>) | null) => void;
+  reveal: { line: number; key: number } | null;
 }) {
   const messageCount = useStore((state) => (state.messagesByThread[thread.id] ?? NO_MESSAGES).length);
   const [file, setFile] = useState<{
@@ -138,6 +143,8 @@ export function FileView({
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
   const layer = useRef<HTMLPreElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+  const [flash, setFlash] = useState<number | null>(null);
   // deliberately uncontrolled: a React-controlled value resets the browser's own
   // undo stack on every keystroke, which kills cmd+z
   const editor = useRef<HTMLTextAreaElement>(null);
@@ -168,6 +175,17 @@ export function FileView({
   }, [thread.id, path, thread.status, messageCount]);
 
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
+
+  // a reference clicked in the chat lands here, but only once the file it names has loaded
+  const jumped = useRef<number | null>(null);
+  useEffect(() => {
+    if (!file || !reveal || jumped.current === reveal.key) return;
+    jumped.current = reveal.key;
+    scroller.current?.scrollTo({ top: Math.max(0, (reveal.line - 1) * LINE - 96) });
+    setFlash(reveal.line);
+    const timer = window.setTimeout(() => setFlash(null), 1600);
+    return () => window.clearTimeout(timer);
+  }, [file, reveal]);
 
   const save = async (): Promise<boolean> => {
     const text = editor.current?.value;
@@ -243,7 +261,7 @@ export function FileView({
         ) : null}
       </header>
 
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div ref={scroller} className="min-h-0 flex-1 overflow-auto">
         {error ? <p className="px-4 py-4 text-[12px] text-destructive">{error}</p> : null}
         {file?.binary ? (
           <p className="px-4 py-6 text-[12px] text-faint">This is a binary file.</p>
@@ -278,6 +296,13 @@ export function FileView({
               })}
             </div>
             <div className="relative min-w-0 flex-1">
+              {flash !== null ? (
+                <span
+                  aria-hidden
+                  style={{ top: (flash - 1) * LINE, height: LINE }}
+                  className="pointer-events-none absolute inset-x-0 animate-pulse bg-primary/15"
+                />
+              ) : null}
               <pre
                 ref={layer}
                 aria-hidden

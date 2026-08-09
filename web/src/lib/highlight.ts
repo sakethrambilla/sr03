@@ -79,6 +79,12 @@ const BY_EXTENSION: Record<string, keyof typeof GRAMMARS> = {
   yaml: "data",
   yml: "data",
   toml: "data",
+  // a fenced code block names a language rather than a file, and spells some of them out
+  typescript: "js",
+  javascript: "js",
+  python: "python",
+  shell: "shell",
+  console: "shell",
 };
 
 // a file this big makes retokenising on every keystroke visible, and highlighting
