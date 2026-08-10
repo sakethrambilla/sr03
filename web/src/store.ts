@@ -216,7 +216,13 @@ export const useStore = create<Store>((set, get) => ({
     set((state) => {
       const finished = { ...state.finished };
       delete finished[id];
-      return { activeThreadId: id, draft: null, finished: saveFinished(finished) };
+      // settings is a page beside the sessions, not a layer over them: picking one leaves it
+      return {
+        activeThreadId: id,
+        draft: null,
+        settingsOpen: false,
+        finished: saveFinished(finished),
+      };
     });
     try {
       const { thread, messages, tasks } = await api.thread(id);
@@ -235,6 +241,7 @@ export const useStore = create<Store>((set, get) => ({
     const { defaults } = get();
     set({
       activeThreadId: null,
+      settingsOpen: false,
       draft: {
         projectId: input?.projectId ?? null,
         branch: input?.branch ?? null,

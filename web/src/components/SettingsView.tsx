@@ -4,6 +4,7 @@ import { api } from "../lib/api.ts";
 import { THEMES, availableFonts } from "../lib/appearance.ts";
 import type { ProviderStatus } from "../lib/types.ts";
 import { useStore } from "../store.ts";
+import { SidebarToggle } from "./Sidebar.tsx";
 import {
   CheckIcon,
   CloseIcon,
@@ -337,7 +338,8 @@ export function SettingsView() {
 
   return (
     <main className="flex h-full min-w-0 flex-1 flex-col">
-      <header data-titlebar className="flex items-center gap-2.5 border-b border-border/60 px-5 py-3">
+      <header data-titlebar className="flex h-15 shrink-0 items-center gap-2.5 border-b border-border/60 px-5">
+        <SidebarToggle />
         <SettingsIcon className="size-4 text-faint" />
         <h1 className="text-[13.5px] font-medium">
           Settings <span className="text-faint">/</span>{" "}
