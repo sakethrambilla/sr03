@@ -69,7 +69,7 @@ function ToolDetail({ message }: { message: Message }) {
   const entries = Object.entries(toolInput(message)).filter(([key]) => key !== "description");
 
   return (
-    <div className="mb-1 rounded-md bg-background/60 px-2.5 py-2">
+    <div className="rounded-md bg-background/60 px-2.5 py-2">
       <p className="font-mono text-[11px] font-semibold text-primary">{toolName(message)}</p>
       {entries.map(([key, value]) => (
         <div key={key} className="mt-1.5">
@@ -104,7 +104,11 @@ function ToolRow({
         </span>
         <ChevronIcon className={cn("size-3 text-faint transition-transform", open ? "" : "-rotate-90")} />
       </button>
-      {open ? <ToolDetail message={message} /> : null}
+      {open ? (
+        <div className="pb-1">
+          <ToolDetail message={message} />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -112,30 +116,34 @@ function ToolRow({
 const ToolGroup = memo(function ToolGroup({ messages }: { messages: Message[] }) {
   const [open, setOpen] = useState(false);
   const [openRow, setOpenRow] = useState<string | null>(null);
-  const single = messages.length === 1;
+  const single = messages.length === 1 ? messages[0] : null;
 
   return (
     <div className="flex min-w-0 flex-col gap-1">
-      {single ? null : (
-        <button
-          type="button"
-          onClick={() => setOpen(!open)}
-          className="flex w-fit items-center gap-1.5 rounded-md px-1.5 py-1 text-[12.5px] text-muted-foreground transition hover:bg-accent hover:text-foreground"
-        >
-          {groupLine(messages)}
-          <ChevronIcon className={cn("size-3 text-faint transition-transform", open ? "" : "-rotate-90")} />
-        </button>
-      )}
-      {single || open ? (
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex w-fit max-w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-[12.5px] text-muted-foreground transition hover:bg-accent hover:text-foreground"
+      >
+        <span className="min-w-0 truncate">{single ? toolLine(single) : groupLine(messages)}</span>
+        <ChevronIcon
+          className={cn("size-3 shrink-0 text-faint transition-transform", open ? "" : "-rotate-90")}
+        />
+      </button>
+      {open ? (
         <div className="min-w-0 rounded-lg border border-border/70 bg-card/50 p-1">
-          {messages.map((message) => (
-            <ToolRow
-              key={message.id}
-              message={message}
-              open={openRow === message.id}
-              onToggle={() => setOpenRow(openRow === message.id ? null : message.id)}
-            />
-          ))}
+          {single ? (
+            <ToolDetail message={single} />
+          ) : (
+            messages.map((message) => (
+              <ToolRow
+                key={message.id}
+                message={message}
+                open={openRow === message.id}
+                onToggle={() => setOpenRow(openRow === message.id ? null : message.id)}
+              />
+            ))
+          )}
         </div>
       ) : null}
     </div>
