@@ -30,6 +30,16 @@ function money(value: number, currency?: string | null): string {
   }
 }
 
+function since(at: number | null): string | null {
+  if (!at) return null;
+  const minutes = Math.round((Date.now() - at) / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
 function resets(at: number | null): string | null {
   if (!at) return null;
   const minutes = Math.round((at - Date.now()) / 60_000);
@@ -113,6 +123,7 @@ export function UsageMeter() {
   const windows = usage?.windows ?? [];
   const credits = usage?.credits ?? null;
   const cost = usage?.sessionCostUsd ?? null;
+  const read = open ? since(usage?.windowsAt ?? null) : null;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -135,21 +146,29 @@ export function UsageMeter() {
       </Tooltip>
       <PopoverContent align="end" side="top" className="w-80">
         {!context && !windows.length ? (
-          <p className="text-[12px] text-faint">Send a turn to see context and plan usage.</p>
+          <p className="text-[12px] text-faint">No usage read yet — send a turn.</p>
         ) : (
           <>
-            <Meter
-              label="Context window"
-              detail={context ? `${tokens(context.used)} / ${tokens(context.max)}` : null}
-              percentage={context?.percentage ?? 0}
-            />
+            {context ? (
+              <Meter
+                label="Context window"
+                detail={`${tokens(context.used)} / ${tokens(context.max)}`}
+                percentage={context.percentage}
+              />
+            ) : (
+              // an unread context is not an empty one, so it gets no bar to sit at zero
+              <Row label="Context window" value="Not read yet" />
+            )}
             {windows.length ? (
               <>
                 <Separator className="my-3" />
-                <p className="mb-2 text-[11px] text-faint">
-                  Your usage limits
-                  {usage?.plan ? ` · ${usage.plan[0]!.toUpperCase()}${usage.plan.slice(1)}` : ""}
-                </p>
+                <div className="mb-2 flex items-baseline justify-between gap-3 text-[11px] text-faint">
+                  <span className="truncate">
+                    Your usage limits
+                    {usage?.plan ? ` · ${usage.plan[0]!.toUpperCase()}${usage.plan.slice(1)}` : ""}
+                  </span>
+                  {read ? <span className="shrink-0">{read}</span> : null}
+                </div>
                 <div className="space-y-2.5">
                   {windows.map((window) => (
                     <Meter

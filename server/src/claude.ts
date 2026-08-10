@@ -11,7 +11,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 
 import { publish } from "./bus.ts";
-import { messages as messageStore, threads as threadStore } from "./db.ts";
+import { messages as messageStore, threads as threadStore, usage as usageStore } from "./db.ts";
 import type {
   Effort,
   PendingApproval,
@@ -207,8 +207,47 @@ function settleTasks(threadId: string, interrupted: boolean): void {
 
 // plan limits belong to the account, not the thread, so the newest read is shared by every thread
 let limits: Pick<Usage, "plan" | "windows" | "credits"> | null = null;
+let limitsAt: number | null = null;
 const contextByThread = new Map<string, NonNullable<Usage["context"]>>();
 const costByThread = new Map<string, number>();
+
+interface StoredThreadUsage {
+  context: NonNullable<Usage["context"]> | null;
+  cost: number | null;
+}
+
+const ACCOUNT_ROW = "account";
+
+// a restart leaves no session behind to ask, so the last read is what the meter opens with
+for (const row of usageStore.all()) {
+  try {
+    if (row.id === ACCOUNT_ROW) {
+      limits = JSON.parse(row.json) as NonNullable<typeof limits>;
+      limitsAt = row.updatedAt;
+      continue;
+    }
+    const stored = JSON.parse(row.json) as StoredThreadUsage;
+    if (stored.context) contextByThread.set(row.id, stored.context);
+    if (typeof stored.cost === "number") costByThread.set(row.id, stored.cost);
+  } catch {
+    // an unreadable row is a cold meter, not a reason to fail the boot
+  }
+}
+
+function persistLimits(): void {
+  if (!limits) return;
+  limitsAt = Date.now();
+  usageStore.set(ACCOUNT_ROW, JSON.stringify(limits));
+}
+
+function persistThread(threadId: string): void {
+  const stored: StoredThreadUsage = {
+    context: contextByThread.get(threadId) ?? null,
+    cost: costByThread.get(threadId) ?? null,
+  };
+  if (!stored.context && stored.cost === null) return;
+  usageStore.set(threadId, JSON.stringify(stored));
+}
 
 const WINDOW_LABELS: Record<string, string> = {
   five_hour: "5-hour limit",
@@ -278,7 +317,8 @@ function snapshot(threadId: string | null): Usage {
     plan: limits?.plan ?? null,
     windows: limits?.windows ?? [],
     credits: limits?.credits ?? null,
-    updatedAt: Date.now(),
+    // the windows decay while a thread sits idle, so the meter says how old the read is
+    windowsAt: limits ? limitsAt : null,
   };
 }
 
@@ -307,10 +347,13 @@ export async function readUsage(threadId: string | null): Promise<Usage> {
       .usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()
       .then((usage) => {
         limits = readLimits(usage);
+        persistLimits();
         if (own) costByThread.set(own.threadId, usage.session.total_cost_usd);
       })
       .catch(() => undefined);
   }
+
+  if (own) persistThread(own.threadId);
 
   const usage = snapshot(threadId);
   publish({ type: "usage", threadId, usage });
@@ -334,6 +377,7 @@ function foldRateLimit(threadId: string, info: SDKRateLimitInfo): void {
       ? known.map((entry) => (entry.id === id ? window : entry))
       : [...known, window],
   };
+  persistLimits();
   publish({ type: "usage", threadId, usage: snapshot(threadId) });
 }
 

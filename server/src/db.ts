@@ -52,6 +52,11 @@ db.exec(`
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS usage (
+    id TEXT PRIMARY KEY,
+    json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
 `);
 
 // sqlite has no ADD COLUMN IF NOT EXISTS, so additive migrations check first
@@ -68,6 +73,7 @@ if (!threadColumns.includes("archived")) {
 
 // folders are derived from threads, so a project without any is stale state
 db.exec("DELETE FROM projects WHERE id NOT IN (SELECT project_id FROM threads)");
+db.exec("DELETE FROM usage WHERE id <> 'account' AND id NOT IN (SELECT id FROM threads)");
 
 type Row = Record<string, unknown>;
 
@@ -127,6 +133,25 @@ export const settings = {
     db.prepare(
       "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
     ).run(key, value);
+  },
+};
+
+// the numbers behind the usage meter only come off a live session, so the last read is kept to
+// carry a restart: one row per thread for its context and cost, plus 'account' for the plan
+export const usage = {
+  all(): Array<{ id: string; json: string; updatedAt: number }> {
+    const rows = db.prepare("SELECT id, json, updated_at FROM usage").all() as Array<{
+      id: string;
+      json: string;
+      updated_at: number;
+    }>;
+    return rows.map((row) => ({ id: row.id, json: row.json, updatedAt: row.updated_at }));
+  },
+
+  set(id: string, json: string): void {
+    db.prepare(
+      "INSERT INTO usage (id, json, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at",
+    ).run(id, json, Date.now());
   },
 };
 

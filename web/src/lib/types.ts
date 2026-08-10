@@ -156,7 +156,7 @@ export interface Usage {
   plan: string | null;
   windows: UsageWindow[];
   credits: { spent: number | null; limit: number | null; currency: string | null } | null;
-  updatedAt: number;
+  windowsAt: number | null;
 }
 
 export type ServerEvent =
