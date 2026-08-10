@@ -10,6 +10,7 @@ import {
   Code,
   Copy,
   EllipsisVertical,
+  Eye,
   FileDiff,
   File,
   FileCode2,
@@ -167,6 +168,7 @@ const ICONS = {
   TerminalIcon: SquareTerminal,
   ChangesIcon: FileDiff,
   CodeIcon: Code,
+  EyeIcon: Eye,
   CopyIcon: Copy,
   RunIcon: Play,
   CheckIcon: Check,
@@ -204,6 +206,7 @@ export const SendIcon = icon(ICONS.SendIcon);
 export const TerminalIcon = icon(ICONS.TerminalIcon);
 export const ChangesIcon = icon(ICONS.ChangesIcon);
 export const CodeIcon = icon(ICONS.CodeIcon);
+export const EyeIcon = icon(ICONS.EyeIcon);
 export const CopyIcon = icon(ICONS.CopyIcon);
 export const RunIcon = icon(ICONS.RunIcon);
 export const CheckIcon = icon(ICONS.CheckIcon);

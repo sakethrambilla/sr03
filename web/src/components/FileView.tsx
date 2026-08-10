@@ -3,9 +3,11 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api.ts";
 import type { ChangedFile, Message, Thread } from "../lib/types.ts";
 import { useStore } from "../store.ts";
-import { cn } from "./ui.tsx";
+import { Markdown } from "./Markdown.tsx";
+import { EyeIcon, cn } from "./ui.tsx";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { TOKEN_CLASS, tokenize } from "../lib/highlight.ts";
+import { Toggle } from "@/components/ui/toggle";
+import { TOKEN_CLASS, tokenize, type Token } from "../lib/highlight.ts";
 
 const NO_MESSAGES: Message[] = [];
 
@@ -18,8 +20,21 @@ interface Block {
 
 type BlockKind = "added" | "modified" | "deleted";
 
-// 12px text at leading-1.5, which the gutter rows hard-code as h-[18px]
-const LINE = 18;
+const MARKDOWN = /\.(md|markdown|mdx)$/i;
+
+// a comment or template string arrives as one token spanning several lines, and every line
+// has to be its own row for the numbers to keep up with the wrapping
+function toLines(tokens: Token[]): Token[][] {
+  const lines: Token[][] = [[]];
+  for (const token of tokens) {
+    const parts = token.text.split("\n");
+    parts.forEach((part, index) => {
+      if (index > 0) lines.push([]);
+      if (part) lines.at(-1)!.push({ text: part, kind: token.kind });
+    });
+  }
+  return lines;
+}
 
 function kindOf(block: Block): BlockKind {
   if (block.end < block.start) return "deleted";
@@ -139,10 +154,10 @@ export function FileView({
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [lineCount, setLineCount] = useState(1);
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
-  const layer = useRef<HTMLPreElement>(null);
+  const [preview, setPreview] = useState(false);
+  const rows = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const [flash, setFlash] = useState<number | null>(null);
   // deliberately uncontrolled: a React-controlled value resets the browser's own
@@ -161,10 +176,7 @@ export function FileView({
         if (!dirty && editor.current && editor.current.value !== next.text) {
           editor.current.value = next.text;
         }
-        if (!dirty) {
-          setLineCount(next.text.split("\n").length);
-          setText(next.text);
-        }
+        if (!dirty) setText(next.text);
       })
       .catch((cause: Error) => {
         if (!cancelled) setError(cause.message);
@@ -181,7 +193,8 @@ export function FileView({
   useEffect(() => {
     if (!file || !reveal || jumped.current === reveal.key) return;
     jumped.current = reveal.key;
-    scroller.current?.scrollTo({ top: Math.max(0, (reveal.line - 1) * LINE - 96) });
+    const row = rows.current?.querySelector<HTMLElement>(`[data-line="${reveal.line}"]`);
+    scroller.current?.scrollTo({ top: Math.max(0, (row?.offsetTop ?? 0) - 96) });
     setFlash(reveal.line);
     const timer = window.setTimeout(() => setFlash(null), 1600);
     return () => window.clearTimeout(timer);
@@ -223,6 +236,12 @@ export function FileView({
         void save();
         return;
       }
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "v") {
+        if (!MARKDOWN.test(path)) return;
+        event.preventDefault();
+        setPreview((current) => !current);
+        return;
+      }
       // undo and redo belong to the textarea, so only Escape is handled here
       if (event.key === "Escape" && !dirty) onClose();
     };
@@ -231,6 +250,9 @@ export function FileView({
   }, [active, onClose, dirty, saving, path, thread.id]);
 
   const slash = path.lastIndexOf("/");
+  const markdown = MARKDOWN.test(path);
+  const reading = markdown && preview;
+  const lines = file && !file.binary ? toLines(tokenize(text, path)) : [];
   const blocks = file ? parseBlocks(file.diff) : [];
   const startsAt = new Map(blocks.map((block) => [block.start, block]));
   const covers = new Map<number, Block>();
@@ -254,6 +276,18 @@ export function FileView({
           <span className="shrink-0 font-mono text-[10.5px] text-git-modified">truncated</span>
         ) : null}
         <div className="flex-1" />
+        {markdown ? (
+          <Toggle
+            size="sm"
+            pressed={preview}
+            onPressedChange={setPreview}
+            aria-label="Preview markdown"
+            title="Preview markdown ⇧⌘V"
+            className="size-6 shrink-0 text-faint data-[state=on]:text-foreground"
+          >
+            <EyeIcon className="size-3.5" />
+          </Toggle>
+        ) : null}
         {saving ? (
           <span className="shrink-0 font-mono text-[10.5px] text-faint">Saving…</span>
         ) : dirty ? (
@@ -267,15 +301,25 @@ export function FileView({
           <p className="px-4 py-6 text-[12px] text-faint">This is a binary file.</p>
         ) : null}
 
-        {file && !file.binary ? (
-          <div className="flex min-w-full font-mono text-[12px] leading-[1.5]">
-            <div className="sticky left-0 z-10 shrink-0 bg-card/40 select-none">
-              {Array.from({ length: lineCount }, (_, index) => {
+        {file && !file.binary && reading ? (
+          <div className="mx-auto max-w-3xl px-6 py-6">
+            <Markdown text={text} className="text-[14px] leading-[1.7] text-foreground" />
+          </div>
+        ) : null}
+
+        {file && !file.binary && !reading ? (
+          <div className="relative font-mono text-[12px] leading-[1.5]">
+            <div ref={rows}>
+              {lines.map((tokens, index) => {
                 const number = index + 1;
                 const anchored = startsAt.get(number);
                 const block = covers.get(number);
                 return (
-                  <div key={number} className="flex h-[18px] items-stretch">
+                  <div
+                    key={number}
+                    data-line={number}
+                    className={cn("flex items-stretch", flash === number && "bg-primary/15")}
+                  >
                     {/* only the visible tab mounts a peek: Radix keeps a closed popover
                         mounted for its exit animation, which never runs under display:none */}
                     {anchored && active ? (
@@ -290,50 +334,35 @@ export function FileView({
                         />
                       </span>
                     )}
-                    <span className="w-12 pr-2 text-right text-faint">{number}</span>
+                    <span className="w-12 shrink-0 pr-2 text-right text-faint select-none">
+                      {number}
+                    </span>
+                    {/* the caret belongs to the textarea laid over this, which is why the text
+                        it is colouring must not take the click itself */}
+                    <span className="pointer-events-none min-w-0 flex-1 pl-1 break-words whitespace-pre-wrap">
+                      {tokens.map((token, position) => (
+                        <span key={position} className={TOKEN_CLASS[token.kind]}>
+                          {token.text}
+                        </span>
+                      ))}
+                    </span>
                   </div>
                 );
               })}
             </div>
-            <div className="relative min-w-0 flex-1">
-              {flash !== null ? (
-                <span
-                  aria-hidden
-                  style={{ top: (flash - 1) * LINE, height: LINE }}
-                  className="pointer-events-none absolute inset-x-0 animate-pulse bg-primary/15"
-                />
-              ) : null}
-              <pre
-                ref={layer}
-                aria-hidden
-                className="pointer-events-none absolute inset-0 m-0 overflow-hidden pl-1 font-mono text-[12px] leading-[1.5] whitespace-pre"
-              >
-                {tokenize(text, path).map((token, index) => (
-                  <span key={index} className={TOKEN_CLASS[token.kind]}>
-                    {token.text}
-                  </span>
-                ))}
-              </pre>
-              <textarea
-                  ref={editor}
-                defaultValue={file.text}
-                onInput={(event) => {
-                  const value = event.currentTarget.value;
-                  setLineCount(value.split("\n").length);
-                  setText(value);
-                  setDirty(value !== file.text);
-                }}
-                onScroll={(event) => {
-                  // the highlight layer sits behind the textarea and has to track its
-                  // horizontal scroll, since only the textarea scrolls sideways
-                  if (layer.current) layer.current.scrollLeft = event.currentTarget.scrollLeft;
-                }}
-                wrap="off"
-                spellCheck={false}
-                rows={lineCount}
-                  className="relative w-full resize-none overflow-x-auto overflow-y-hidden bg-transparent pl-1 font-mono text-[12px] leading-[1.5] text-transparent caret-foreground outline-none selection:bg-primary/30"
-                />
-            </div>
+            {/* inset by the gutter rather than padded past it, so the markers stay clickable
+                and the textarea wraps at exactly the width the rows above it do */}
+            <textarea
+              ref={editor}
+              defaultValue={file.text}
+              onInput={(event) => {
+                const value = event.currentTarget.value;
+                setText(value);
+                setDirty(value !== file.text);
+              }}
+              spellCheck={false}
+              className="absolute inset-y-0 right-0 left-[58px] resize-none overflow-hidden bg-transparent pl-1 font-mono text-[12px] leading-[1.5] break-words text-transparent caret-foreground outline-none selection:bg-primary/30"
+            />
           </div>
         ) : null}
       </div>
