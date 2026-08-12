@@ -54,6 +54,12 @@ export function listSessions(threadId: string): string[] {
     .map(([id]) => id);
 }
 
+// the metrics sampler places a shell's cost on its thread; node-pty is the one child whose pid
+// we are handed outright
+export function sessionPids(): Array<{ pid: number; threadId: string }> {
+  return [...sessions.values()].map((session) => ({ pid: session.term.pid, threadId: session.threadId }));
+}
+
 export function createSession(threadId: string, cwd: string, cols: number, rows: number): string {
   if (!helperChecked) {
     ensureSpawnHelper();

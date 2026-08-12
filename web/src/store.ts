@@ -9,6 +9,7 @@ import type {
   Message,
   PendingApproval,
   PermissionMode,
+  Resources,
   ServerEvent,
   SlashCommand,
   Thread,
@@ -42,6 +43,8 @@ interface Store extends AppState {
   // every file in the folder, so a path a message mentions can be recognised as one
   filesByCwd: Record<string, string[]>;
   usage: Usage | null;
+  // sampled by the server only while the meter is open, so it is null the rest of the time
+  resources: Resources | null;
   appearance: Appearance;
   // threads whose turn ended while you were somewhere else, cleared when you open them
   finished: Record<string, true>;
@@ -172,6 +175,7 @@ export const useStore = create<Store>((set, get) => ({
   commandsByCwd: {},
   filesByCwd: {},
   usage: null,
+  resources: null,
   appearance: startingAppearance,
   finished: loadFinished(),
   error: null,
@@ -480,6 +484,10 @@ export const useStore = create<Store>((set, get) => ({
       case "usage": {
         if (event.threadId && event.threadId !== get().activeThreadId) return;
         set({ usage: event.usage });
+        return;
+      }
+      case "resources": {
+        set({ resources: event.resources });
         return;
       }
       case "thread.tasks": {

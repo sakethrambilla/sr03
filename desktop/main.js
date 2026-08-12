@@ -90,7 +90,9 @@ async function start() {
   let log = "";
 
   server = spawn(nodeBin, ["--experimental-strip-types", ENTRY], {
-    env: { ...process.env, PATH: searchPath, SR03_PORT: String(port) },
+    // the server measures the whole app, and the shell's own processes are only reachable
+    // from the pid that owns them
+    env: { ...process.env, PATH: searchPath, SR03_PORT: String(port), SR03_SHELL_PID: String(process.pid) },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const record = (chunk) => {

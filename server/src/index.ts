@@ -9,6 +9,7 @@ import { handleApiRequest } from "./api.ts";
 import { pendingApprovals } from "./claude.ts";
 import { subscribe } from "./bus.ts";
 import { threads } from "./db.ts";
+import * as metrics from "./metrics.ts";
 import { listModels } from "./models.ts";
 import * as pty from "./pty.ts";
 import type { ClientMessage, ServerEvent } from "./types.ts";
@@ -48,13 +49,32 @@ const server = http.createServer((request, response) => {
 
 const websockets = new WebSocketServer({ server, path: "/ws" });
 
-function handleClientMessage(socket: { send: (data: string) => void }, raw: string): void {
+interface Connection {
+  send: (data: string) => void;
+  watchResources: (() => void) | null;
+}
+
+function handleClientMessage(socket: Connection, raw: string): void {
   let message: ClientMessage;
   try {
     message = JSON.parse(raw) as ClientMessage;
   } catch {
     return;
   }
+
+  if (message.type === "resources.watch") {
+    if (!message.on) {
+      socket.watchResources?.();
+      socket.watchResources = null;
+      return;
+    }
+    socket.watchResources ??= metrics.watch();
+    // a reopened meter would otherwise sit blank until the next tick
+    const known = metrics.snapshot();
+    if (known) socket.send(JSON.stringify({ type: "resources", resources: known }));
+    return;
+  }
+
   const thread = threads.byId(message.threadId);
   if (!thread) return;
 
@@ -97,6 +117,7 @@ function handleClientMessage(socket: { send: (data: string) => void }, raw: stri
 }
 
 websockets.on("connection", (socket) => {
+  const connection: Connection = { send: (data) => socket.send(data), watchResources: null };
   const unsubscribe = subscribe((event) => {
     if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(event));
   });
@@ -106,13 +127,18 @@ websockets.on("connection", (socket) => {
   socket.send(JSON.stringify(snapshot));
   socket.on("message", (raw) => {
     try {
-      handleClientMessage(socket, raw.toString());
+      handleClientMessage(connection, raw.toString());
     } catch (error) {
       console.error("[ws]", error);
     }
   });
-  socket.on("close", unsubscribe);
-  socket.on("error", unsubscribe);
+  const teardown = () => {
+    unsubscribe();
+    connection.watchResources?.();
+    connection.watchResources = null;
+  };
+  socket.on("close", teardown);
+  socket.on("error", teardown);
 });
 
 server.listen(PORT, "127.0.0.1", () => {

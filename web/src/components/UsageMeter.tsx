@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { sendClientMessage } from "../lib/ws.ts";
 import { useStore } from "../store.ts";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -17,6 +18,15 @@ function tokens(value: number): string {
   if (value >= 1_000_000) return `${+(value / 1_000_000).toFixed(1)}M`;
   if (value >= 1000) return `${+(value / 1000).toFixed(1)}k`;
   return String(value);
+}
+
+function bytes(value: number): string {
+  if (value >= 1 << 30) return `${(value / (1 << 30)).toFixed(1)} GB`;
+  return `${Math.round(value / (1 << 20))} MB`;
+}
+
+function load(rss: number, cpu: number): string {
+  return `${bytes(rss)} · ${cpu < 10 ? cpu.toFixed(1) : Math.round(cpu)}%`;
 }
 
 function money(value: number, currency?: string | null): string {
@@ -101,11 +111,37 @@ function Meter({
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({ label, hint, value }: { label: string; hint?: string; value: string }) {
   return (
     <div className="flex items-baseline justify-between gap-3">
-      <span className="truncate text-[12.5px]">{label}</span>
+      <span className="truncate text-[12.5px]">
+        {label}
+        {hint ? <span className="ml-1.5 text-[11px] text-faint">{hint}</span> : null}
+      </span>
       <span className="shrink-0 text-[11px] text-faint">{value}</span>
+    </div>
+  );
+}
+
+// the process tree the server samples: its own children carry the cost of the agent and the
+// terminals they belong to, which is what makes a heavy thread findable
+function Resources() {
+  const resources = useStore((state) => state.resources);
+  if (!resources) return <p className="text-[12px] text-faint">Reading…</p>;
+  const { total, server, shell, groups } = resources;
+  return (
+    <div className="space-y-1.5">
+      <Row label="Everything" hint={`${total.processes} processes`} value={load(total.rss, total.cpu)} />
+      {shell ? <Row label="App shell" value={load(shell.rss, shell.cpu)} /> : null}
+      <Row label="Server" hint={`heap ${bytes(server.heapUsed)}`} value={load(server.rss, server.cpu)} />
+      {groups.slice(0, 6).map((group) => (
+        <Row
+          key={group.id}
+          label={group.title}
+          hint={group.kind === "other" ? undefined : group.kind}
+          value={load(group.rss, group.cpu)}
+        />
+      ))}
     </div>
   );
 }
@@ -116,7 +152,12 @@ export function UsageMeter() {
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
-    if (open) void refreshUsage();
+    if (!open) return;
+    void refreshUsage();
+    // sampling the process tree costs a `ps` every couple of seconds, so it runs only while
+    // someone is watching it
+    sendClientMessage({ type: "resources.watch", on: true });
+    return () => sendClientMessage({ type: "resources.watch", on: false });
   }, [open, refreshUsage]);
 
   const context = usage?.context ?? null;
@@ -201,6 +242,9 @@ export function UsageMeter() {
             ) : null}
           </>
         )}
+        <Separator className="my-3" />
+        <div className="mb-2 text-[11px] text-faint">Resources</div>
+        <Resources />
       </PopoverContent>
     </Popover>
   );

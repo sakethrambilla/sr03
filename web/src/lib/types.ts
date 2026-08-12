@@ -159,6 +159,25 @@ export interface Usage {
   windowsAt: number | null;
 }
 
+// one attributable slice of the process tree: a thread's agent, a thread's terminals, or the
+// leftovers the server spawned for itself
+export interface ResourceGroup {
+  id: string;
+  title: string;
+  kind: "agent" | "terminal" | "other";
+  rss: number;
+  cpu: number;
+  processes: number;
+}
+
+export interface Resources {
+  at: number;
+  total: { rss: number; cpu: number; processes: number };
+  server: { rss: number; cpu: number; heapUsed: number; external: number };
+  shell: { rss: number; cpu: number; processes: number } | null;
+  groups: ResourceGroup[];
+}
+
 export type ServerEvent =
   | { type: "thread.status"; threadId: string; status: ThreadStatus; sessionId?: string | null }
   | { type: "thread.message"; threadId: string; message: Message }
@@ -170,6 +189,7 @@ export type ServerEvent =
   | { type: "thread.tasks"; threadId: string; tasks: ThreadTask[] }
   | { type: "thread.commands"; threadId: string; commands: SlashCommand[] }
   | { type: "usage"; threadId: string | null; usage: Usage }
+  | { type: "resources"; resources: Resources }
   | { type: "thread.updated"; thread: Thread }
   | { type: "pty.data"; threadId: string; terminalId: string; data: string }
   | { type: "pty.snapshot"; threadId: string; terminalId: string; data: string }
@@ -179,6 +199,7 @@ export type ServerEvent =
   | { type: "projects.changed" };
 
 export type ClientMessage =
+  | { type: "resources.watch"; on: boolean }
   | { type: "pty.list"; threadId: string }
   | { type: "pty.create"; threadId: string; cols: number; rows: number }
   | { type: "pty.open"; threadId: string; terminalId: string; cols: number; rows: number }

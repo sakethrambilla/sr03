@@ -114,6 +114,12 @@ const TASK_STATUS: Record<string, ThreadTask["status"]> = {
   stopped: "failed",
 };
 
+// only a thread with a live session owns a CLI process, which is what lets the metrics sampler
+// tell an agent apart from anything else the server spawned
+export function liveThreads(): string[] {
+  return [...sessions.keys()];
+}
+
 export function threadTasks(threadId: string): ThreadTask[] {
   return [...(tasksByThread.get(threadId)?.values() ?? [])];
 }
