@@ -4,9 +4,15 @@ import { api } from "../lib/api.ts";
 import type { ChangedFile, Message, Thread } from "../lib/types.ts";
 import { useStore } from "../store.ts";
 import { Markdown } from "./Markdown.tsx";
-import { EyeIcon, cn } from "./ui.tsx";
+import { EyeIcon, cn, usePersistedState } from "./ui.tsx";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Toggle } from "@/components/ui/toggle";
+import {
+  ContextMenu,
+  ContextMenuCheckboxItem,
+  ContextMenuContent,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { TOKEN_CLASS, tokenize, type Token } from "../lib/highlight.ts";
 
 const NO_MESSAGES: Message[] = [];
@@ -21,6 +27,9 @@ interface Block {
 type BlockKind = "added" | "modified" | "deleted";
 
 const MARKDOWN = /\.(md|markdown|mdx)$/i;
+
+// the marker strip plus the number column, which the textarea starts after
+const GUTTER = 58;
 
 // a comment or template string arrives as one token spanning several lines, and every line
 // has to be its own row for the numbers to keep up with the wrapping
@@ -157,6 +166,7 @@ export function FileView({
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState(false);
+  const [wrap, setWrap] = usePersistedState<boolean>("wrap", false);
   const rows = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const [flash, setFlash] = useState<number | null>(null);
@@ -308,62 +318,90 @@ export function FileView({
         ) : null}
 
         {file && !file.binary && !reading ? (
-          <div className="relative font-mono text-[12px] leading-[1.5]">
-            <div ref={rows}>
-              {lines.map((tokens, index) => {
-                const number = index + 1;
-                const anchored = startsAt.get(number);
-                const block = covers.get(number);
-                return (
-                  <div
-                    key={number}
-                    data-line={number}
-                    className={cn("flex items-stretch", flash === number && "bg-primary/15")}
-                  >
-                    {/* only the visible tab mounts a peek: Radix keeps a closed popover
-                        mounted for its exit animation, which never runs under display:none */}
-                    {anchored && active ? (
-                      <Marker block={anchored} />
-                    ) : (
-                      <span className="flex w-2.5 shrink-0 items-stretch">
+          <ContextMenu>
+            <ContextMenuTrigger asChild>
+              <div
+                className={cn(
+                  "relative font-mono text-[12px] leading-[1.5]",
+                  wrap ? "" : "w-max min-w-full",
+                )}
+              >
+                <div ref={rows}>
+                  {lines.map((tokens, index) => {
+                    const number = index + 1;
+                    const anchored = startsAt.get(number);
+                    const block = covers.get(number);
+                    return (
+                      <div
+                        key={number}
+                        data-line={number}
+                        className={cn("flex items-stretch", flash === number && "bg-primary/15")}
+                      >
+                        {/* pinned so the numbers survive a sideways scroll, which is what
+                            the column used to be for before it moved into the rows */}
+                        <span className="sticky left-0 z-10 flex shrink-0 items-stretch bg-card/40">
+                          {/* only the visible tab mounts a peek: Radix keeps a closed popover
+                              mounted for its exit animation, which never runs under display:none */}
+                          {anchored && active ? (
+                            <Marker block={anchored} />
+                          ) : (
+                            <span className="flex w-2.5 shrink-0 items-stretch">
+                              <span
+                                className={cn(
+                                  "w-1",
+                                  anchored ? MARKER[kindOf(anchored)] : block && MARKER[kindOf(block)],
+                                )}
+                              />
+                            </span>
+                          )}
+                          <span className="w-12 pr-2 text-right text-faint select-none">{number}</span>
+                        </span>
+                        {/* the caret belongs to the textarea laid over this, which is why the
+                            text it is colouring must not take the click itself */}
                         <span
                           className={cn(
-                            "w-1",
-                            anchored ? MARKER[kindOf(anchored)] : block && MARKER[kindOf(block)],
+                            "pointer-events-none pl-1",
+                            wrap
+                              ? "min-w-0 flex-1 break-words whitespace-pre-wrap"
+                              : "shrink-0 whitespace-pre",
                           )}
-                        />
-                      </span>
-                    )}
-                    <span className="w-12 shrink-0 pr-2 text-right text-faint select-none">
-                      {number}
-                    </span>
-                    {/* the caret belongs to the textarea laid over this, which is why the text
-                        it is colouring must not take the click itself */}
-                    <span className="pointer-events-none min-w-0 flex-1 pl-1 break-words whitespace-pre-wrap">
-                      {tokens.map((token, position) => (
-                        <span key={position} className={TOKEN_CLASS[token.kind]}>
-                          {token.text}
+                        >
+                          {tokens.map((token, position) => (
+                            <span key={position} className={TOKEN_CLASS[token.kind]}>
+                              {token.text}
+                            </span>
+                          ))}
                         </span>
-                      ))}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-            {/* inset by the gutter rather than padded past it, so the markers stay clickable
-                and the textarea wraps at exactly the width the rows above it do */}
-            <textarea
-              ref={editor}
-              defaultValue={file.text}
-              onInput={(event) => {
-                const value = event.currentTarget.value;
-                setText(value);
-                setDirty(value !== file.text);
-              }}
-              spellCheck={false}
-              className="absolute inset-y-0 right-0 left-[58px] resize-none overflow-hidden bg-transparent pl-1 font-mono text-[12px] leading-[1.5] break-words text-transparent caret-foreground outline-none selection:bg-primary/30"
-            />
-          </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* inset past the gutter rather than padded, so the markers stay clickable and
+                    the text lands at exactly the offset the rows above it use */}
+                <textarea
+                  ref={editor}
+                  defaultValue={file.text}
+                  onInput={(event) => {
+                    const value = event.currentTarget.value;
+                    setText(value);
+                    setDirty(value !== file.text);
+                  }}
+                  wrap={wrap ? "soft" : "off"}
+                  spellCheck={false}
+                  style={{ left: GUTTER }}
+                  className={cn(
+                    "absolute inset-y-0 right-0 resize-none overflow-hidden bg-transparent pl-1 font-mono text-[12px] leading-[1.5] text-transparent caret-foreground outline-none selection:bg-primary/30",
+                    wrap && "break-words",
+                  )}
+                />
+              </div>
+            </ContextMenuTrigger>
+            <ContextMenuContent>
+              <ContextMenuCheckboxItem checked={wrap} onCheckedChange={setWrap}>
+                Word wrap
+              </ContextMenuCheckboxItem>
+            </ContextMenuContent>
+          </ContextMenu>
         ) : null}
       </div>
     </div>
