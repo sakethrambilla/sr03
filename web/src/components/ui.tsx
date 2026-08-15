@@ -18,6 +18,7 @@ import {
   FileCog,
   FileImage,
   FileJson2,
+  FileSpreadsheet,
   FileText,
   FileType,
   Folder,
@@ -313,7 +314,8 @@ const FILE_KINDS: Array<{ match: RegExp; Source: LucideIcon; tone: string }> = [
   { match: /\.(css|scss|sass|less|woff2?|ttf|otf)$/i, Source: FileType, tone: "text-file-style" },
   { match: /\.(sh|bash|zsh|fish|ps1|bat|cmd)$/i, Source: SquareTerminal, tone: "text-file-shell" },
   { match: /(^\.env|^\.?[\w.-]*rc$|\.(toml|ini|conf|config)$)/i, Source: FileCog, tone: "text-file-data" },
-  { match: /\.(json|jsonc|ya?ml|lock|xml|csv|tsv)$/i, Source: FileJson2, tone: "text-file-data" },
+  { match: /\.(csv|tsv|xlsx?|xlsm)$/i, Source: FileSpreadsheet, tone: "text-file-data" },
+  { match: /\.(json|jsonc|ya?ml|lock|xml)$/i, Source: FileJson2, tone: "text-file-data" },
   { match: /\.(m?d|mdx|txt|pdf|log)$/i, Source: FileText, tone: "text-file-doc" },
   {
     match: /\.(tsx?|jsx?|m[jt]s|c[jt]s|html?|py|rs|go|java|rb|php|swift|kt|c|h|cpp|hpp|cs|sql|vue|svelte)$/i,

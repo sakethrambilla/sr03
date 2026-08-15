@@ -204,7 +204,7 @@ export interface TreeEntry {
 const TREE_SKIP = new Set([".git"]);
 const FILE_LIMIT = 1024 * 1024;
 
-function safeJoin(root: string, rel: string): string {
+export function safeJoin(root: string, rel: string): string {
   const base = path.resolve(root);
   const target = path.resolve(base, rel);
   if (target !== base && !target.startsWith(base + path.sep)) {
@@ -318,6 +318,10 @@ export async function writeWorkspaceFile(
   const target = safeJoin(root, rel);
   const stats = await fs.stat(target);
   if (!stats.isFile()) throw new Error("That path is not a file");
+  // the editor was handed a truncated read, so writing it back would drop the rest
+  if (stats.size > FILE_LIMIT) {
+    throw new Error("Too large to edit here — only the first 1 MB of this file was loaded");
+  }
   await fs.writeFile(target, text, "utf8");
   return { path: rel, bytes: Buffer.byteLength(text) };
 }

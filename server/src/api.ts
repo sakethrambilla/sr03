@@ -24,6 +24,7 @@ import {
   walkWorkspaceFiles,
   writeWorkspaceFile,
 } from "./fsbrowse.ts";
+import { readTable, tableKind } from "./table.ts";
 import { messages, projects, settings, threads } from "./db.ts";
 import {
   DEFAULT_EFFORT,
@@ -400,6 +401,25 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
         git.fileState(thread.cwd, rel),
       ]);
       return { path: rel, ...file, ...state };
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/threads\/([^/]+)\/table$/,
+    handler: async ({ params, url }) => {
+      const thread = requireThread(params[0]!);
+      const rel = url.searchParams.get("path")?.trim() ?? "";
+      if (!rel) throw new HttpError(400, "`path` is required");
+      if (!tableKind(rel)) throw new HttpError(400, "That file isn't a table");
+      const number = (key: string, fallback: number) => {
+        const raw = Number(url.searchParams.get(key));
+        return Number.isFinite(raw) ? raw : fallback;
+      };
+      return readTable(thread.cwd, rel, {
+        sheet: number("sheet", 0),
+        offset: number("offset", 0),
+        limit: number("limit", 500),
+      });
     },
   },
   {

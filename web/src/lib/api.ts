@@ -9,6 +9,7 @@ import type {
   Project,
   ProviderStatus,
   SlashCommand,
+  TableWindow,
   Thread,
   ThreadTask,
   TreeEntry,
@@ -120,6 +121,10 @@ export const api = {
       status: ChangedFile["status"] | null;
       diff: string;
     }>(`/api/threads/${id}/file?path=${encodeURIComponent(path)}`),
+  table: (id: string, path: string, sheet: number, offset: number, limit: number) =>
+    call<TableWindow>(
+      `/api/threads/${id}/table?path=${encodeURIComponent(path)}&sheet=${sheet}&offset=${offset}&limit=${limit}`,
+    ),
   saveFile: (id: string, path: string, text: string) =>
     call<{ path: string; bytes: number }>(`/api/threads/${id}/file`, {
       method: "PUT",

@@ -207,6 +207,17 @@ export type ClientMessage =
   | { type: "pty.resize"; threadId: string; terminalId: string; cols: number; rows: number }
   | { type: "pty.close"; threadId: string; terminalId: string };
 
+export interface TableWindow {
+  path: string;
+  kind: "csv" | "xlsx";
+  sheets: string[];
+  sheet: number;
+  rows: string[][];
+  offset: number;
+  total: number;
+  truncated: boolean;
+}
+
 export interface TreeEntry {
   name: string;
   path: string;
