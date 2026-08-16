@@ -19,6 +19,7 @@ import {
   readUpload,
   readWorkspaceFile,
   renameWorkspaceEntry,
+  revealWorkspaceEntry,
   saveUpload,
   trashWorkspaceEntry,
   walkWorkspaceFiles,
@@ -365,6 +366,16 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
       const body = await readBody(request);
       if (typeof body.text !== "string") throw new HttpError(400, "`text` is required");
       return writeWorkspaceFile(thread.cwd, requireString(body, "path"), body.text);
+    },
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/threads\/([^/]+)\/reveal$/,
+    handler: async ({ params, request }) => {
+      const thread = requireThread(params[0]!);
+      const body = await readBody(request);
+      await revealWorkspaceEntry(thread.cwd, requireString(body, "path"));
+      return { ok: true };
     },
   },
   {

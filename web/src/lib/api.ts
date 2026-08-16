@@ -145,6 +145,7 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ path }),
     }),
+  revealEntry: (id: string, path: string) => post<{ ok: true }>(`/api/threads/${id}/reveal`, { path }),
   openIn: (id: string, app: string) => post<{ ok: true }>(`/api/threads/${id}/open`, { app }),
   forkThread: (id: string) => post<Thread>(`/api/threads/${id}/fork`),
   removeThread: (id: string) => call<{ ok: true }>(`/api/threads/${id}`, { method: "DELETE" }),

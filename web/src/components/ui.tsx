@@ -22,6 +22,7 @@ import {
   FileText,
   FileType,
   Folder,
+  FolderOpen,
   FolderPlus,
   GitBranch,
   ListFilter,
@@ -29,6 +30,7 @@ import {
   Mic,
   MousePointer2,
   PanelLeft,
+  Pencil,
   Play,
   Plus,
   RefreshCw,
@@ -37,6 +39,7 @@ import {
   Square,
   SquareStack,
   SquareTerminal,
+  Trash2,
   X,
   Zap,
   type LucideIcon,
@@ -159,6 +162,7 @@ export function Chip({
 const ICONS = {
   AgentIcon: Bot,
   FolderIcon: Folder,
+  RevealIcon: FolderOpen,
   BranchIcon: GitBranch,
   FilterIcon: ListFilter,
   MicIcon: Mic,
@@ -184,6 +188,8 @@ const ICONS = {
   NewFolderIcon: FolderPlus,
   CollapseIcon: ChevronsDownUp,
   ExpandIcon: ChevronsUpDown,
+  RenameIcon: Pencil,
+  TrashIcon: Trash2,
   CursorIcon: MousePointer2,
   StopIcon: Square,
   ZedIcon: Zap,
@@ -197,6 +203,9 @@ function icon(Source: LucideIcon) {
 
 export const AgentIcon = icon(ICONS.AgentIcon);
 export const FolderIcon = icon(ICONS.FolderIcon);
+export const RevealIcon = icon(ICONS.RevealIcon);
+export const RenameIcon = icon(ICONS.RenameIcon);
+export const TrashIcon = icon(ICONS.TrashIcon);
 export const BranchIcon = icon(ICONS.BranchIcon);
 export const FilterIcon = icon(ICONS.FilterIcon);
 export const MicIcon = icon(ICONS.MicIcon);

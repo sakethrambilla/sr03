@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
 
 import { api } from "../lib/api.ts";
 import type { ChangedFile, Message, Thread, TreeEntry } from "../lib/types.ts";
@@ -9,12 +9,21 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import {
   BranchIcon,
   ChevronIcon,
   CloseIcon,
+  CopyIcon,
   Dialog,
   DotsIcon,
   CollapseIcon,
@@ -24,6 +33,9 @@ import {
   NewFileIcon,
   NewFolderIcon,
   RefreshIcon,
+  RenameIcon,
+  RevealIcon,
+  TrashIcon,
   WorktreeIcon,
   cn,
 } from "./ui.tsx";
@@ -83,6 +95,74 @@ function RowAction({
   );
 }
 
+interface RowActions {
+  onCreate: (kind: "file" | "dir") => void;
+  onReveal: () => void;
+  onCopy: (kind: "relative" | "absolute") => void;
+  onStartRename: () => void;
+  onDelete: () => void;
+}
+
+// the same items back both the row's … dropdown and its right-click menu
+function RowMenuItems({
+  Item,
+  Separator,
+  entry,
+  canReveal,
+  actions,
+}: {
+  Item: ComponentType<{
+    children: ReactNode;
+    variant?: "default" | "destructive";
+    onSelect?: (event: Event) => void;
+  }>;
+  Separator: ComponentType<Record<string, never>>;
+  entry: TreeEntry;
+  canReveal: boolean;
+  actions: RowActions;
+}) {
+  return (
+    <>
+      {entry.isDir ? (
+        <>
+          <Item onSelect={() => actions.onCreate("file")}>
+            <NewFileIcon />
+            New file…
+          </Item>
+          <Item onSelect={() => actions.onCreate("dir")}>
+            <NewFolderIcon />
+            New folder…
+          </Item>
+          <Separator />
+        </>
+      ) : null}
+      {canReveal ? (
+        <Item onSelect={actions.onReveal}>
+          <RevealIcon />
+          Reveal in Finder
+        </Item>
+      ) : null}
+      <Item onSelect={() => actions.onCopy("relative")}>
+        <CopyIcon />
+        Copy relative path
+      </Item>
+      <Item onSelect={() => actions.onCopy("absolute")}>
+        <CopyIcon />
+        Copy path
+      </Item>
+      <Separator />
+      <Item onSelect={actions.onStartRename}>
+        <RenameIcon />
+        Rename…
+      </Item>
+      <Item variant="destructive" onSelect={actions.onDelete}>
+        <TrashIcon />
+        Delete…
+      </Item>
+    </>
+  );
+}
+
 function Row({
   entry,
   depth,
@@ -90,15 +170,14 @@ function Row({
   dirty,
   expanded,
   selected,
+  canReveal,
   onClick,
-  onCreate,
   onReload,
   onToggleSubtree,
   renaming,
-  onStartRename,
   onRename,
   onCancelRename,
-  onDelete,
+  actions,
 }: {
   entry: TreeEntry;
   depth: number;
@@ -106,15 +185,14 @@ function Row({
   dirty: boolean;
   expanded: boolean;
   selected: boolean;
+  canReveal: boolean;
   onClick: () => void;
-  onCreate: (kind: "file" | "dir") => void;
   onReload: () => void;
   onToggleSubtree: () => void;
   renaming: boolean;
-  onStartRename: () => void;
   onRename: (name: string) => void;
   onCancelRename: () => void;
-  onDelete: () => void;
+  actions: RowActions;
 }) {
   const decoration = status ? DECORATION[status] : null;
   const tint = entry.ignored
@@ -126,109 +204,131 @@ function Row({
         : "text-muted-foreground";
 
   return (
-    <div
-      className={cn(
-        "group/row flex h-[22px] w-full items-stretch transition hover:bg-accent/50",
-        selected && "bg-accent",
-      )}
-    >
-      <Guides depth={depth} />
-      {renaming ? (
-        <span className="flex min-w-0 flex-1 items-center gap-1 pr-2 pl-1">
-          <span className="size-3 shrink-0" />
-          {entry.isDir ? (
-            <FolderIcon className="size-3.5 text-faint" />
-          ) : (
-            <FileIcon name={entry.name} />
+    // modal would trap focus while the menu closes, so Rename's input never gets it
+    <ContextMenu modal={false}>
+      <ContextMenuTrigger asChild disabled={renaming}>
+        <div
+          className={cn(
+            "group/row flex h-[22px] w-full items-stretch transition hover:bg-accent/50",
+            selected && "bg-accent",
           )}
-          <NameInput
-            initial={entry.name}
-            placeholder="new name"
-            onCommit={onRename}
-            onCancel={onCancelRename}
-          />
-        </span>
-      ) : (
-        <button
-          onClick={onClick}
-          title={entry.path}
-          className="flex min-w-0 flex-1 items-center gap-1 pl-1 text-left"
         >
-          <span className="grid size-3 shrink-0 place-items-center text-faint">
-            {entry.isDir ? (
-              <ChevronIcon className={cn("size-3 transition-transform", expanded ? "" : "-rotate-90")} />
+          <Guides depth={depth} />
+          {renaming ? (
+            <span className="flex min-w-0 flex-1 items-center gap-1 pr-2 pl-1">
+              <span className="size-3 shrink-0" />
+              {entry.isDir ? (
+                <FolderIcon className="size-3.5 text-faint" />
+              ) : (
+                <FileIcon name={entry.name} />
+              )}
+              <NameInput
+                initial={entry.name}
+                placeholder="new name"
+                onCommit={onRename}
+                onCancel={onCancelRename}
+              />
+            </span>
+          ) : (
+            <button
+              onClick={onClick}
+              title={entry.path}
+              className="flex min-w-0 flex-1 items-center gap-1 pl-1 text-left"
+            >
+              <span className="grid size-3 shrink-0 place-items-center text-faint">
+                {entry.isDir ? (
+                  <ChevronIcon className={cn("size-3 transition-transform", expanded ? "" : "-rotate-90")} />
+                ) : null}
+              </span>
+              {entry.isDir ? (
+                <FolderIcon className={cn("size-3.5", entry.ignored ? "text-git-ignored" : "text-faint")} />
+              ) : (
+                <FileIcon name={entry.name} muted={entry.ignored} />
+              )}
+              <span
+                className={cn(
+                  "min-w-0 flex-1 truncate font-mono text-[12px]",
+                  tint,
+                  status === "deleted" && "line-through",
+                )}
+              >
+                {entry.name}
+              </span>
+            </button>
+          )}
+
+          {renaming ? null : (
+            <span className="hidden items-center gap-0.5 pr-1 group-hover/row:flex has-[[data-state=open]]:flex">
+              {entry.isDir ? (
+                <>
+                  <RowAction label="New file" onClick={() => actions.onCreate("file")}>
+                    <NewFileIcon className="size-3" />
+                  </RowAction>
+                  <RowAction label="New folder" onClick={() => actions.onCreate("dir")}>
+                    <NewFolderIcon className="size-3" />
+                  </RowAction>
+                  <RowAction label="Reload folder" onClick={onReload}>
+                    <RefreshIcon className="size-3" />
+                  </RowAction>
+                  <RowAction label={expanded ? "Collapse folder" : "Expand folder"} onClick={onToggleSubtree}>
+                    {expanded ? <CollapseIcon className="size-3" /> : <ExpandIcon className="size-3" />}
+                  </RowAction>
+                </>
+              ) : null}
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  title="More"
+                  aria-label="More"
+                  onClick={(event) => event.stopPropagation()}
+                  className="grid size-4 place-items-center rounded text-faint outline-none transition hover:bg-accent hover:text-foreground"
+                >
+                  <DotsIcon className="size-3" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  align="end"
+                  className="min-w-36"
+                  // closing the menu would otherwise pull focus back to the trigger and
+                  // blur the rename input the moment it mounts, cancelling the rename
+                  onCloseAutoFocus={(event) => event.preventDefault()}
+                >
+                  <RowMenuItems
+                    Item={DropdownMenuItem}
+                    Separator={DropdownMenuSeparator}
+                    entry={entry}
+                    canReveal={canReveal}
+                    actions={actions}
+                  />
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </span>
+          )}
+
+          <span className={cn("flex shrink-0 items-center pr-2", "group-hover/row:hidden")}>
+            {decoration ? (
+              <span className={cn("font-mono text-[10.5px] font-semibold", decoration.className)}>
+                {decoration.letter}
+              </span>
+            ) : dirty ? (
+              <span className="size-1.5 rounded-full bg-git-modified" />
             ) : null}
           </span>
-          {entry.isDir ? (
-            <FolderIcon className={cn("size-3.5", entry.ignored ? "text-git-ignored" : "text-faint")} />
-          ) : (
-            <FileIcon name={entry.name} muted={entry.ignored} />
-          )}
-          <span
-            className={cn(
-              "min-w-0 flex-1 truncate font-mono text-[12px]",
-              tint,
-              status === "deleted" && "line-through",
-            )}
-          >
-            {entry.name}
-          </span>
-        </button>
-      )}
-
-      {renaming ? null : (
-        <span className="hidden items-center gap-0.5 pr-1 group-hover/row:flex has-[[data-state=open]]:flex">
-          {entry.isDir ? (
-            <>
-              <RowAction label="New file" onClick={() => onCreate("file")}>
-                <NewFileIcon className="size-3" />
-              </RowAction>
-              <RowAction label="New folder" onClick={() => onCreate("dir")}>
-                <NewFolderIcon className="size-3" />
-              </RowAction>
-              <RowAction label="Reload folder" onClick={onReload}>
-                <RefreshIcon className="size-3" />
-              </RowAction>
-              <RowAction label={expanded ? "Collapse folder" : "Expand folder"} onClick={onToggleSubtree}>
-                {expanded ? <CollapseIcon className="size-3" /> : <ExpandIcon className="size-3" />}
-              </RowAction>
-            </>
-          ) : null}
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              title="More"
-              aria-label="More"
-              onClick={(event) => event.stopPropagation()}
-              className="grid size-4 place-items-center rounded text-faint outline-none transition hover:bg-accent hover:text-foreground"
-            >
-              <DotsIcon className="size-3" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className="min-w-36"
-              // closing the menu would otherwise pull focus back to the trigger and
-              // blur the rename input the moment it mounts, cancelling the rename
-              onCloseAutoFocus={(event) => event.preventDefault()}
-            >
-              <DropdownMenuItem onSelect={onStartRename}>Rename…</DropdownMenuItem>
-              <DropdownMenuItem variant="destructive" onSelect={onDelete}>
-                Delete…
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </span>
-      )}
-
-      <span className={cn("flex shrink-0 items-center pr-2", "group-hover/row:hidden")}>
-        {decoration ? (
-          <span className={cn("font-mono text-[10.5px] font-semibold", decoration.className)}>
-            {decoration.letter}
-          </span>
-        ) : dirty ? (
-          <span className="size-1.5 rounded-full bg-git-modified" />
-        ) : null}
-      </span>
-    </div>
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent
+        className="min-w-44"
+        // closing the menu would otherwise pull focus back to the row and blur the
+        // rename input the moment it mounts, cancelling the rename
+        onCloseAutoFocus={(event) => event.preventDefault()}
+      >
+        <RowMenuItems
+          Item={ContextMenuItem}
+          Separator={ContextMenuSeparator}
+          entry={entry}
+          canReveal={canReveal}
+          actions={actions}
+        />
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
@@ -318,6 +418,7 @@ export function FileTree({
   onClose: () => void;
 }) {
   const messageCount = useStore((state) => (state.messagesByThread[thread.id] ?? NO_MESSAGES).length);
+  const canReveal = useStore((state) => state.apps.some((app) => app.id === "finder"));
   const [dirs, setDirs] = useState<Record<string, TreeEntry[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set([""]));
   const [changes, setChanges] = useState<Map<string, Status>>(new Map());
@@ -441,6 +542,16 @@ export function FileTree({
     }
   };
 
+  const reveal = (rel: string) => {
+    api.revealEntry(thread.id, rel).catch((cause: Error) => setError(cause.message));
+  };
+
+  const copyPath = (rel: string, kind: "relative" | "absolute") => {
+    navigator.clipboard
+      .writeText(kind === "relative" ? rel : `${thread.cwd}/${rel}`)
+      .catch((cause: Error) => setError(cause.message));
+  };
+
   // collapsing a folder takes its whole subtree with it; expanding restores what is already loaded
   const toggleSubtree = (dir: string) => {
     setExpanded((current) => {
@@ -485,15 +596,20 @@ export function FileTree({
           dirty={entry.isDir && hasChangesUnder(entry.path)}
           expanded={isExpanded}
           selected={entry.path === openPath}
+          canReveal={canReveal}
           onClick={() => toggle(entry)}
-          onCreate={(kind) => startCreate(entry.path, kind)}
           onReload={() => void load(entry.path).catch(() => undefined)}
           onToggleSubtree={() => toggleSubtree(entry.path)}
           renaming={renaming === entry.path}
-          onStartRename={() => setRenaming(entry.path)}
           onRename={(name) => void commitRename(entry, name)}
           onCancelRename={() => setRenaming(null)}
-          onDelete={() => setPendingDelete(entry)}
+          actions={{
+            onCreate: (kind) => startCreate(entry.path, kind),
+            onReveal: () => reveal(entry.path),
+            onCopy: (kind) => copyPath(entry.path, kind),
+            onStartRename: () => setRenaming(entry.path),
+            onDelete: () => setPendingDelete(entry),
+          }}
         />,
       );
       if (isExpanded) out.push(...rows(entry.path, depth + 1));

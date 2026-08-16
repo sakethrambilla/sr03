@@ -310,6 +310,13 @@ export async function trashWorkspaceEntry(
   }
 }
 
+export async function revealWorkspaceEntry(root: string, rel: string): Promise<void> {
+  if (process.platform !== "darwin") throw new Error("Finder is only available on macOS");
+  const target = safeJoin(root, rel);
+  await fs.lstat(target);
+  await exec("open", ["-R", target]);
+}
+
 export async function writeWorkspaceFile(
   root: string,
   rel: string,
