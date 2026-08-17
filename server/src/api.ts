@@ -25,7 +25,8 @@ import {
   walkWorkspaceFiles,
   writeWorkspaceFile,
 } from "./fsbrowse.ts";
-import { readTable, tableKind } from "./table.ts";
+import { readTable, readValues, tableKind, writeCell } from "./table.ts";
+import type { TableFilter, TableQuery } from "./table.ts";
 import { messages, projects, settings, threads } from "./db.ts";
 import {
   DEFAULT_EFFORT,
@@ -81,6 +82,36 @@ function requireString(body: Record<string, unknown>, key: string): string {
     throw new HttpError(400, `\`${key}\` is required`);
   }
   return value.trim();
+}
+
+// the search and the per-column checklists travel as query params, so one parser reads both
+function tableQuery(url: URL): TableQuery {
+  const raw = url.searchParams.get("filters");
+  let filters: TableFilter[] = [];
+  if (raw) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new HttpError(400, "`filters` isn't valid JSON");
+    }
+    if (!Array.isArray(parsed)) throw new HttpError(400, "`filters` must be an array");
+    filters = parsed.flatMap((entry): TableFilter[] => {
+      const one = entry as { column?: unknown; values?: unknown };
+      if (typeof one.column !== "number" || !Array.isArray(one.values)) return [];
+      return [
+        {
+          column: one.column,
+          values: one.values.filter((value): value is string => typeof value === "string"),
+        },
+      ];
+    });
+  }
+  return {
+    search: url.searchParams.get("q") ?? "",
+    filters,
+    header: url.searchParams.get("header") !== "0",
+  };
 }
 
 function requireThread(id: string) {
@@ -430,6 +461,42 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
         sheet: number("sheet", 0),
         offset: number("offset", 0),
         limit: number("limit", 500),
+        query: tableQuery(url),
+      });
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/threads\/([^/]+)\/table\/values$/,
+    handler: async ({ params, url }) => {
+      const thread = requireThread(params[0]!);
+      const rel = url.searchParams.get("path")?.trim() ?? "";
+      if (!rel) throw new HttpError(400, "`path` is required");
+      if (!tableKind(rel)) throw new HttpError(400, "That file isn't a table");
+      const column = Number(url.searchParams.get("column"));
+      if (!Number.isInteger(column) || column < 0) throw new HttpError(400, "`column` is required");
+      return readValues(thread.cwd, rel, {
+        sheet: Number(url.searchParams.get("sheet")) || 0,
+        column,
+        query: tableQuery(url),
+      });
+    },
+  },
+  {
+    method: "PUT",
+    pattern: /^\/api\/threads\/([^/]+)\/table$/,
+    handler: async ({ params, request }) => {
+      const thread = requireThread(params[0]!);
+      const body = await readBody(request);
+      if (typeof body.value !== "string") throw new HttpError(400, "`value` is required");
+      if (!Number.isInteger(body.row) || !Number.isInteger(body.column)) {
+        throw new HttpError(400, "`row` and `column` are required");
+      }
+      return writeCell(thread.cwd, requireString(body, "path"), {
+        row: body.row as number,
+        column: body.column as number,
+        value: body.value,
+        mtimeMs: typeof body.mtimeMs === "number" ? body.mtimeMs : 0,
       });
     },
   },
@@ -580,6 +647,20 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
   },
   {
     method: "POST",
+    pattern: /^\/api\/threads\/([^/]+)\/rewind$/,
+    handler: async ({ params, request }) => {
+      const thread = requireThread(params[0]!);
+      if (thread.status === "running") throw new HttpError(409, "Turn already running");
+      const body = await readBody(request);
+      const message = messages.byId(requireString(body, "messageId"));
+      if (!message || message.threadId !== thread.id) throw new HttpError(404, "No such message");
+      claude.truncateThread(thread, message.seq);
+      // the caller puts this back in the composer, which is the whole point of rewinding to it
+      return { text: message.text };
+    },
+  },
+  {
+    method: "POST",
     pattern: /^\/api\/threads\/([^/]+)\/interrupt$/,
     handler: async ({ params }) => {
       const thread = requireThread(params[0]!);
@@ -635,17 +716,3 @@ export async function handleApiRequest(
   }
   return true;
 }
-  {
-    method: "POST",
-    pattern: /^\/api\/threads\/([^/]+)\/rewind$/,
-    handler: async ({ params, request }) => {
-      const thread = requireThread(params[0]!);
-      if (thread.status === "running") throw new HttpError(409, "Turn already running");
-      const body = await readBody(request);
-      const message = messages.byId(requireString(body, "messageId"));
-      if (!message || message.threadId !== thread.id) throw new HttpError(404, "No such message");
-      claude.truncateThread(thread, message.seq);
-      // the caller puts this back in the composer, which is the whole point of rewinding to it
-      return { text: message.text };
-    },
-  },

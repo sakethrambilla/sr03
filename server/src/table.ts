@@ -6,15 +6,38 @@ import zlib from "node:zlib";
 
 import { safeJoin } from "./fsbrowse.ts";
 
+// a column keeps only the values ticked in its checklist
+export interface TableFilter {
+  column: number;
+  values: string[];
+}
+
+export interface TableQuery {
+  search: string;
+  filters: TableFilter[];
+  header: boolean;
+}
+
 export interface TableWindow {
   path: string;
   kind: "csv" | "xlsx";
   sheets: string[];
   sheet: number;
+  head: string[] | null;
   rows: string[][];
+  // the row index in the file for each row above, which a filtered window doesn't imply
+  numbers: number[];
   offset: number;
   total: number;
   // the total is a cap we stopped at rather than the real end of the file
+  truncated: boolean;
+  filtered: boolean;
+  mtimeMs: number;
+}
+
+export interface TableValues {
+  column: number;
+  values: Array<{ value: string; count: number }>;
   truncated: boolean;
 }
 
@@ -41,28 +64,48 @@ const XLSX_ROW_CAP = 50_000;
 const XLSX_CELL_CAP = 1_000_000;
 const SHARED_STRING_BYTES = 64 * 1024 * 1024;
 const SMALL_ENTRY_BYTES = 16 * 1024 * 1024;
+const MATCH_CAP = 500_000;
+const DISTINCT_CAP = 10_000;
+// enough for one row at a recorded offset; a longer row retries with a bigger read
+const ROW_WINDOW = 1 << 16;
 
 // ── csv ────────────────────────────────────────────────────────────────────────
 
 // one RFC 4180 state machine, fed bytes so the offsets it reports are byte offsets and a
-// multi-byte character can straddle a chunk. `collect` is off for the indexing scan, where
-// only the row boundaries matter and building every field would dominate the cost.
-function parser(delimiter: number, collect: boolean) {
-  let field: number[] = [];
+// multi-byte character can straddle a chunk. `collect` is false for the indexing scan, where
+// only the row boundaries matter, and a set of columns for a scan that reads just a few of
+// them — building every field otherwise dominates the cost on a wide file.
+function parser(delimiter: number, collect: boolean | Set<number>) {
+  // one growable buffer for the field in hand — a fresh Buffer.from() per field is the
+  // single biggest cost in a full-file scan
+  let scratch = Buffer.allocUnsafe(256);
+  let length = 0;
   let row: string[] = [];
+  let column = 0;
   let quoted = false;
   let afterQuote = false;
   let fieldStarted = false;
   let rowStarted = false;
 
+  const wants = (index: number) =>
+    collect === true || (collect !== false && collect.has(index));
+
   const pushField = () => {
-    if (collect) row.push(Buffer.from(field).toString("utf8"));
-    field.length = 0;
+    if (collect !== false) row.push(wants(column) ? scratch.toString("utf8", 0, length) : "");
+    column += 1;
+    length = 0;
     fieldStarted = false;
   };
 
   const take = (byte: number) => {
-    if (collect) field.push(byte);
+    if (!wants(column)) return;
+    if (length === scratch.length) {
+      const bigger = Buffer.allocUnsafe(scratch.length * 2);
+      scratch.copy(bigger, 0, 0, length);
+      scratch = bigger;
+    }
+    scratch[length] = byte;
+    length += 1;
   };
 
   return {
@@ -104,6 +147,7 @@ function parser(delimiter: number, collect: boolean) {
           pushField();
           const done = row;
           row = [];
+          column = 0;
           rowStarted = false;
           if (!emit(done, i + 1)) return false;
           continue;
@@ -117,10 +161,11 @@ function parser(delimiter: number, collect: boolean) {
     },
     // a file that doesn't end in a newline still has a last row
     flush(emit: (row: string[], after: number) => boolean): void {
-      if (!rowStarted && field.length === 0 && row.length === 0) return;
+      if (!rowStarted && length === 0 && row.length === 0) return;
       pushField();
       const done = row;
       row = [];
+      column = 0;
       emit(done, 0);
     },
   };
@@ -221,46 +266,374 @@ async function indexCsv(target: string, rel: string): Promise<CsvIndex> {
   }
 }
 
-async function readCsv(target: string, rel: string, offset: number, limit: number): Promise<TableWindow> {
+async function readCsv(
+  target: string,
+  rel: string,
+  stats: { mtimeMs: number; size: number },
+  offset: number,
+  limit: number,
+  query: TableQuery,
+): Promise<TableWindow> {
   const index = await indexCsv(target, rel);
-  const anchor = Math.min(Math.floor(offset / STRIDE), index.offsets.length - 1);
-  let skip = offset - anchor * STRIDE;
-  const rows: string[][] = [];
-  const read = parser(index.delimiter, true);
-  const stream = createReadStream(target, { start: index.offsets[anchor]! });
-
-  for await (const chunk of stream) {
-    const buffer = chunk as Buffer;
-    const more = read.feed(buffer, buffer.length, (row) => {
-      if (skip > 0) {
-        skip -= 1;
-        return true;
-      }
-      rows.push(row);
-      return rows.length < limit;
-    });
-    if (!more) {
-      stream.destroy();
-      break;
-    }
-  }
-  if (rows.length < limit && skip === 0) {
-    read.flush((row) => {
-      rows.push(row);
-      return false;
-    });
-  }
-
-  return {
+  const head = query.header ? ((await readRowsAt(target, index.delimiter, [0]))[0] ?? null) : null;
+  const base = query.header ? 1 : 0;
+  const shape = (
+    rows: string[][],
+    numbers: number[],
+    total: number,
+    truncated: boolean,
+    filtered: boolean,
+  ): TableWindow => ({
     path: rel,
     kind: "csv",
     sheets: [],
     sheet: 0,
+    head,
     rows,
+    numbers,
     offset,
-    total: index.total,
-    truncated: index.truncated,
+    total,
+    truncated,
+    filtered,
+    mtimeMs: stats.mtimeMs,
+  });
+
+  if (asks(query)) {
+    const prepared = prepare(query);
+    const list = await matchesOf(target, stats, index, 0, query, prepared);
+    const rows = await readRowsAt(target, index.delimiter, list.starts.slice(offset, offset + limit));
+    const numbers = list.numbers.slice(offset, offset + limit);
+    return shape(rows, numbers, list.numbers.length, list.truncated, true);
+  }
+
+  const from = base + offset;
+  const anchor = Math.min(Math.floor(from / STRIDE), index.offsets.length - 1);
+  const rows: string[][] = [];
+  await walkCsv(
+    target,
+    stats.size,
+    index.delimiter,
+    true,
+    (cells, at) => {
+      if (at < from) return true;
+      rows.push(cells);
+      return rows.length < limit;
+    },
+    { byte: index.offsets[anchor]!, row: anchor * STRIDE },
+  );
+
+  return shape(
+    rows,
+    rows.map((_row, at) => from + at),
+    Math.max(0, index.total - base),
+    index.truncated,
+    false,
+  );
+}
+
+// the byte range of one row, so a cell edit can rewrite that span and copy the rest through
+async function locateRow(
+  target: string,
+  size: number,
+  index: CsvIndex,
+  row: number,
+): Promise<{ start: number; end: number; cells: string[] }> {
+  const anchor = Math.min(Math.floor(row / STRIDE), index.offsets.length - 1);
+  const found: { at: { start: number; end: number; cells: string[] } | null } = { at: null };
+  await walkCsv(
+    target,
+    size,
+    index.delimiter,
+    true,
+    (cells, at, start) => {
+      if (at < row) return true;
+      if (at === row) {
+        // the last row of the file has no next one, so its span runs to the end
+        found.at = { start, end: size, cells };
+        return true;
+      }
+      found.at!.end = start;
+      return false;
+    },
+    { byte: index.offsets[anchor]!, row: anchor * STRIDE },
+  );
+  if (!found.at) throw new Error(`Row ${row + 1} is past the end of the file`);
+  return found.at;
+}
+
+function serialize(cells: string[], delimiter: number): string {
+  const separator = String.fromCharCode(delimiter);
+  return cells
+    .map((cell) =>
+      /["\r\n]/.test(cell) || cell.includes(separator) ? `"${cell.replace(/"/g, '""')}"` : cell,
+    )
+    .join(separator);
+}
+
+// the edit is written to a sibling and renamed over, so a failure part-way through can't
+// leave the file half rewritten
+export async function writeCell(
+  root: string,
+  rel: string,
+  options: { row: number; column: number; value: string; mtimeMs: number },
+): Promise<{ path: string; row: number; cells: string[]; mtimeMs: number }> {
+  if (tableKind(rel) !== "csv") throw new Error("Only csv and tsv files can be edited here");
+  if (options.column < 0 || options.row < 0) throw new Error("That cell is out of range");
+  const target = safeJoin(root, rel);
+  const stats = await fs.stat(target);
+  if (!stats.isFile()) throw new Error("That path is not a file");
+  if (options.mtimeMs > 0 && Math.round(stats.mtimeMs) !== Math.round(options.mtimeMs)) {
+    throw new Error("This file changed on disk since it was read — reopen it and try again");
+  }
+
+  const index = await indexCsv(target, rel);
+  const found = await locateRow(target, stats.size, index, options.row);
+  const cells = [...found.cells];
+  while (cells.length <= options.column) cells.push("");
+  cells[options.column] = options.value;
+
+  // whatever ended the row has to survive, since everything after it is copied byte for byte
+  const width = Math.min(2, found.end - found.start);
+  const tail = Buffer.alloc(width);
+  const peek = await fs.open(target, "r");
+  try {
+    if (width > 0) await peek.read(tail, 0, width, found.end - width);
+  } finally {
+    await peek.close();
+  }
+  const terminator = tail.at(-1) === LF ? (tail.at(-2) === CR ? "\r\n" : "\n") : "";
+
+  const temp = `${target}.sr03-${process.pid}-${Date.now().toString(36)}`;
+  try {
+    const source = await fs.open(target, "r");
+    const sink = await fs.open(temp, "w");
+    try {
+      const buffer = Buffer.allocUnsafe(CHUNK);
+      const copy = async (from: number, to: number) => {
+        let at = from;
+        while (at < to) {
+          const { bytesRead } = await source.read(buffer, 0, Math.min(CHUNK, to - at), at);
+          if (bytesRead === 0) break;
+          await sink.write(buffer, 0, bytesRead);
+          at += bytesRead;
+        }
+      };
+      await copy(0, found.start);
+      await sink.write(Buffer.from(serialize(cells, index.delimiter) + terminator, "utf8"));
+      await copy(found.end, stats.size);
+    } finally {
+      await source.close();
+      await sink.close();
+    }
+    await fs.rename(temp, target);
+  } catch (cause) {
+    await fs.rm(temp, { force: true });
+    throw cause;
+  }
+
+  const after = await fs.stat(target);
+  return { path: rel, row: options.row, cells, mtimeMs: after.mtimeMs };
+}
+
+// ── query ─────────────────────────────────────────────────────────────────────
+
+interface Prepared {
+  needle: RegExp | null;
+  allow: Array<{ column: number; values: Set<string> }>;
+  columns: boolean | Set<number>;
+  header: boolean;
+}
+
+function asks(query: TableQuery): boolean {
+  return query.search.trim() !== "" || query.filters.some((filter) => filter.column >= 0);
+}
+
+function prepare(query: TableQuery, also?: number): Prepared {
+  const search = query.search.trim();
+  const allow = query.filters
+    .filter((filter) => filter.column >= 0 && filter.column !== also)
+    .map((filter) => ({ column: filter.column, values: new Set(filter.values) }));
+  const columns = new Set(allow.map((one) => one.column));
+  if (also !== undefined) columns.add(also);
+  return {
+    needle: search ? new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") : null,
+    allow,
+    // a search reads every column; a checklist only reads the ones it filters on
+    columns: search ? true : columns,
+    header: query.header,
   };
+}
+
+function keeps(row: string[], prepared: Prepared): boolean {
+  for (const one of prepared.allow) {
+    if (!one.values.has(row[one.column] ?? "")) return false;
+  }
+  const needle = prepared.needle;
+  if (!needle) return true;
+  for (const cell of row) {
+    if (needle.test(cell)) return true;
+  }
+  return false;
+}
+
+function queryKey(query: TableQuery, sheet: number, also?: number): string {
+  const filters = query.filters
+    .filter((filter) => filter.column >= 0 && filter.column !== also)
+    .map((filter) => `${filter.column}:${[...filter.values].sort().join("\u0001")}`)
+    .sort()
+    .join("\u0002");
+  const parts = [sheet, query.header ? 1 : 0, query.search.trim().toLowerCase(), filters, also ?? ""];
+  return parts.join("\u0003");
+}
+
+interface MatchList {
+  mtimeMs: number;
+  size: number;
+  numbers: number[];
+  starts: number[];
+  truncated: boolean;
+}
+
+const matched = new Map<string, MatchList>();
+
+// the shape every full-file scan shares — the visitor stops it by returning false, and the
+// return says whether the whole file was seen or a cap cut it short
+async function walkCsv(
+  target: string,
+  size: number,
+  delimiter: number,
+  collect: boolean | Set<number>,
+  visit: (cells: string[], row: number, start: number) => boolean,
+  begin?: { byte: number; row: number },
+): Promise<boolean> {
+  const handle = await fs.open(target, "r");
+  try {
+    const read = parser(delimiter, collect);
+    const buffer = Buffer.allocUnsafe(CHUNK);
+    const opened = begin?.byte ?? 0;
+    let position = opened;
+    let row = begin?.row ?? 0;
+    let start = position;
+    let stopped = false;
+
+    const step = (cells: string[], end: number): boolean => {
+      const at = row;
+      const from = start;
+      row += 1;
+      start = end;
+      if (visit(cells, at, from)) return true;
+      stopped = true;
+      return false;
+    };
+
+    while (position < size && position - opened < SCAN_BYTES) {
+      const { bytesRead } = await handle.read(buffer, 0, CHUNK, position);
+      if (bytesRead === 0) break;
+      const base = position;
+      const more = read.feed(buffer, bytesRead, (cells, after) => step(cells, base + after));
+      position += bytesRead;
+      if (!more) break;
+    }
+    if (!stopped && position >= size) read.flush((cells) => step(cells, size));
+    return !stopped && position >= size;
+  } finally {
+    await handle.close();
+  }
+}
+
+// one scan records both the row index and its byte offset for every match, so paging a
+// filtered view costs a seek per row instead of another pass over the file
+async function scanCsv(
+  target: string,
+  size: number,
+  index: CsvIndex,
+  prepared: Prepared,
+): Promise<{ numbers: number[]; starts: number[]; truncated: boolean }> {
+  const numbers: number[] = [];
+  const starts: number[] = [];
+  let capped = false;
+  const whole = await walkCsv(target, size, index.delimiter, prepared.columns, (cells, row, start) => {
+    if (row === 0 && prepared.header) return true;
+    if (!keeps(cells, prepared)) return true;
+    numbers.push(row);
+    starts.push(start);
+    if (numbers.length >= MATCH_CAP) {
+      capped = true;
+      return false;
+    }
+    return true;
+  });
+  return { numbers, starts, truncated: capped || !whole };
+}
+
+async function scanValues(
+  target: string,
+  size: number,
+  index: CsvIndex,
+  prepared: Prepared,
+  column: number,
+  tally: (value: string) => void,
+): Promise<boolean> {
+  const whole = await walkCsv(target, size, index.delimiter, prepared.columns, (cells, row) => {
+    if (row === 0 && prepared.header) return true;
+    if (keeps(cells, prepared)) tally(cells[column] ?? "");
+    return true;
+  });
+  return !whole;
+}
+
+async function matchesOf(
+  target: string,
+  stats: { mtimeMs: number; size: number },
+  index: CsvIndex,
+  sheet: number,
+  query: TableQuery,
+  prepared: Prepared,
+): Promise<MatchList> {
+  const key = `${target}\u0004${queryKey(query, sheet)}`;
+  const cached = matched.get(key);
+  if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) return cached;
+  const found = await scanCsv(target, stats.size, index, prepared);
+  return remember(matched, key, { ...found, mtimeMs: stats.mtimeMs, size: stats.size }, 4);
+}
+
+// a filtered page is rows scattered through the file, so each is read from its recorded
+// offset rather than by parsing everything before it
+async function readRowsAt(target: string, delimiter: number, starts: number[]): Promise<string[][]> {
+  if (starts.length === 0) return [];
+  const handle = await fs.open(target, "r");
+  try {
+    const rows: string[][] = [];
+    for (const start of starts) {
+      const found: { row: string[] | null } = { row: null };
+      let size = ROW_WINDOW;
+      for (let attempt = 0; attempt < 6 && found.row === null; attempt += 1) {
+        const buffer = Buffer.allocUnsafe(size);
+        const { bytesRead } = await handle.read(buffer, 0, size, start);
+        if (bytesRead === 0) break;
+        const read = parser(delimiter, true);
+        read.feed(buffer, bytesRead, (cells) => {
+          found.row = cells;
+          return false;
+        });
+        // no terminator in the window: the file ends here, or the row is longer than it
+        if (found.row === null) {
+          if (bytesRead < size) {
+            read.flush((cells) => {
+              found.row = cells;
+              return false;
+            });
+          } else {
+            size *= 4;
+          }
+        }
+      }
+      rows.push(found.row ?? []);
+    }
+    return rows;
+  } finally {
+    await handle.close();
+  }
 }
 
 // ── zip ────────────────────────────────────────────────────────────────────────
@@ -677,30 +1050,69 @@ async function openBook(target: string): Promise<Book> {
 
 // a deflate stream has no random access, so the sheet is parsed once up to the row cap and
 // paged out of memory after that — unlike a csv, which is indexed and seekable
-async function readXlsx(target: string, rel: string, sheet: number, offset: number, limit: number): Promise<TableWindow> {
+async function sheetOf(book: Book, target: string, at: number): Promise<Sheet> {
+  const parsed = book.parsed.get(at);
+  if (parsed) return parsed;
+  const read = await readSheet(target, book.entries[at]!, book.shared, book.styles, book.date1904);
+  book.parsed.set(at, read);
+  return read;
+}
+
+function sheetIndex(book: Book, sheet: number): number {
+  return Math.min(Math.max(sheet, 0), book.entries.length - 1);
+}
+
+async function readXlsx(
+  target: string,
+  rel: string,
+  stats: { mtimeMs: number },
+  sheet: number,
+  offset: number,
+  limit: number,
+  query: TableQuery,
+): Promise<TableWindow> {
   const book = await openBook(target);
-  const index = Math.min(Math.max(sheet, 0), book.entries.length - 1);
-  let parsed = book.parsed.get(index);
-  if (!parsed) {
-    parsed = await readSheet(target, book.entries[index]!, book.shared, book.styles, book.date1904);
-    book.parsed.set(index, parsed);
+  const at = sheetIndex(book, sheet);
+  const parsed = await sheetOf(book, target, at);
+  const base = query.header ? 1 : 0;
+  const numbers: number[] = [];
+  let total = 0;
+
+  if (asks(query)) {
+    const prepared = prepare(query);
+    const all: number[] = [];
+    for (let row = base; row < parsed.rows.length; row += 1) {
+      if (keeps(parsed.rows[row]!, prepared)) all.push(row);
+    }
+    total = all.length;
+    numbers.push(...all.slice(offset, offset + limit));
+  } else {
+    total = Math.max(0, parsed.rows.length - base);
+    for (let row = base + offset; row < parsed.rows.length && numbers.length < limit; row += 1) {
+      numbers.push(row);
+    }
   }
+
   return {
     path: rel,
     kind: "xlsx",
     sheets: book.names,
-    sheet: index,
-    rows: parsed.rows.slice(offset, offset + limit),
+    sheet: at,
+    head: query.header ? (parsed.rows[0] ?? null) : null,
+    rows: numbers.map((row) => parsed.rows[row] ?? []),
+    numbers,
     offset,
-    total: parsed.rows.length,
+    total,
     truncated: parsed.truncated,
+    filtered: asks(query),
+    mtimeMs: stats.mtimeMs,
   };
 }
 
 export async function readTable(
   root: string,
   rel: string,
-  options: { sheet: number; offset: number; limit: number },
+  options: { sheet: number; offset: number; limit: number; query: TableQuery },
 ): Promise<TableWindow> {
   const kind = tableKind(rel);
   if (!kind) throw new Error("That file isn't a table");
@@ -710,6 +1122,73 @@ export async function readTable(
   const offset = Math.max(0, options.offset);
   const limit = Math.min(Math.max(1, options.limit), 2000);
   return kind === "xlsx"
-    ? readXlsx(target, rel, options.sheet, offset, limit)
-    : readCsv(target, rel, offset, limit);
+    ? readXlsx(target, rel, stats, options.sheet, offset, limit, options.query)
+    : readCsv(target, rel, stats, offset, limit, options.query);
+}
+
+function collate(counts: Map<string, number>): TableValues["values"] {
+  const values = [...counts].map(([value, count]) => ({ value, count }));
+  values.sort((left, right) => {
+    const a = Number(left.value);
+    const b = Number(right.value);
+    // a column of numbers should read in numeric order, not "10" before "9"
+    if (left.value !== "" && right.value !== "" && Number.isFinite(a) && Number.isFinite(b)) {
+      return a - b;
+    }
+    return left.value.localeCompare(right.value);
+  });
+  return values;
+}
+
+interface ValueList {
+  mtimeMs: number;
+  size: number;
+  list: TableValues;
+}
+
+const tallied = new Map<string, ValueList>();
+
+// like a spreadsheet's own filter, the checklist offers what the other columns still allow
+export async function readValues(
+  root: string,
+  rel: string,
+  options: { sheet: number; column: number; query: TableQuery },
+): Promise<TableValues> {
+  const kind = tableKind(rel);
+  if (!kind) throw new Error("That file isn't a table");
+  if (options.column < 0) throw new Error("`column` is required");
+  const target = safeJoin(root, rel);
+  const stats = await fs.stat(target);
+  const key = `${target}\u0004${queryKey(options.query, options.sheet, options.column)}`;
+  const cached = tallied.get(key);
+  if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) return cached.list;
+
+  const prepared = prepare(options.query, options.column);
+  const counts = new Map<string, number>();
+  let truncated = false;
+
+  const tally = (value: string) => {
+    const seen = counts.get(value);
+    if (seen !== undefined) counts.set(value, seen + 1);
+    else if (counts.size < DISTINCT_CAP) counts.set(value, 1);
+    else truncated = true;
+  };
+
+  if (kind === "xlsx") {
+    const book = await openBook(target);
+    const parsed = await sheetOf(book, target, sheetIndex(book, options.sheet));
+    for (let row = prepared.header ? 1 : 0; row < parsed.rows.length; row += 1) {
+      const cells = parsed.rows[row]!;
+      if (keeps(cells, prepared)) tally(cells[options.column] ?? "");
+    }
+    truncated = truncated || parsed.truncated;
+  } else {
+    const index = await indexCsv(target, rel);
+    const cut = await scanValues(target, stats.size, index, prepared, options.column, tally);
+    truncated = truncated || cut;
+  }
+
+  const list = { column: options.column, values: collate(counts), truncated };
+  remember(tallied, key, { mtimeMs: stats.mtimeMs, size: stats.size, list }, 12);
+  return list;
 }

@@ -9,6 +9,8 @@ import type {
   Project,
   ProviderStatus,
   SlashCommand,
+  TableFilter,
+  TableValues,
   TableWindow,
   Thread,
   ThreadTask,
@@ -25,6 +27,23 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const body = (await response.json()) as T & { error?: string };
   if (!response.ok) throw new Error(body.error ?? response.statusText);
   return body;
+}
+
+interface TableView {
+  sheet: number;
+  search: string;
+  filters: TableFilter[];
+  header: boolean;
+}
+
+function tableParams(path: string, view: TableView & { offset?: number; limit?: number }) {
+  const params = new URLSearchParams({ path, sheet: String(view.sheet) });
+  if (view.offset !== undefined) params.set("offset", String(view.offset));
+  if (view.limit !== undefined) params.set("limit", String(view.limit));
+  if (view.search.trim()) params.set("q", view.search.trim());
+  if (view.filters.length > 0) params.set("filters", JSON.stringify(view.filters));
+  if (!view.header) params.set("header", "0");
+  return params;
 }
 
 const post = <T>(path: string, body?: unknown) =>
@@ -121,9 +140,20 @@ export const api = {
       status: ChangedFile["status"] | null;
       diff: string;
     }>(`/api/threads/${id}/file?path=${encodeURIComponent(path)}`),
-  table: (id: string, path: string, sheet: number, offset: number, limit: number) =>
-    call<TableWindow>(
-      `/api/threads/${id}/table?path=${encodeURIComponent(path)}&sheet=${sheet}&offset=${offset}&limit=${limit}`,
+  table: (id: string, path: string, view: TableView & { offset: number; limit: number }) =>
+    call<TableWindow>(`/api/threads/${id}/table?${tableParams(path, view)}`),
+  tableValues: (id: string, path: string, view: TableView & { column: number }) =>
+    call<TableValues>(
+      `/api/threads/${id}/table/values?${tableParams(path, view)}&column=${view.column}`,
+    ),
+  saveCell: (
+    id: string,
+    path: string,
+    cell: { row: number; column: number; value: string; mtimeMs: number },
+  ) =>
+    call<{ path: string; row: number; cells: string[]; mtimeMs: number }>(
+      `/api/threads/${id}/table`,
+      { method: "PUT", body: JSON.stringify({ path, ...cell }) },
     ),
   saveFile: (id: string, path: string, text: string) =>
     call<{ path: string; bytes: number }>(`/api/threads/${id}/file`, {
@@ -150,9 +180,9 @@ export const api = {
   forkThread: (id: string) => post<Thread>(`/api/threads/${id}/fork`),
   removeThread: (id: string) => call<{ ok: true }>(`/api/threads/${id}`, { method: "DELETE" }),
   sendTurn: (id: string, text: string) => post<{ ok: true }>(`/api/threads/${id}/turns`, { text }),
+  rewind: (id: string, messageId: string) =>
+    post<{ text: string }>(`/api/threads/${id}/rewind`, { messageId }),
   interrupt: (id: string) => post<{ ok: true }>(`/api/threads/${id}/interrupt`),
   respondToApproval: (threadId: string, approvalId: string, decision: "allow" | "always" | "deny") =>
     post<{ ok: true }>(`/api/threads/${threadId}/approvals/${approvalId}`, { decision }),
 };
-  rewind: (id: string, messageId: string) =>
-    post<{ text: string }>(`/api/threads/${id}/rewind`, { messageId }),

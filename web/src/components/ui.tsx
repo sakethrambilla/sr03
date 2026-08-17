@@ -34,14 +34,15 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Search,
   Sparkles,
   Settings,
   Square,
   SquareStack,
   SquareTerminal,
   Trash2,
-  X,
   Undo2,
+  X,
   Zap,
   type LucideIcon,
 } from "lucide-react";
@@ -160,7 +161,6 @@ export function Chip({
   );
 }
 
-const ICONS = {
 export function CopyButton({
   text,
   label = "Copy",
@@ -198,11 +198,13 @@ export function CopyButton({
   );
 }
 
+const ICONS = {
   AgentIcon: Bot,
   FolderIcon: Folder,
   RevealIcon: FolderOpen,
   BranchIcon: GitBranch,
   FilterIcon: ListFilter,
+  SearchIcon: Search,
   MicIcon: Mic,
   CloseIcon: X,
   DotsIcon: EllipsisVertical,
@@ -230,9 +232,9 @@ export function CopyButton({
   TrashIcon: Trash2,
   CursorIcon: MousePointer2,
   StopIcon: Square,
+  RewindIcon: Undo2,
   ZedIcon: Zap,
 } as const;
-  RewindIcon: Undo2,
 
 function icon(Source: LucideIcon) {
   return function Icon({ className }: { className?: string }) {
@@ -247,6 +249,7 @@ export const RenameIcon = icon(ICONS.RenameIcon);
 export const TrashIcon = icon(ICONS.TrashIcon);
 export const BranchIcon = icon(ICONS.BranchIcon);
 export const FilterIcon = icon(ICONS.FilterIcon);
+export const SearchIcon = icon(ICONS.SearchIcon);
 export const MicIcon = icon(ICONS.MicIcon);
 export const CloseIcon = icon(ICONS.CloseIcon);
 export const DotsIcon = icon(ICONS.DotsIcon);
@@ -272,10 +275,10 @@ export const CollapseIcon = icon(ICONS.CollapseIcon);
 export const ExpandIcon = icon(ICONS.ExpandIcon);
 export const CursorIcon = icon(ICONS.CursorIcon);
 export const StopIcon = icon(ICONS.StopIcon);
+export const RewindIcon = icon(ICONS.RewindIcon);
 export const ZedIcon = icon(ICONS.ZedIcon);
 
 export interface MenuItem {
-export const RewindIcon = icon(ICONS.RewindIcon);
   id: string;
   label: string;
   hint?: string;

@@ -208,14 +208,31 @@ export type ClientMessage =
   | { type: "pty.resize"; threadId: string; terminalId: string; cols: number; rows: number }
   | { type: "pty.close"; threadId: string; terminalId: string };
 
+// a column keeps only the values ticked in its checklist
+export interface TableFilter {
+  column: number;
+  values: string[];
+}
+
 export interface TableWindow {
   path: string;
   kind: "csv" | "xlsx";
   sheets: string[];
   sheet: number;
+  head: string[] | null;
   rows: string[][];
+  // the row index in the file for each row above, which a filtered window doesn't imply
+  numbers: number[];
   offset: number;
   total: number;
+  truncated: boolean;
+  filtered: boolean;
+  mtimeMs: number;
+}
+
+export interface TableValues {
+  column: number;
+  values: Array<{ value: string; count: number }>;
   truncated: boolean;
 }
 
