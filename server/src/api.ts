@@ -568,7 +568,8 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
       if (thread.status === "running") throw new HttpError(409, "Turn already running");
       const body = await readBody(request);
       const text = requireString(body, "text");
-      if (thread.title === "New thread") {
+      // /clear leaves no turn behind, so it would only name the thread after itself
+      if (thread.title === "New thread" && !claude.isClear(text)) {
         const title = text.split("\n")[0]!.slice(0, 60);
         const renamed = threads.update(thread.id, { title });
         if (renamed) publish({ type: "thread.updated", thread: renamed });
@@ -634,3 +635,17 @@ export async function handleApiRequest(
   }
   return true;
 }
+  {
+    method: "POST",
+    pattern: /^\/api\/threads\/([^/]+)\/rewind$/,
+    handler: async ({ params, request }) => {
+      const thread = requireThread(params[0]!);
+      if (thread.status === "running") throw new HttpError(409, "Turn already running");
+      const body = await readBody(request);
+      const message = messages.byId(requireString(body, "messageId"));
+      if (!message || message.threadId !== thread.id) throw new HttpError(404, "No such message");
+      claude.truncateThread(thread, message.seq);
+      // the caller puts this back in the composer, which is the whole point of rewinding to it
+      return { text: message.text };
+    },
+  },

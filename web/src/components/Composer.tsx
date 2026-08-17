@@ -239,6 +239,7 @@ export function Composer({
   running,
   onInterrupt,
   blocked,
+  restore,
 }: {
   chips?: ReactNode;
   above?: ReactNode;
@@ -254,6 +255,7 @@ export function Composer({
   running?: boolean;
   onInterrupt?: () => void;
   blocked?: boolean;
+  restore?: { text: string; key: number } | null;
 }) {
   const models = useStore((state) => state.models);
   const permissionModes = useStore((state) => state.permissionModes);
@@ -273,6 +275,13 @@ export function Composer({
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => () => dictationRef.current?.stop(), []);
+
+  // the key is what makes rewinding to the same message twice refill the box again
+  useEffect(() => {
+    if (!restore) return;
+    setText(restore.text);
+    inputRef.current?.focus();
+  }, [restore?.key]);
 
   // reading the list spawns a CLI of its own, so it is asked for on mount rather than on the "/"
   useEffect(() => {
@@ -605,7 +614,13 @@ function ApprovalPanel({ approval }: { approval: PendingApproval }) {
   );
 }
 
-export function ThreadComposer({ thread }: { thread: Thread }) {
+export function ThreadComposer({
+  thread,
+  restore,
+}: {
+  thread: Thread;
+  restore?: { text: string; key: number } | null;
+}) {
   const send = useStore((state) => state.send);
   const interrupt = useStore((state) => state.interrupt);
   const patchActive = useStore((state) => state.patchActive);
@@ -628,6 +643,7 @@ export function ThreadComposer({ thread }: { thread: Thread }) {
       onSubmit={(text) => send(text)}
       running={running}
       onInterrupt={() => void interrupt()}
+      restore={restore}
     />
   );
 }

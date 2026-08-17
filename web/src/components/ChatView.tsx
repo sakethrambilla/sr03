@@ -248,6 +248,7 @@ function EditorTabs({
 }
 
 export function ChatView({ thread }: { thread: Thread }) {
+  const setError = useStore((state) => state.setError);
   const messages = useStore((state) => state.messagesByThread[thread.id] ?? NO_MESSAGES);
   const streaming = useStore((state) => state.streamByThread[thread.id] ?? "");
   const tasks = useStore((state) => state.tasksByThread[thread.id] ?? NO_TASKS);
@@ -260,6 +261,8 @@ export function ChatView({ thread }: { thread: Thread }) {
   const [active, setActive] = useState<string | null>(null);
   const [reveal, setReveal] = useState<{ path: string; line: number; key: number } | null>(null);
   const [command, setCommand] = useState<{ text: string; key: number } | null>(null);
+  const [restore, setRestore] = useState<{ text: string; key: number } | null>(null);
+  const [pendingRewind, setPendingRewind] = useState<Message | null>(null);
   const [dirty, setDirty] = useState<Set<string>>(new Set());
   const [pendingClose, setPendingClose] = useState<string | null>(null);
   const [fsVersion, setFsVersion] = useState(0);
@@ -340,6 +343,17 @@ export function ChatView({ thread }: { thread: Thread }) {
     },
     [setTerminalOpen],
   );
+
+  // the transcript is the only copy of a turn, so a rewind asks before dropping any of it
+  const rewind = async (message: Message) => {
+    setPendingRewind(null);
+    try {
+      const { text } = await api.rewind(thread.id, message.id);
+      setRestore((current) => ({ text, key: (current?.key ?? 0) + 1 }));
+    } catch (error) {
+      setError((error as Error).message);
+    }
+  };
 
   const index = useMemo(() => createFileIndex(workspace), [workspace]);
   const links = useMemo(
@@ -483,8 +497,9 @@ export function ChatView({ thread }: { thread: Thread }) {
               running={thread.status === "running"}
               files={links}
               onRun={runCommand}
+              onRewind={setPendingRewind}
             />
-            <ThreadComposer thread={thread} />
+            <ThreadComposer thread={thread} restore={restore} />
           </>
         ) : null}
 
@@ -503,6 +518,29 @@ export function ChatView({ thread }: { thread: Thread }) {
           refreshToken={fsVersion}
           onClose={() => setTreeOpen(false)}
         />
+      ) : null}
+
+      {pendingRewind ? (
+        <Dialog
+          title="Rewind to here?"
+          onClose={() => setPendingRewind(null)}
+          footer={
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setPendingRewind(null)}>
+                Cancel
+              </Button>
+              <Button variant="destructive" onClick={() => void rewind(pendingRewind)}>
+                Rewind
+              </Button>
+            </div>
+          }
+        >
+          <p className="text-[13px] text-muted-foreground">
+            This message and everything after it are deleted, and its text goes back in the
+            composer. Files on disk are left alone, and the next turn starts Claude with an empty
+            context.
+          </p>
+        </Dialog>
       ) : null}
 
       {pendingClose ? (

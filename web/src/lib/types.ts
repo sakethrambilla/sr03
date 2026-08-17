@@ -181,6 +181,7 @@ export interface Resources {
 export type ServerEvent =
   | { type: "thread.status"; threadId: string; status: ThreadStatus; sessionId?: string | null }
   | { type: "thread.message"; threadId: string; message: Message }
+  | { type: "thread.truncated"; threadId: string; seq: number }
   | { type: "thread.delta"; threadId: string; text: string }
   | { type: "thread.delta.end"; threadId: string }
   | { type: "thread.approval"; approval: PendingApproval }

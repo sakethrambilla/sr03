@@ -5,9 +5,10 @@ git worktrees. Modelled on [t3code](https://github.com/pingdotgg/t3code)'s shape
 everything, the client is a thin view over one WebSocket — but deliberately much smaller.
 
 **Out of scope.** Ask before building any of these: remote control / relay / Tailscale, mobile app,
-providers other than Claude, checkpointing and turn revert, MCP
-servers, PR integration. t3code is Effect-based and event-sourced; sr03 is not, and shouldn't become
-so.
+providers other than Claude, file checkpointing — snapshotting the worktree so a rewind can put code
+back — MCP servers, PR integration. Rewind and `/clear` are conversation-only: they drop messages
+and the CLI session, and never touch disk. t3code is Effect-based and event-sourced; sr03 is not,
+and shouldn't become so.
 
 ## Commands
 

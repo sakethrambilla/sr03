@@ -431,6 +431,21 @@ export const useStore = create<Store>((set, get) => ({
         }));
         return;
       }
+      case "thread.truncated": {
+        buffered.delete(event.threadId);
+        set((state) => ({
+          messagesByThread: {
+            ...state.messagesByThread,
+            [event.threadId]: (state.messagesByThread[event.threadId] ?? []).filter(
+              (message) => message.seq < event.seq,
+            ),
+          },
+          streamByThread: { ...state.streamByThread, [event.threadId]: "" },
+          tasksByThread: { ...state.tasksByThread, [event.threadId]: [] },
+          approvalsByThread: { ...state.approvalsByThread, [event.threadId]: [] },
+        }));
+        return;
+      }
       case "thread.delta": {
         buffered.set(event.threadId, (buffered.get(event.threadId) ?? "") + event.text);
         drain(set);

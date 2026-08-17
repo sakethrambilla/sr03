@@ -604,7 +604,30 @@ function startSession(thread: Thread): Session {
   return session;
 }
 
+// sr03 keeps the transcript, the CLI keeps its own, and nothing can trim the CLI's — so
+// dropping messages drops the session with them, and the next turn starts the model cold
+export function truncateThread(thread: Thread, seq: number): void {
+  closeSession(thread.id);
+  messageStore.truncate(thread.id, seq);
+  usageStore.remove(thread.id);
+  const next = threadStore.update(thread.id, { sessionId: null, status: "idle" });
+  publish({ type: "thread.truncated", threadId: thread.id, seq });
+  if (next) publish({ type: "thread.updated", thread: next });
+  publish({ type: "usage", threadId: thread.id, usage: snapshot(thread.id) });
+}
+
+// the CLI takes an optional session name after /clear, which sr03 has nowhere to put
+const CLEAR = /^\/clear\b/;
+
+export function isClear(text: string): boolean {
+  return CLEAR.test(text.trim());
+}
+
 export function sendTurn(thread: Thread, text: string): void {
+  if (isClear(text)) {
+    truncateThread(thread, 0);
+    return;
+  }
   const session = sessions.get(thread.id) ?? startSession(thread);
   appendMessage(thread.id, "user", text);
   setStatus(thread.id, "running");

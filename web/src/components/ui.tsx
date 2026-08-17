@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowUp,
   Bot,
@@ -41,6 +41,7 @@ import {
   SquareTerminal,
   Trash2,
   X,
+  Undo2,
   Zap,
   type LucideIcon,
 } from "lucide-react";
@@ -160,6 +161,43 @@ export function Chip({
 }
 
 const ICONS = {
+export function CopyButton({
+  text,
+  label = "Copy",
+  className,
+}: {
+  text: string;
+  label?: string;
+  className?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1400);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      aria-label={label}
+      title={label}
+      onClick={() => {
+        navigator.clipboard.writeText(text).then(
+          () => setCopied(true),
+          // a clipboard write only fails on a window that isn't focused, which a click implies
+          () => undefined,
+        );
+      }}
+      className={cn("size-6 text-faint hover:text-foreground", className)}
+    >
+      {copied ? <CheckIcon className="size-3 text-git-added" /> : <CopyIcon className="size-3" />}
+    </Button>
+  );
+}
+
   AgentIcon: Bot,
   FolderIcon: Folder,
   RevealIcon: FolderOpen,
@@ -194,6 +232,7 @@ const ICONS = {
   StopIcon: Square,
   ZedIcon: Zap,
 } as const;
+  RewindIcon: Undo2,
 
 function icon(Source: LucideIcon) {
   return function Icon({ className }: { className?: string }) {
@@ -236,6 +275,7 @@ export const StopIcon = icon(ICONS.StopIcon);
 export const ZedIcon = icon(ICONS.ZedIcon);
 
 export interface MenuItem {
+export const RewindIcon = icon(ICONS.RewindIcon);
   id: string;
   label: string;
   hint?: string;

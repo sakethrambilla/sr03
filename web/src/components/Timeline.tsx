@@ -1,9 +1,11 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 
 import type { FileLinks } from "../lib/fileref.ts";
 import type { Message } from "../lib/types.ts";
 import { Markdown } from "./Markdown.tsx";
-import { ChevronIcon, cn } from "./ui.tsx";
+import { ChevronIcon, CopyButton, RewindIcon, cn } from "./ui.tsx";
+import { Button } from "@/components/ui/button";
 
 // a run of calls should read as one sentence instead of a stack of tool names
 const TOOL_PHRASES: Record<string, { verb: string; noun: string }> = {
@@ -150,16 +152,27 @@ const ToolGroup = memo(function ToolGroup({ messages }: { messages: Message[] })
   );
 });
 
+// the row is always laid out so nothing shifts when it appears, and only its ink fades in
+function MessageActions({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex h-6 items-center opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+      {children}
+    </div>
+  );
+}
+
 // a settled message never changes, but a streaming token rerenders the whole timeline —
 // without this every bubble reparses its markdown for each token that arrives
 const Bubble = memo(function Bubble({
   message,
   files,
   onRun,
+  onRewind,
 }: {
   message: Message;
   files: FileLinks;
   onRun: (command: string) => void;
+  onRewind: (message: Message) => void;
 }) {
   if (message.role === "system") {
     return <p className="text-center text-[11px] text-faint">{message.text}</p>;
@@ -167,26 +180,44 @@ const Bubble = memo(function Bubble({
 
   if (message.role === "user") {
     return (
-      <div className="flex justify-end">
+      <div className="group flex flex-col items-end">
         <div className="max-w-[85%] rounded-lg bg-accent px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap text-foreground">
           {message.text}
         </div>
+        <MessageActions>
+          <CopyButton text={message.text} />
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Rewind to here"
+            title="Rewind to here"
+            onClick={() => onRewind(message)}
+            className="size-6 text-faint hover:text-foreground"
+          >
+            <RewindIcon className="size-3" />
+          </Button>
+        </MessageActions>
       </div>
     );
   }
 
   return (
-    <Markdown
-      text={message.text}
-      files={files}
-      onRun={onRun}
-      className={cn(
-        "text-[14px] leading-[1.65]",
-        message.role === "error"
-          ? "rounded-lg border border-destructive/40 bg-destructive/10 px-3.5 py-2.5 text-destructive"
-          : "text-foreground",
-      )}
-    />
+    <div className="group flex min-w-0 flex-col items-start">
+      <Markdown
+        text={message.text}
+        files={files}
+        onRun={onRun}
+        className={cn(
+          "w-full text-[14px] leading-[1.65]",
+          message.role === "error"
+            ? "rounded-lg border border-destructive/40 bg-destructive/10 px-3.5 py-2.5 text-destructive"
+            : "text-foreground",
+        )}
+      />
+      <MessageActions>
+        <CopyButton text={message.text} />
+      </MessageActions>
+    </div>
   );
 });
 
@@ -214,6 +245,7 @@ export function Timeline({
   running,
   files,
   onRun,
+  onRewind,
 }: {
   threadId: string;
   messages: Message[];
@@ -221,6 +253,7 @@ export function Timeline({
   running: boolean;
   files: FileLinks;
   onRun: (command: string) => void;
+  onRewind: (message: Message) => void;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const opened = useRef<string | null>(null);
@@ -252,7 +285,13 @@ export function Timeline({
           "tools" in row ? (
             <ToolGroup key={row.id} messages={row.tools} />
           ) : (
-            <Bubble key={row.id} message={row.message} files={files} onRun={onRun} />
+            <Bubble
+              key={row.id}
+              message={row.message}
+              files={files}
+              onRun={onRun}
+              onRewind={onRewind}
+            />
           ),
         )}
         {streaming ? (

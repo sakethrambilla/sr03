@@ -154,3 +154,5 @@ export const api = {
   respondToApproval: (threadId: string, approvalId: string, decision: "allow" | "always" | "deny") =>
     post<{ ok: true }>(`/api/threads/${threadId}/approvals/${approvalId}`, { decision }),
 };
+  rewind: (id: string, messageId: string) =>
+    post<{ text: string }>(`/api/threads/${id}/rewind`, { messageId }),

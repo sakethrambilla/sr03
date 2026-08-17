@@ -153,6 +153,10 @@ export const usage = {
       "INSERT INTO usage (id, json, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at",
     ).run(id, json, Date.now());
   },
+
+  remove(id: string): void {
+    db.prepare("DELETE FROM usage WHERE id = ?").run(id);
+  },
 };
 
 export const projects = {
@@ -308,6 +312,15 @@ export const messages = {
     );
     threads.touch(input.threadId);
     return message;
+  },
+  byId(id: string): Message | null {
+    const row = db.prepare("SELECT * FROM messages WHERE id = ?").get(id);
+    return row ? toMessage(row) : null;
+  },
+  // seq starts at 1, so 0 drops the whole thread
+  truncate(threadId: string, seq: number): void {
+    db.prepare("DELETE FROM messages WHERE thread_id = ? AND seq >= ?").run(threadId, seq);
+    threads.touch(threadId);
   },
 };
 

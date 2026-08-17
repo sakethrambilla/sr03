@@ -1,10 +1,10 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext } from "react";
 import type { ReactNode } from "react";
 
 import { FILE_REF_SOURCE } from "../lib/fileref.ts";
 import type { FileLinks, FileRef } from "../lib/fileref.ts";
 import { TOKEN_CLASS, tokenize } from "../lib/highlight.ts";
-import { CheckIcon, CopyIcon, RunIcon, cn } from "./ui.tsx";
+import { CopyButton, RunIcon, cn } from "./ui.tsx";
 import { Button } from "@/components/ui/button";
 
 const FENCE = /^ {0,3}```+\s*(\S*)/;
@@ -95,14 +95,7 @@ const SHELL_FENCES = new Set(["sh", "bash", "zsh", "fish", "shell", "console"]);
 
 function CodeBlock({ lang, body }: { lang: string; body: string }) {
   const run = useContext(Run);
-  const [copied, setCopied] = useState(false);
   const runnable = run && SHELL_FENCES.has(lang.toLowerCase()) && body.trim().length > 0;
-
-  useEffect(() => {
-    if (!copied) return;
-    const timer = window.setTimeout(() => setCopied(false), 1400);
-    return () => window.clearTimeout(timer);
-  }, [copied]);
 
   return (
     <div className="group relative">
@@ -128,22 +121,7 @@ function CodeBlock({ lang, body }: { lang: string; body: string }) {
             <RunIcon className="size-3" />
           </Button>
         ) : null}
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Copy"
-          title="Copy"
-          onClick={() => {
-            navigator.clipboard.writeText(body).then(
-              () => setCopied(true),
-              // a clipboard write only fails on a window that isn't focused, which a click implies
-              () => undefined,
-            );
-          }}
-          className="size-6 text-faint hover:text-foreground"
-        >
-          {copied ? <CheckIcon className="size-3 text-git-added" /> : <CopyIcon className="size-3" />}
-        </Button>
+        <CopyButton text={body} />
       </div>
     </div>
   );
