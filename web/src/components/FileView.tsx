@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api.ts";
+import type { FileLinks, LineLink } from "../lib/fileref.ts";
 import type { ChangedFile, Message, Thread } from "../lib/types.ts";
 import { useStore } from "../store.ts";
 import { Markdown } from "./Markdown.tsx";
@@ -47,6 +48,35 @@ function toLines(tokens: Token[]): Token[][] {
     });
   }
   return lines;
+}
+
+interface Segment {
+  link: LineLink | null;
+  tokens: Token[];
+}
+
+// a link can start and end mid-token and can run across several of them, so the line is
+// re-cut along its edges before any of it is rendered
+function segment(tokens: Token[], links: LineLink[]): Segment[] {
+  if (links.length === 0) return [{ link: null, tokens }];
+  const segments: Segment[] = [];
+  let column = 0;
+  for (const token of tokens) {
+    let offset = 0;
+    while (offset < token.text.length) {
+      const at = column + offset;
+      const link = links.find((candidate) => at >= candidate.start && at < candidate.end) ?? null;
+      const edge = link ? link.end : (links.find((candidate) => candidate.start > at)?.start ?? Infinity);
+      const stop = Math.min(edge, column + token.text.length);
+      const piece = { text: token.text.slice(offset, stop - column), kind: token.kind };
+      const last = segments.at(-1);
+      if (last && last.link === link) last.tokens.push(piece);
+      else segments.push({ link, tokens: [piece] });
+      offset = stop - column;
+    }
+    column += token.text.length;
+  }
+  return segments;
 }
 
 function kindOf(block: Block): BlockKind {
@@ -147,6 +177,7 @@ export function FileView({
   onSaved,
   registerSave,
   reveal,
+  links,
 }: {
   thread: Thread;
   path: string;
@@ -156,6 +187,7 @@ export function FileView({
   onSaved: () => void;
   registerSave: (path: string, save: (() => Promise<boolean>) | null) => void;
   reveal: { line: number; key: number } | null;
+  links: FileLinks;
 }) {
   const messageCount = useStore((state) => (state.messagesByThread[thread.id] ?? NO_MESSAGES).length);
   const [file, setFile] = useState<{
@@ -174,6 +206,8 @@ export function FileView({
   const rows = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const [flash, setFlash] = useState<number | null>(null);
+  // held cmd (or ctrl) is what turns an import specifier into something clickable
+  const [linking, setLinking] = useState(false);
   // deliberately uncontrolled: a React-controlled value resets the browser's own
   // undo stack on every keystroke, which kills cmd+z
   const editor = useRef<HTMLTextAreaElement>(null);
@@ -201,6 +235,23 @@ export function FileView({
   }, [thread.id, path, thread.status, messageCount]);
 
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
+
+  useEffect(() => {
+    if (!active) {
+      setLinking(false);
+      return;
+    }
+    const track = (event: KeyboardEvent) => setLinking(event.metaKey || event.ctrlKey);
+    const clear = () => setLinking(false);
+    window.addEventListener("keydown", track);
+    window.addEventListener("keyup", track);
+    window.addEventListener("blur", clear);
+    return () => {
+      window.removeEventListener("keydown", track);
+      window.removeEventListener("keyup", track);
+      window.removeEventListener("blur", clear);
+    };
+  }, [active]);
 
   // a reference clicked in the chat lands here, but only once the file it names has loaded
   const jumped = useRef<number | null>(null);
@@ -268,7 +319,12 @@ export function FileView({
   const delimited = DELIMITED.test(path);
   const reading = markdown && preview;
   const grid = SPREADSHEET.test(path) || (delimited && preview);
-  const lines = file && !file.binary ? toLines(tokenize(text, path)) : [];
+  const lines = useMemo(() => {
+    if (!file || file.binary) return [] as Segment[][];
+    return toLines(tokenize(text, path)).map((tokens) =>
+      segment(tokens, links.imports(path, tokens.map((token) => token.text).join(""))),
+    );
+  }, [file?.binary, text, path, links]);
   const blocks = file ? parseBlocks(file.diff) : [];
   const startsAt = new Map(blocks.map((block) => [block.start, block]));
   const covers = new Map<number, Block>();
@@ -336,7 +392,7 @@ export function FileView({
                   )}
                 >
                   <div ref={rows}>
-                    {lines.map((tokens, index) => {
+                    {lines.map((segments, index) => {
                       const number = index + 1;
                       const anchored = startsAt.get(number);
                       const block = covers.get(number);
@@ -375,11 +431,34 @@ export function FileView({
                                 : "shrink-0 whitespace-pre",
                             )}
                           >
-                            {tokens.map((token, position) => (
-                              <span key={position} className={TOKEN_CLASS[token.kind]}>
-                                {token.text}
-                              </span>
-                            ))}
+                            {segments.map((part, position) => {
+                              const pieces = part.tokens.map((token, at) => (
+                                <span key={at} className={TOKEN_CLASS[token.kind]}>
+                                  {token.text}
+                                </span>
+                              ));
+                              const target = part.link;
+                              if (!target) return <Fragment key={position}>{pieces}</Fragment>;
+                              return (
+                                <span
+                                  key={position}
+                                  title={`Open ${target.path}`}
+                                  onClick={(event) => {
+                                    if (!event.metaKey && !event.ctrlKey) return;
+                                    event.preventDefault();
+                                    links.open({ path: target.path });
+                                  }}
+                                  // lifted over the textarea only while the key is down, so an
+                                  // ordinary click still lands a caret here
+                                  className={cn(
+                                    linking &&
+                                      "pointer-events-auto relative z-20 cursor-pointer underline decoration-dotted underline-offset-2 hover:decoration-primary hover:decoration-solid",
+                                  )}
+                                >
+                                  {pieces}
+                                </span>
+                              );
+                            })}
                           </span>
                         </div>
                       );

@@ -357,7 +357,11 @@ export function ChatView({ thread }: { thread: Thread }) {
 
   const index = useMemo(() => createFileIndex(workspace), [workspace]);
   const links = useMemo(
-    () => ({ resolve: index.resolve, open: (ref: FileRef) => openFile(ref.path, ref.line) }),
+    () => ({
+      resolve: index.resolve,
+      imports: index.imports,
+      open: (ref: FileRef) => openFile(ref.path, ref.line),
+    }),
     [index, openFile],
   );
 
@@ -484,6 +488,7 @@ export function ChatView({ thread }: { thread: Thread }) {
               onSaved={() => setFsVersion((current) => current + 1)}
               registerSave={registerSave}
               reveal={reveal?.path === path ? reveal : null}
+              links={links}
             />
           </div>
         ))}
