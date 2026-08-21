@@ -192,6 +192,7 @@ export type ServerEvent =
   | { type: "usage"; threadId: string | null; usage: Usage }
   | { type: "resources"; resources: Resources }
   | { type: "thread.updated"; thread: Thread }
+  | { type: "models.changed"; models: ModelOption[] }
   | { type: "pty.data"; threadId: string; terminalId: string; data: string }
   | { type: "pty.snapshot"; threadId: string; terminalId: string; data: string }
   | { type: "pty.terminals"; threadId: string; ids: string[] }

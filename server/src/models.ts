@@ -1,6 +1,8 @@
 import os from "node:os";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 
+import { publish } from "./bus.ts";
+import { settings } from "./db.ts";
 import type { Effort, PermissionMode } from "./types.ts";
 
 export interface ModelOption {
@@ -17,6 +19,27 @@ export const DEFAULT_MODEL = "default";
 const FALLBACK_MODELS: ModelOption[] = [
   { slug: DEFAULT_MODEL, label: "Default", hint: "Whichever model the CLI picks" },
 ];
+
+const MODELS_KEY = "models";
+
+// asking the CLI costs a cold spawn (seconds, a quarter gigabyte), and the answer changes
+// once in a blue moon — so the last read is served straight away and refreshed behind it
+function loadStored(): ModelOption[] | null {
+  const raw = settings.all()[MODELS_KEY];
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as ModelOption[];
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+let known: ModelOption[] = loadStored() ?? FALLBACK_MODELS;
+
+export function currentModels(): ModelOption[] {
+  return known;
+}
 
 async function readCatalog(): Promise<ModelOption[]> {
   const session = query({
@@ -40,13 +63,24 @@ async function readCatalog(): Promise<ModelOption[]> {
 
 let catalog: Promise<ModelOption[]> | null = null;
 
-// the CLI takes seconds to answer, so every caller shares one warm lookup
+// every caller shares one warm lookup; a fresh answer that differs from the stored one is
+// persisted and pushed to every open client
 export function listModels(): Promise<ModelOption[]> {
-  catalog ??= readCatalog().catch((error: Error) => {
-    console.error("[models] could not read the CLI catalog:", error.message);
-    catalog = null;
-    return FALLBACK_MODELS;
-  });
+  catalog ??= readCatalog()
+    .then((models) => {
+      const json = JSON.stringify(models);
+      if (json !== JSON.stringify(known)) {
+        known = models;
+        settings.set(MODELS_KEY, json);
+        publish({ type: "models.changed", models });
+      }
+      return models;
+    })
+    .catch((error: Error) => {
+      console.error("[models] could not read the CLI catalog:", error.message);
+      catalog = null;
+      return known;
+    });
   return catalog;
 }
 

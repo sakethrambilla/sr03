@@ -87,9 +87,7 @@ export const api = {
     title?: string;
   }) => post<Thread>("/api/threads", input),
   thread: (id: string) =>
-    call<{ thread: Thread; messages: Message[]; tasks: ThreadTask[]; git: GitSnapshot & { diff: { files: number; insertions: number; deletions: number } } }>(
-      `/api/threads/${id}`,
-    ),
+    call<{ thread: Thread; messages: Message[]; tasks: ThreadTask[] }>(`/api/threads/${id}`),
   commands: (cwd: string) =>
     call<{ commands: SlashCommand[] }>(`/api/commands?cwd=${encodeURIComponent(cwd)}`),
   usage: (threadId?: string | null) =>

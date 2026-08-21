@@ -195,8 +195,7 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   bootstrap: async () => {
-    await get().restoreAppearance();
-    await get().refreshState();
+    await Promise.all([get().restoreAppearance(), get().refreshState()]);
     const { threads, activeThreadId } = get();
     const next = activeThreadId ?? threads[0]?.id ?? null;
     if (next) await get().openThread(next);
@@ -482,6 +481,10 @@ export const useStore = create<Store>((set, get) => ({
       }
       case "thread.updated": {
         set((state) => ({ threads: upsertThread(state.threads, event.thread) }));
+        return;
+      }
+      case "models.changed": {
+        set({ models: event.models });
         return;
       }
       case "thread.approval": {

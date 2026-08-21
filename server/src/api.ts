@@ -33,7 +33,7 @@ import {
   DEFAULT_MODEL,
   DEFAULT_PERMISSION_MODE,
   EFFORT_LEVELS,
-  listModels,
+  currentModels,
   PERMISSION_MODES,
   isEffort,
   isPermissionMode,
@@ -140,7 +140,7 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
     handler: async () => ({
       projects: projects.list(),
       threads: threads.list(),
-      models: await listModels(),
+      models: currentModels(),
       permissionModes: PERMISSION_MODES,
       effortLevels: EFFORT_LEVELS,
       apps: await listApps(),
@@ -322,15 +322,9 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
   {
     method: "GET",
     pattern: /^\/api\/threads\/([^/]+)$/,
-    handler: async ({ params }) => {
+    handler: ({ params }) => {
       const thread = requireThread(params[0]!);
-      const [info, diff] = await Promise.all([git.repoInfo(thread.cwd), git.diffStat(thread.cwd)]);
-      return {
-        thread,
-        messages: messages.list(thread.id),
-        tasks: claude.threadTasks(thread.id),
-        git: { ...info, diff },
-      };
+      return { thread, messages: messages.list(thread.id), tasks: claude.threadTasks(thread.id) };
     },
   },
   {
