@@ -21,7 +21,8 @@ pnpm dmg         # desktop/dist/sr03-<version>-arm64.dmg (arm64, ad-hoc signed)
 ```
 
 `SR03_PORT` moves the server port (Vite proxies to it); `SR03_DATA_DIR` moves state, default
-`~/.sr03` (SQLite db + worktrees).
+`~/.sr03` (SQLite db + worktrees). `SR03_IDLE_PARK_MS` is how long an idle thread keeps its CLI
+process before it is parked (default ten minutes; the next turn resumes it).
 
 ## Layout
 

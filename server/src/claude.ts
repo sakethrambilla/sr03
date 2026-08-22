@@ -11,6 +11,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 
 import { publish } from "./bus.ts";
+import { IDLE_PARK_MS } from "./config.ts";
 import { messages as messageStore, threads as threadStore, usage as usageStore } from "./db.ts";
 import type {
   Effort,
@@ -69,9 +70,14 @@ interface Session {
   approvals: Map<string, { approval: PendingApproval; resolve: (decision: ApprovalDecision) => void }>;
   alwaysAllow: Set<string>;
   interrupted: boolean;
+  // set when sr03 itself stopped the CLI, so its pump winding down isn't read as a failure
+  stopped: boolean;
 }
 
 const sessions = new Map<string, Session>();
+
+// what the CLI is doing right now, so a thread's status never waits on a sqlite read
+const running = new Set<string>();
 
 function truncate(value: string, limit = 4000): string {
   return value.length > limit ? `${value.slice(0, limit)}\n… (${value.length - limit} more chars)` : value;
@@ -88,14 +94,41 @@ function appendMessage(
 }
 
 function setStatus(threadId: string, status: Thread["status"], sessionId?: string | null): void {
+  if (status === "running") running.add(threadId);
+  else running.delete(threadId);
   threadStore.update(threadId, { status, ...(sessionId !== undefined ? { sessionId } : {}) });
   publish({ type: "thread.status", threadId, status, sessionId });
+  if (status === "idle") schedulePark(threadId);
+  else cancelPark(threadId);
+}
+
+// a CLI that has answered its turn keeps a quarter of a gigabyte resident for as long as the
+// server runs, so an idle one is stopped after a while and the next turn resumes it cold
+const parkTimers = new Map<string, NodeJS.Timeout>();
+
+function cancelPark(threadId: string): void {
+  const timer = parkTimers.get(threadId);
+  if (timer) clearTimeout(timer);
+  parkTimers.delete(threadId);
+}
+
+function schedulePark(threadId: string): void {
+  cancelPark(threadId);
+  if (!sessions.has(threadId)) return;
+  const timer = setTimeout(() => {
+    parkTimers.delete(threadId);
+    const session = sessions.get(threadId);
+    if (!session || session.approvals.size > 0 || running.has(threadId)) return;
+    stopSession(threadId);
+  }, IDLE_PARK_MS);
+  timer.unref();
+  parkTimers.set(threadId, timer);
 }
 
 // the SDK ends a turn on a recoverable API error and then carries on streaming the same one, so
 // model output for an idle thread is proof the turn is still alive
 function ensureRunning(threadId: string): void {
-  if (threadStore.byId(threadId)?.status === "running") return;
+  if (running.has(threadId)) return;
   setStatus(threadId, "running");
 }
 
@@ -558,14 +591,17 @@ async function pump(session: Session): Promise<void> {
       handleMessage(session, message);
     }
   } catch (error) {
-    if (!session.abort.signal.aborted) {
+    if (session.stopped) {
+      // parked or closed on purpose; the thread may already be running a fresh session
+    } else if (!session.abort.signal.aborted) {
       appendMessage(session.threadId, "error", (error as Error).message);
       setStatus(session.threadId, "error");
     } else {
       setStatus(session.threadId, "idle");
     }
   } finally {
-    sessions.delete(session.threadId);
+    // a parked session's pump winds down after its replacement may already be running
+    if (sessions.get(session.threadId) === session) sessions.delete(session.threadId);
   }
 }
 
@@ -579,6 +615,7 @@ function startSession(thread: Thread): Session {
     approvals: new Map(),
     alwaysAllow: new Set(),
     interrupted: false,
+    stopped: false,
     query: undefined as unknown as Query,
   };
   session.query = query({
@@ -608,6 +645,7 @@ function startSession(thread: Thread): Session {
 // dropping messages drops the session with them, and the next turn starts the model cold
 export function truncateThread(thread: Thread, seq: number): void {
   closeSession(thread.id);
+  running.delete(thread.id);
   messageStore.truncate(thread.id, seq);
   usageStore.remove(thread.id);
   const next = threadStore.update(thread.id, { sessionId: null, status: "idle" });
@@ -694,13 +732,20 @@ export async function applyThreadSettings(
     await session.query.applyFlagSettings({ effortLevel: patch.effort }).catch(() => undefined);
 }
 
-export function closeSession(threadId: string): void {
+// stops the CLI but keeps what the panels show — the thread's session id still resumes it
+function stopSession(threadId: string): void {
+  cancelPark(threadId);
   const session = sessions.get(threadId);
   if (!session) return;
+  session.stopped = true;
   session.input.end();
   session.query.close();
   session.abort.abort();
   sessions.delete(threadId);
+}
+
+export function closeSession(threadId: string): void {
+  stopSession(threadId);
   tasksByThread.delete(threadId);
   contextByThread.delete(threadId);
   costByThread.delete(threadId);
