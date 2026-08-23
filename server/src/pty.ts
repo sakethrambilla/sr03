@@ -37,11 +37,25 @@ function ensureSpawnHelper(): void {
 }
 
 const SCROLLBACK_LIMIT = 128 * 1024;
+// a burst of output is sent as one frame per this many milliseconds instead of one per read
+const FLUSH_MS = 8;
 
 interface Session {
   threadId: string;
   term: IPty;
-  buffer: string;
+  // the tail of what the shell printed, kept as the chunks it arrived in so a busy shell
+  // never copies the whole scrollback per read
+  chunks: string[];
+  size: number;
+  pending: string;
+  flush: NodeJS.Timeout | null;
+}
+
+function flush(terminalId: string, session: Session): void {
+  session.flush = null;
+  const data = session.pending;
+  session.pending = "";
+  if (data) publish({ type: "pty.data", threadId: session.threadId, terminalId, data });
 }
 
 // keyed by terminal id; a thread can hold several, and Map keeps them in creation order
@@ -75,14 +89,21 @@ export function createSession(threadId: string, cwd: string, cols: number, rows:
     name: "xterm-256color",
     env: { ...process.env, TERM: "xterm-256color", COLORTERM: "truecolor" },
   });
-  const session: Session = { threadId, term, buffer: "" };
+  const session: Session = { threadId, term, chunks: [], size: 0, pending: "", flush: null };
   sessions.set(terminalId, session);
 
   term.onData((data) => {
-    session.buffer = (session.buffer + data).slice(-SCROLLBACK_LIMIT);
-    publish({ type: "pty.data", threadId, terminalId, data });
+    session.chunks.push(data);
+    session.size += data.length;
+    while (session.size > SCROLLBACK_LIMIT && session.chunks.length > 1) {
+      session.size -= session.chunks.shift()!.length;
+    }
+    session.pending += data;
+    session.flush ??= setTimeout(() => flush(terminalId, session), FLUSH_MS);
   });
   term.onExit(({ exitCode }) => {
+    if (session.flush) clearTimeout(session.flush);
+    flush(terminalId, session);
     sessions.delete(terminalId);
     publish({ type: "pty.exit", threadId, terminalId, code: exitCode });
   });
@@ -95,7 +116,7 @@ export function attach(terminalId: string, cols: number, rows: number): { data: 
   const session = sessions.get(terminalId);
   if (!session) return null;
   resize(terminalId, cols, rows);
-  return { data: session.buffer };
+  return { data: session.chunks.join("").slice(-SCROLLBACK_LIMIT) };
 }
 
 export function write(terminalId: string, data: string): void {

@@ -1,6 +1,7 @@
 import type { ServerEvent } from "./types.ts";
 
-type Listener = (event: ServerEvent) => void;
+// the wire form travels with the event, so one serialisation feeds every socket
+type Listener = (event: ServerEvent, json: string) => void;
 
 const listeners = new Set<Listener>();
 
@@ -10,9 +11,10 @@ export function subscribe(listener: Listener): () => void {
 }
 
 export function publish(event: ServerEvent): void {
+  const json = JSON.stringify(event);
   for (const listener of listeners) {
     try {
-      listener(event);
+      listener(event, json);
     } catch (error) {
       console.error("[bus] listener failed", error);
     }

@@ -37,7 +37,12 @@ function serveStatic(request: http.IncomingMessage, response: http.ServerRespons
     requested !== "/" && candidate.startsWith(WEB_DIST) && fs.existsSync(candidate) && fs.statSync(candidate).isFile()
       ? candidate
       : path.join(WEB_DIST, "index.html");
-  response.writeHead(200, { "content-type": MIME[path.extname(file)] ?? "application/octet-stream" });
+  // vite names every asset by its content hash, so those never go stale; the document does
+  const hashed = requested.startsWith("/assets/") && file === candidate;
+  response.writeHead(200, {
+    "content-type": MIME[path.extname(file)] ?? "application/octet-stream",
+    "cache-control": hashed ? "public, max-age=31536000, immutable" : "no-cache",
+  });
   fs.createReadStream(file).pipe(response);
 }
 
@@ -118,8 +123,8 @@ function handleClientMessage(socket: Connection, raw: string): void {
 
 websockets.on("connection", (socket) => {
   const connection: Connection = { send: (data) => socket.send(data), watchResources: null };
-  const unsubscribe = subscribe((event) => {
-    if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(event));
+  const unsubscribe = subscribe((_event, json) => {
+    if (socket.readyState === socket.OPEN) socket.send(json);
   });
   // a reload or a dropped socket misses whatever was published while it was gone; an approval
   // nobody can answer leaves its turn parked forever, so every new socket is told what is open
