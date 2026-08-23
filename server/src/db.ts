@@ -75,6 +75,9 @@ if (!threadColumns.includes("archived")) {
 db.exec("DELETE FROM projects WHERE id NOT IN (SELECT project_id FROM threads)");
 db.exec("DELETE FROM usage WHERE id <> 'account' AND id NOT IN (SELECT id FROM threads)");
 
+// A crash mid-turn would otherwise leave threads stuck in `running`.
+db.exec("UPDATE threads SET status = 'idle' WHERE status = 'running'");
+
 type Row = Record<string, unknown>;
 
 function toProject(row: Row): Project {
@@ -118,21 +121,54 @@ function toMessage(row: Row): Message {
   };
 }
 
+// every statement is prepared once; some of these run per streamed token
+const sql = {
+  settingsAll: db.prepare("SELECT key, value FROM settings"),
+  settingsSet: db.prepare(
+    "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+  ),
+  usageAll: db.prepare("SELECT id, json, updated_at FROM usage"),
+  usageSet: db.prepare(
+    "INSERT INTO usage (id, json, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at",
+  ),
+  usageRemove: db.prepare("DELETE FROM usage WHERE id = ?"),
+  projectsList: db.prepare("SELECT * FROM projects ORDER BY created_at ASC"),
+  projectById: db.prepare("SELECT * FROM projects WHERE id = ?"),
+  projectByPath: db.prepare("SELECT * FROM projects WHERE path = ?"),
+  projectInsert: db.prepare(
+    "INSERT INTO projects (id, path, name, is_git, created_at) VALUES (?, ?, ?, ?, ?)",
+  ),
+  projectRemove: db.prepare("DELETE FROM projects WHERE id = ?"),
+  threadsList: db.prepare("SELECT * FROM threads ORDER BY updated_at DESC"),
+  threadById: db.prepare("SELECT * FROM threads WHERE id = ?"),
+  threadInsert: db.prepare(
+    `INSERT INTO threads (id, project_id, title, cwd, branch, is_worktree, model, permission_mode, effort, session_id, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ),
+  threadTouch: db.prepare("UPDATE threads SET updated_at = ? WHERE id = ?"),
+  threadRemove: db.prepare("DELETE FROM threads WHERE id = ?"),
+  messagesList: db.prepare("SELECT * FROM messages WHERE thread_id = ? ORDER BY seq ASC"),
+  messageById: db.prepare("SELECT * FROM messages WHERE id = ?"),
+  // the next seq is worked out inside the insert, so appending is one statement
+  messageInsert: db.prepare(
+    `INSERT INTO messages (id, thread_id, seq, role, text, meta, created_at)
+     VALUES (?, ?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM messages WHERE thread_id = ?), ?, ?, ?, ?)
+     RETURNING seq`,
+  ),
+  messageSetMeta: db.prepare("UPDATE messages SET meta = ? WHERE id = ?"),
+  messagesTruncate: db.prepare("DELETE FROM messages WHERE thread_id = ? AND seq >= ?"),
+};
+
 // the desktop shell loads a new port every launch, so the browser's own storage starts empty
 // each time — anything meant to outlive a restart has to live here
 export const settings = {
   all(): Record<string, string> {
-    const rows = db.prepare("SELECT key, value FROM settings").all() as Array<{
-      key: string;
-      value: string;
-    }>;
+    const rows = sql.settingsAll.all() as Array<{ key: string; value: string }>;
     return Object.fromEntries(rows.map((row) => [row.key, row.value]));
   },
 
   set(key: string, value: string): void {
-    db.prepare(
-      "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-    ).run(key, value);
+    sql.settingsSet.run(key, value);
   },
 };
 
@@ -140,59 +176,60 @@ export const settings = {
 // carry a restart: one row per thread for its context and cost, plus 'account' for the plan
 export const usage = {
   all(): Array<{ id: string; json: string; updatedAt: number }> {
-    const rows = db.prepare("SELECT id, json, updated_at FROM usage").all() as Array<{
-      id: string;
-      json: string;
-      updated_at: number;
-    }>;
+    const rows = sql.usageAll.all() as Array<{ id: string; json: string; updated_at: number }>;
     return rows.map((row) => ({ id: row.id, json: row.json, updatedAt: row.updated_at }));
   },
 
   set(id: string, json: string): void {
-    db.prepare(
-      "INSERT INTO usage (id, json, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at",
-    ).run(id, json, Date.now());
+    sql.usageSet.run(id, json, Date.now());
   },
 
   remove(id: string): void {
-    db.prepare("DELETE FROM usage WHERE id = ?").run(id);
+    sql.usageRemove.run(id);
   },
 };
 
 export const projects = {
   list(): Project[] {
-    return db.prepare("SELECT * FROM projects ORDER BY created_at ASC").all().map(toProject);
+    return sql.projectsList.all().map(toProject);
   },
   byId(id: string): Project | null {
-    const row = db.prepare("SELECT * FROM projects WHERE id = ?").get(id);
+    const row = sql.projectById.get(id);
     return row ? toProject(row) : null;
   },
   byPath(path: string): Project | null {
-    const row = db.prepare("SELECT * FROM projects WHERE path = ?").get(path);
+    const row = sql.projectByPath.get(path);
     return row ? toProject(row) : null;
   },
   create(input: { path: string; name: string; isGit: boolean }): Project {
     const project: Project = { id: randomUUID(), createdAt: Date.now(), ...input };
-    db.prepare("INSERT INTO projects (id, path, name, is_git, created_at) VALUES (?, ?, ?, ?, ?)").run(
-      project.id,
-      project.path,
-      project.name,
-      project.isGit ? 1 : 0,
-      project.createdAt,
-    );
+    sql.projectInsert.run(project.id, project.path, project.name, project.isGit ? 1 : 0, project.createdAt);
     return project;
   },
   remove(id: string): void {
-    db.prepare("DELETE FROM projects WHERE id = ?").run(id);
+    sql.projectRemove.run(id);
   },
 };
 
+const THREAD_COLUMNS: Record<string, string> = {
+  title: "title",
+  model: "model",
+  permissionMode: "permission_mode",
+  effort: "effort",
+  sessionId: "session_id",
+  status: "status",
+  archived: "archived",
+};
+
+// one prepared UPDATE per distinct set of columns, since patches come in a handful of shapes
+const threadUpdates = new Map<string, ReturnType<typeof db.prepare>>();
+
 export const threads = {
   list(): Thread[] {
-    return db.prepare("SELECT * FROM threads ORDER BY updated_at DESC").all().map(toThread);
+    return sql.threadsList.all().map(toThread);
   },
   byId(id: string): Thread | null {
-    const row = db.prepare("SELECT * FROM threads WHERE id = ?").get(id);
+    const row = sql.threadById.get(id);
     return row ? toThread(row) : null;
   },
   create(input: {
@@ -215,10 +252,7 @@ export const threads = {
       updatedAt: now,
       ...input,
     };
-    db.prepare(
-      `INSERT INTO threads (id, project_id, title, cwd, branch, is_worktree, model, permission_mode, effort, session_id, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
+    sql.threadInsert.run(
       thread.id,
       thread.projectId,
       thread.title,
@@ -241,45 +275,35 @@ export const threads = {
       Pick<Thread, "title" | "model" | "permissionMode" | "effort" | "sessionId" | "status" | "archived">
     >,
   ): Thread | null {
-    const columns: Record<string, string> = {
-      title: "title",
-      model: "model",
-      permissionMode: "permission_mode",
-      effort: "effort",
-      sessionId: "session_id",
-      status: "status",
-      archived: "archived",
-    };
     const sets: string[] = [];
     const values: Array<string | number | null> = [];
-    for (const [key, column] of Object.entries(columns)) {
+    for (const [key, column] of Object.entries(THREAD_COLUMNS)) {
       const value = patch[key as keyof typeof patch];
       if (value === undefined) continue;
       sets.push(`${column} = ?`);
       values.push(typeof value === "boolean" ? Number(value) : value);
     }
     if (sets.length === 0) return threads.byId(id);
-    db.prepare(`UPDATE threads SET ${sets.join(", ")}, updated_at = ? WHERE id = ?`).run(
-      ...values,
-      Date.now(),
-      id,
-    );
+    const shape = sets.join(", ");
+    let statement = threadUpdates.get(shape);
+    if (!statement) {
+      statement = db.prepare(`UPDATE threads SET ${shape}, updated_at = ? WHERE id = ?`);
+      threadUpdates.set(shape, statement);
+    }
+    statement.run(...values, Date.now(), id);
     return threads.byId(id);
   },
   touch(id: string): void {
-    db.prepare("UPDATE threads SET updated_at = ? WHERE id = ?").run(Date.now(), id);
+    sql.threadTouch.run(Date.now(), id);
   },
   remove(id: string): void {
-    db.prepare("DELETE FROM threads WHERE id = ?").run(id);
+    sql.threadRemove.run(id);
   },
 };
 
 export const messages = {
   list(threadId: string): Message[] {
-    return db
-      .prepare("SELECT * FROM messages WHERE thread_id = ? ORDER BY seq ASC")
-      .all(threadId)
-      .map(toMessage);
+    return sql.messagesList.all(threadId).map(toMessage);
   },
   append(input: {
     threadId: string;
@@ -287,42 +311,31 @@ export const messages = {
     text: string;
     meta?: Record<string, unknown> | null;
   }): Message {
-    const row = db
-      .prepare("SELECT COALESCE(MAX(seq), 0) AS seq FROM messages WHERE thread_id = ?")
-      .get(input.threadId) as { seq: number };
-    const message: Message = {
-      id: randomUUID(),
-      threadId: input.threadId,
-      seq: row.seq + 1,
-      role: input.role,
-      text: input.text,
-      meta: input.meta ?? null,
-      createdAt: Date.now(),
-    };
-    db.prepare(
-      "INSERT INTO messages (id, thread_id, seq, role, text, meta, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    ).run(
-      message.id,
-      message.threadId,
-      message.seq,
-      message.role,
-      message.text,
-      message.meta ? JSON.stringify(message.meta) : null,
-      message.createdAt,
-    );
+    const id = randomUUID();
+    const createdAt = Date.now();
+    const meta = input.meta ?? null;
+    const row = sql.messageInsert.get(
+      id,
+      input.threadId,
+      input.threadId,
+      input.role,
+      input.text,
+      meta ? JSON.stringify(meta) : null,
+      createdAt,
+    ) as { seq: number };
     threads.touch(input.threadId);
-    return message;
+    return { id, threadId: input.threadId, seq: row.seq, role: input.role, text: input.text, meta, createdAt };
   },
   byId(id: string): Message | null {
-    const row = db.prepare("SELECT * FROM messages WHERE id = ?").get(id);
+    const row = sql.messageById.get(id);
     return row ? toMessage(row) : null;
+  },
+  setMeta(id: string, meta: Record<string, unknown> | null): void {
+    sql.messageSetMeta.run(meta ? JSON.stringify(meta) : null, id);
   },
   // seq starts at 1, so 0 drops the whole thread
   truncate(threadId: string, seq: number): void {
-    db.prepare("DELETE FROM messages WHERE thread_id = ? AND seq >= ?").run(threadId, seq);
+    sql.messagesTruncate.run(threadId, seq);
     threads.touch(threadId);
   },
 };
-
-// A crash mid-turn would otherwise leave threads stuck in `running`.
-db.prepare("UPDATE threads SET status = 'idle' WHERE status = 'running'").run();
