@@ -2,7 +2,8 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import type { FileLinks } from "../lib/fileref.ts";
-import type { Message } from "../lib/types.ts";
+import type { Message, ThreadPhase } from "../lib/types.ts";
+import { useStore } from "../store.ts";
 import { Markdown } from "./Markdown.tsx";
 import { ChevronIcon, CopyButton, RewindIcon, cn } from "./ui.tsx";
 import { Button } from "@/components/ui/button";
@@ -38,6 +39,10 @@ function toolInput(message: Message): Record<string, unknown> {
   return input && typeof input === "object" ? (input as Record<string, unknown>) : {};
 }
 
+function toolFailed(message: Message): boolean {
+  return message.meta?.isError === true;
+}
+
 // only a first line fits on a row, and for a path its tail is the informative half
 function toolTarget(input: Record<string, unknown>): string {
   for (const key of TARGET_KEYS) {
@@ -69,6 +74,7 @@ function groupLine(messages: Message[]): string {
 function ToolDetail({ message }: { message: Message }) {
   // description is already the row's label, so it would only be repeated here
   const entries = Object.entries(toolInput(message)).filter(([key]) => key !== "description");
+  const result = typeof message.meta?.result === "string" ? message.meta.result : null;
 
   return (
     <div className="rounded-md bg-background/60 px-2.5 py-2">
@@ -81,6 +87,21 @@ function ToolDetail({ message }: { message: Message }) {
           </pre>
         </div>
       ))}
+      {result !== null ? (
+        <div className="mt-1.5 border-t border-border/60 pt-1.5">
+          <p className={cn("text-[10.5px]", toolFailed(message) ? "text-destructive" : "text-faint")}>
+            {toolFailed(message) ? "error" : "output"}
+          </p>
+          <pre
+            className={cn(
+              "max-h-72 overflow-auto whitespace-pre-wrap font-mono text-[12px] leading-relaxed",
+              toolFailed(message) ? "text-destructive" : "text-muted-foreground",
+            )}
+          >
+            {result || "(empty)"}
+          </pre>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -101,7 +122,12 @@ function ToolRow({
         onClick={onToggle}
         className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left transition hover:bg-accent/60"
       >
-        <span className="min-w-0 flex-1 truncate text-[12.5px] text-muted-foreground">
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate text-[12.5px]",
+            toolFailed(message) ? "text-destructive" : "text-muted-foreground",
+          )}
+        >
           {toolLine(message)}
         </span>
         <ChevronIcon className={cn("size-3 text-faint transition-transform", open ? "" : "-rotate-90")} />
@@ -125,7 +151,10 @@ const ToolGroup = memo(function ToolGroup({ messages }: { messages: Message[] })
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="flex w-fit max-w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-[12.5px] text-muted-foreground transition hover:bg-accent hover:text-foreground"
+        className={cn(
+          "flex w-fit max-w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-[12.5px] transition hover:bg-accent hover:text-foreground",
+          messages.some(toolFailed) ? "text-destructive" : "text-muted-foreground",
+        )}
       >
         <span className="min-w-0 truncate">{single ? toolLine(single) : groupLine(messages)}</span>
         <ChevronIcon
@@ -214,12 +243,42 @@ const Bubble = memo(function Bubble({
             : "text-foreground",
         )}
       />
+      {message.meta?.partial === true ? (
+        <p className="text-[11px] text-faint">Stopped before the reply finished</p>
+      ) : null}
       <MessageActions>
         <CopyButton text={message.text} />
       </MessageActions>
     </div>
   );
 });
+
+// the model spends whole seconds thinking or running a tool with nothing on screen, so the
+// wait is named — and timed once it stops being short
+function Activity({ phase }: { phase: ThreadPhase | null }) {
+  const label =
+    phase?.kind === "starting"
+      ? "Starting session…"
+      : phase?.kind === "thinking"
+        ? "Thinking…"
+        : phase?.kind === "tool"
+          ? `Running ${phase.name}…`
+          : "Working…";
+  const [seconds, setSeconds] = useState(0);
+
+  useEffect(() => {
+    setSeconds(0);
+    const timer = window.setInterval(() => setSeconds((current) => current + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [label]);
+
+  return (
+    <p className="text-[12px] text-faint">
+      {label}
+      {seconds >= 3 ? <span className="ml-1.5 tabular-nums">{seconds}s</span> : null}
+    </p>
+  );
+}
 
 type Row = { id: string; message: Message } | { id: string; tools: Message[] };
 
@@ -255,6 +314,7 @@ export function Timeline({
   onRun: (command: string) => void;
   onRewind: (message: Message) => void;
 }) {
+  const phase = useStore((state) => state.phaseByThread[threadId] ?? null);
   const scroller = useRef<HTMLDivElement>(null);
   const opened = useRef<string | null>(null);
   const rows = useMemo(() => toRows(messages), [messages]);
@@ -302,7 +362,7 @@ export function Timeline({
             className="text-[14px] leading-[1.65] text-foreground"
           />
         ) : running ? (
-          <p className="text-[12px] text-faint">Working…</p>
+          <Activity phase={phase} />
         ) : null}
       </div>
     </div>

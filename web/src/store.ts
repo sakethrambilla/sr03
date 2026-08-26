@@ -13,6 +13,7 @@ import type {
   ServerEvent,
   SlashCommand,
   Thread,
+  ThreadPhase,
   ThreadTask,
   Usage,
 } from "./lib/types.ts";
@@ -38,6 +39,8 @@ interface Store extends AppState {
   streamByThread: Record<string, string>;
   approvalsByThread: Record<string, PendingApproval[]>;
   tasksByThread: Record<string, ThreadTask[]>;
+  // what a running turn is waiting on, for the label under the transcript
+  phaseByThread: Record<string, ThreadPhase | null>;
   // slash commands belong to the folder, not the session — every thread in one shares a list
   commandsByCwd: Record<string, SlashCommand[]>;
   // every file in the folder, so a path a message mentions can be recognised as one
@@ -172,6 +175,7 @@ export const useStore = create<Store>((set, get) => ({
   streamByThread: {},
   approvalsByThread: {},
   tasksByThread: {},
+  phaseByThread: {},
   commandsByCwd: {},
   filesByCwd: {},
   usage: null,
@@ -428,6 +432,21 @@ export const useStore = create<Store>((set, get) => ({
           },
           streamByThread: { ...state.streamByThread, [event.threadId]: "" },
         }));
+        return;
+      }
+      case "thread.message.updated": {
+        set((state) => ({
+          messagesByThread: {
+            ...state.messagesByThread,
+            [event.threadId]: (state.messagesByThread[event.threadId] ?? []).map((message) =>
+              message.id === event.message.id ? event.message : message,
+            ),
+          },
+        }));
+        return;
+      }
+      case "thread.phase": {
+        set((state) => ({ phaseByThread: { ...state.phaseByThread, [event.threadId]: event.phase } }));
         return;
       }
       case "thread.truncated": {

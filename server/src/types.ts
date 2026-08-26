@@ -41,6 +41,9 @@ export interface Message {
   createdAt: number;
 }
 
+// what the CLI is busy with between visible output, for the turn's waiting label
+export type ThreadPhase = { kind: "starting" } | { kind: "thinking" } | { kind: "tool"; name: string };
+
 export interface PendingApproval {
   id: string;
   threadId: string;
@@ -109,6 +112,8 @@ export interface Resources {
 export type ServerEvent =
   | { type: "thread.status"; threadId: string; status: ThreadStatus; sessionId?: string | null }
   | { type: "thread.message"; threadId: string; message: Message }
+  | { type: "thread.message.updated"; threadId: string; message: Message }
+  | { type: "thread.phase"; threadId: string; phase: ThreadPhase | null }
   | { type: "thread.truncated"; threadId: string; seq: number }
   | { type: "thread.delta"; threadId: string; text: string }
   | { type: "thread.delta.end"; threadId: string }

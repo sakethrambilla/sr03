@@ -15,10 +15,12 @@ import { IDLE_PARK_MS } from "./config.ts";
 import { messages as messageStore, threads as threadStore, usage as usageStore } from "./db.ts";
 import type {
   Effort,
+  Message,
   PendingApproval,
   PermissionMode,
   SlashCommand,
   Thread,
+  ThreadPhase,
   ThreadTask,
   Usage,
   UsageWindow,
@@ -72,6 +74,10 @@ interface Session {
   interrupted: boolean;
   // set when sr03 itself stopped the CLI, so its pump winding down isn't read as a failure
   stopped: boolean;
+  // text streamed since the last assistant message landed, so a stopped turn keeps what it said
+  partial: string;
+  // tool_use id -> transcript message id, so the result can be attached when it arrives
+  toolMessages: Map<string, string>;
 }
 
 const sessions = new Map<string, Session>();
@@ -88,9 +94,30 @@ function appendMessage(
   role: "user" | "assistant" | "tool" | "system" | "error",
   text: string,
   meta?: Record<string, unknown>,
-): void {
+): Message {
   const message = messageStore.append({ threadId, role, text, meta });
   publish({ type: "thread.message", threadId, message });
+  return message;
+}
+
+function setPhase(threadId: string, phase: ThreadPhase | null): void {
+  publish({ type: "thread.phase", threadId, phase });
+}
+
+// the tool row was published when the call started; its output lands on the same row
+function attachResult(threadId: string, messageId: string, result: string, isError: boolean): void {
+  const current = messageStore.byId(messageId);
+  if (!current) return;
+  const meta = { ...(current.meta ?? {}), result, isError };
+  messageStore.setMeta(messageId, meta);
+  publish({ type: "thread.message.updated", threadId, message: { ...current, meta } });
+}
+
+// whatever the model had said before a turn was cut short is worth keeping
+function keepPartial(session: Session): void {
+  const partial = session.partial.trim();
+  session.partial = "";
+  if (partial) appendMessage(session.threadId, "assistant", partial, { partial: true });
 }
 
 function setStatus(threadId: string, status: Thread["status"], sessionId?: string | null): void {
@@ -525,6 +552,7 @@ function handleMessage(session: Session, message: SDKMessage): void {
       if (message.subtype === "init") {
         for (const name of message.terminal_slash_commands ?? []) terminalOnly.add(name);
         setStatus(threadId, "running", message.session_id);
+        setPhase(threadId, null);
         return;
       }
       if (message.subtype === "commands_changed") {
@@ -541,23 +569,49 @@ function handleMessage(session: Session, message: SDKMessage): void {
     }
     case "stream_event": {
       const event = message.event;
-      if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+      if (event.type === "content_block_start") {
+        const block = event.content_block;
+        if (block.type === "thinking") setPhase(threadId, { kind: "thinking" });
+        else if (block.type === "tool_use") setPhase(threadId, { kind: "tool", name: block.name });
+        else if (block.type === "text") setPhase(threadId, null);
+      } else if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+        session.partial += event.delta.text;
         publish({ type: "thread.delta", threadId, text: event.delta.text });
       }
       return;
     }
     case "assistant": {
       publish({ type: "thread.delta.end", threadId });
+      session.partial = "";
       for (const block of message.message.content) {
         if (block.type === "text" && block.text.trim().length > 0) {
           appendMessage(threadId, "assistant", block.text);
         } else if (block.type === "tool_use") {
-          appendMessage(threadId, "tool", "", {
+          const saved = appendMessage(threadId, "tool", "", {
             toolName: block.name,
             toolUseId: block.id,
             input: block.input,
           });
+          session.toolMessages.set(block.id, saved.id);
         }
+      }
+      return;
+    }
+    case "user": {
+      const content = message.message.content;
+      if (typeof content === "string") return;
+      for (const block of content) {
+        if (block.type !== "tool_result") continue;
+        const messageId = session.toolMessages.get(block.tool_use_id);
+        if (!messageId) continue;
+        session.toolMessages.delete(block.tool_use_id);
+        const text =
+          typeof block.content === "string"
+            ? block.content
+            : (block.content ?? [])
+                .map((part) => (part.type === "text" ? part.text : `[${part.type}]`))
+                .join("\n");
+        attachResult(threadId, messageId, truncate(text), block.is_error === true);
       }
       return;
     }
@@ -570,13 +624,17 @@ function handleMessage(session: Session, message: SDKMessage): void {
       void readUsage(threadId);
       if (session.interrupted) {
         session.interrupted = false;
+        keepPartial(session);
         appendMessage(threadId, "system", "Stopped by user");
       } else if (message.subtype !== "success") {
+        keepPartial(session);
         appendMessage(threadId, "error", `Turn ended: ${message.subtype}`, {
           error: message.subtype,
         });
       }
+      session.partial = "";
       publish({ type: "thread.delta.end", threadId });
+      setPhase(threadId, null);
       setStatus(threadId, "idle");
       return;
     }
@@ -594,9 +652,13 @@ async function pump(session: Session): Promise<void> {
     if (session.stopped) {
       // parked or closed on purpose; the thread may already be running a fresh session
     } else if (!session.abort.signal.aborted) {
+      keepPartial(session);
       appendMessage(session.threadId, "error", (error as Error).message);
+      setPhase(session.threadId, null);
       setStatus(session.threadId, "error");
     } else {
+      keepPartial(session);
+      setPhase(session.threadId, null);
       setStatus(session.threadId, "idle");
     }
   } finally {
@@ -616,6 +678,8 @@ function startSession(thread: Thread): Session {
     alwaysAllow: new Set(),
     interrupted: false,
     stopped: false,
+    partial: "",
+    toolMessages: new Map(),
     query: undefined as unknown as Query,
   };
   session.query = query({
@@ -650,6 +714,7 @@ export function truncateThread(thread: Thread, seq: number): void {
   usageStore.remove(thread.id);
   const next = threadStore.update(thread.id, { sessionId: null, status: "idle" });
   publish({ type: "thread.truncated", threadId: thread.id, seq });
+  setPhase(thread.id, null);
   if (next) publish({ type: "thread.updated", thread: next });
   publish({ type: "usage", threadId: thread.id, usage: snapshot(thread.id) });
 }
@@ -666,9 +731,12 @@ export function sendTurn(thread: Thread, text: string): void {
     truncateThread(thread, 0);
     return;
   }
+  const cold = !sessions.has(thread.id);
   const session = sessions.get(thread.id) ?? startSession(thread);
   appendMessage(thread.id, "user", text);
   setStatus(thread.id, "running");
+  // the CLI takes seconds to come up, which reads as a stall unless it is named
+  if (cold) setPhase(thread.id, { kind: "starting" });
   session.input.push({
     type: "user",
     session_id: thread.sessionId ?? "",
@@ -702,6 +770,7 @@ export async function interrupt(threadId: string): Promise<void> {
   } catch {
     session.abort.abort();
   }
+  setPhase(threadId, null);
   setStatus(threadId, "idle");
 }
 
