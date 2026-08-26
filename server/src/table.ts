@@ -196,7 +196,17 @@ function sniffDelimiter(head: Buffer, rel: string): number {
   return best;
 }
 
-interface CsvIndex {
+// every cache below is bounded by count, and by age: a workbook nobody has paged for a while
+// is a lot of memory to keep for a tab that was probably closed
+const CACHE_TTL = 10 * 60_000;
+
+interface Aged {
+  usedAt: number;
+}
+
+const caches: Array<Map<string, Aged>> = [];
+
+interface CsvIndex extends Aged {
   mtimeMs: number;
   size: number;
   delimiter: number;
@@ -206,11 +216,30 @@ interface CsvIndex {
 }
 
 const indexes = new Map<string, CsvIndex>();
+caches.push(indexes);
 
-function remember<T>(cache: Map<string, T>, key: string, value: T, keep: number): T {
+function sweep(): void {
+  const cutoff = Date.now() - CACHE_TTL;
+  for (const cache of caches) {
+    for (const [key, entry] of cache) if (entry.usedAt < cutoff) cache.delete(key);
+  }
+}
+
+function fresh<T extends Aged & { mtimeMs: number; size: number }>(
+  cached: T | undefined,
+  stats: { mtimeMs: number; size: number },
+): T | null {
+  if (!cached || cached.mtimeMs !== stats.mtimeMs || cached.size !== stats.size) return null;
+  cached.usedAt = Date.now();
+  return cached;
+}
+
+function remember<T extends Aged>(cache: Map<string, T>, key: string, value: T, keep: number): T {
+  value.usedAt = Date.now();
   cache.delete(key);
   cache.set(key, value);
   while (cache.size > keep) cache.delete(cache.keys().next().value!);
+  sweep();
   return value;
 }
 
@@ -218,8 +247,8 @@ function remember<T>(cache: Map<string, T>, key: string, value: T, keep: number)
 // paging into the middle of a large file doesn't rescan what came before it
 async function indexCsv(target: string, rel: string): Promise<CsvIndex> {
   const stats = await fs.stat(target);
-  const cached = indexes.get(target);
-  if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) return cached;
+  const cached = fresh(indexes.get(target), stats);
+  if (cached) return cached;
 
   const handle = await fs.open(target, "r");
   try {
@@ -260,7 +289,12 @@ async function indexCsv(target: string, rel: string): Promise<CsvIndex> {
       });
     }
 
-    return remember(indexes, target, { mtimeMs: stats.mtimeMs, size: stats.size, delimiter, total, offsets, truncated }, 6);
+    return remember(
+      indexes,
+      target,
+      { usedAt: 0, mtimeMs: stats.mtimeMs, size: stats.size, delimiter, total, offsets, truncated },
+      6,
+    );
   } finally {
     await handle.close();
   }
@@ -486,7 +520,7 @@ function queryKey(query: TableQuery, sheet: number, also?: number): string {
   return parts.join("\u0003");
 }
 
-interface MatchList {
+interface MatchList extends Aged {
   mtimeMs: number;
   size: number;
   numbers: number[];
@@ -495,6 +529,7 @@ interface MatchList {
 }
 
 const matched = new Map<string, MatchList>();
+caches.push(matched);
 
 // the shape every full-file scan shares — the visitor stops it by returning false, and the
 // return says whether the whole file was seen or a cap cut it short
@@ -591,10 +626,10 @@ async function matchesOf(
   prepared: Prepared,
 ): Promise<MatchList> {
   const key = `${target}\u0004${queryKey(query, sheet)}`;
-  const cached = matched.get(key);
-  if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) return cached;
+  const cached = fresh(matched.get(key), stats);
+  if (cached) return cached;
   const found = await scanCsv(target, stats.size, index, prepared);
-  return remember(matched, key, { ...found, mtimeMs: stats.mtimeMs, size: stats.size }, 4);
+  return remember(matched, key, { ...found, usedAt: 0, mtimeMs: stats.mtimeMs, size: stats.size }, 4);
 }
 
 // a filtered page is rows scattered through the file, so each is read from its recorded
@@ -991,7 +1026,7 @@ async function readSheet(
   return { rows, truncated };
 }
 
-interface Book {
+interface Book extends Aged {
   mtimeMs: number;
   size: number;
   names: string[];
@@ -1003,11 +1038,12 @@ interface Book {
 }
 
 const books = new Map<string, Book>();
+caches.push(books);
 
 async function openBook(target: string): Promise<Book> {
   const stats = await fs.stat(target);
-  const cached = books.get(target);
-  if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) return cached;
+  const cached = fresh(books.get(target), stats);
+  if (cached) return cached;
 
   const zip = await readZipDirectory(target, stats.size);
   const workbook = await entryText(target, zip.get("xl/workbook.xml"), SMALL_ENTRY_BYTES);
@@ -1036,6 +1072,7 @@ async function openBook(target: string): Promise<Book> {
   if (entries.length === 0) throw new Error("That spreadsheet has no readable sheets");
 
   const book: Book = {
+    usedAt: 0,
     mtimeMs: stats.mtimeMs,
     size: stats.size,
     names,
@@ -1140,13 +1177,14 @@ function collate(counts: Map<string, number>): TableValues["values"] {
   return values;
 }
 
-interface ValueList {
+interface ValueList extends Aged {
   mtimeMs: number;
   size: number;
   list: TableValues;
 }
 
 const tallied = new Map<string, ValueList>();
+caches.push(tallied);
 
 // like a spreadsheet's own filter, the checklist offers what the other columns still allow
 export async function readValues(
@@ -1160,8 +1198,8 @@ export async function readValues(
   const target = safeJoin(root, rel);
   const stats = await fs.stat(target);
   const key = `${target}\u0004${queryKey(options.query, options.sheet, options.column)}`;
-  const cached = tallied.get(key);
-  if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) return cached.list;
+  const cached = fresh(tallied.get(key), stats);
+  if (cached) return cached.list;
 
   const prepared = prepare(options.query, options.column);
   const counts = new Map<string, number>();
@@ -1189,6 +1227,6 @@ export async function readValues(
   }
 
   const list = { column: options.column, values: collate(counts), truncated };
-  remember(tallied, key, { mtimeMs: stats.mtimeMs, size: stats.size, list }, 12);
+  remember(tallied, key, { usedAt: 0, mtimeMs: stats.mtimeMs, size: stats.size, list }, 12);
   return list;
 }

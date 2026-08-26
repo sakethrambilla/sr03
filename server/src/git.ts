@@ -239,6 +239,22 @@ async function numstat(cwd: string, ref: string) {
 }
 
 const UNTRACKED_SCAN_LIMIT = 2 * 1024 * 1024;
+// past this many untracked files the counts stop mattering and the reads start to
+const UNTRACKED_COUNT_LIMIT = 200;
+const READ_CONCURRENCY = 8;
+
+async function mapLimit<T, R>(items: T[], limit: number, work: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await work(items[index]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
 
 async function countLines(target: string) {
   const stats = await fs.stat(target).catch(() => null);
@@ -274,14 +290,17 @@ export async function changedFiles(cwd: string): Promise<ChangedFile[]> {
     };
   });
 
-  for (const file of untracked) {
+  const counted = await mapLimit(untracked.slice(0, UNTRACKED_COUNT_LIMIT), READ_CONCURRENCY, (file) =>
+    countLines(path.join(cwd, file)),
+  );
+  untracked.forEach((file, index) => {
     files.push({
       path: file,
       status: "untracked",
       staged: false,
-      ...(await countLines(path.join(cwd, file))),
+      ...(counted[index] ?? { insertions: 0, deletions: 0, binary: false }),
     });
-  }
+  });
 
   return files.sort((a, b) => a.path.localeCompare(b.path));
 }
