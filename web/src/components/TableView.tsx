@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api.ts";
-import type { Message, TableFilter, TableValues, Thread } from "../lib/types.ts";
+import type { TableFilter, TableValues, Thread } from "../lib/types.ts";
 import { useStore } from "../store.ts";
 import { CloseIcon, FilterIcon, SearchIcon, cn, usePersistedState } from "./ui.tsx";
 import { Button } from "@/components/ui/button";
@@ -24,7 +24,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-const NO_MESSAGES: Message[] = [];
 const NO_FILTERS: TableFilter[] = [];
 const PAGE = 500;
 // the DOM is the limit here rather than the file — past this the footer's jump takes over
@@ -219,9 +218,7 @@ function ColumnFilter({
 }
 
 export function TableView({ thread, path }: { thread: Thread; path: string }) {
-  const messageCount = useStore(
-    (state) => (state.messagesByThread[thread.id] ?? NO_MESSAGES).length,
-  );
+  const fsTick = useStore((state) => state.fsVersionByThread[thread.id] ?? 0);
   const [sheet, setSheet] = useState(0);
   const [header, setHeader] = usePersistedState<boolean>("table-header", true);
   const [typed, setTyped] = useState("");
@@ -309,7 +306,7 @@ export function TableView({ thread, path }: { thread: Thread; path: string }) {
     }
     run.current += 1;
     void load(base, true);
-  }, [messageCount, thread.status]);
+  }, [fsTick]);
 
   const loaded = base + rows.length;
   const more = meta !== null && loaded < meta.total && rows.length < LOADED;

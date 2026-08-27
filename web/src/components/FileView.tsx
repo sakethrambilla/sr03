@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api.ts";
 import type { FileLinks, LineLink } from "../lib/fileref.ts";
-import type { ChangedFile, Message, Thread } from "../lib/types.ts";
+import type { ChangedFile, Thread } from "../lib/types.ts";
 import { useStore } from "../store.ts";
 import { Markdown } from "./Markdown.tsx";
 import { TableView } from "./TableView.tsx";
@@ -16,8 +16,6 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { TOKEN_CLASS, tokenize, type Token } from "../lib/highlight.ts";
-
-const NO_MESSAGES: Message[] = [];
 
 interface Block {
   id: number;
@@ -189,7 +187,7 @@ export function FileView({
   reveal: { line: number; key: number } | null;
   links: FileLinks;
 }) {
-  const messageCount = useStore((state) => (state.messagesByThread[thread.id] ?? NO_MESSAGES).length);
+  const fsTick = useStore((state) => state.fsVersionByThread[thread.id] ?? 0);
   const [file, setFile] = useState<{
     text: string;
     binary: boolean;
@@ -232,7 +230,7 @@ export function FileView({
     return () => {
       cancelled = true;
     };
-  }, [thread.id, path, thread.status, messageCount]);
+  }, [thread.id, path, fsTick]);
 
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
 

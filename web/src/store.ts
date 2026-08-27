@@ -41,6 +41,9 @@ interface Store extends AppState {
   tasksByThread: Record<string, ThreadTask[]>;
   // what a running turn is waiting on, for the label under the transcript
   phaseByThread: Record<string, ThreadPhase | null>;
+  // bumped a moment after a turn writes to disk or ends, so the panels showing the folder
+  // re-read once per burst of tool calls instead of once per call
+  fsVersionByThread: Record<string, number>;
   // slash commands belong to the folder, not the session — every thread in one shares a list
   commandsByCwd: Record<string, SlashCommand[]>;
   // every file in the folder, so a path a message mentions can be recognised as one
@@ -152,6 +155,32 @@ function drain(set: (partial: (state: Store) => Partial<Store>) => void): void {
   });
 }
 
+// only these tools change the folder; a Read or a Grep never earns a re-read
+const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash"]);
+const FS_SETTLE_MS = 750;
+const fsTimers = new Map<string, number>();
+
+function writes(message: Message): boolean {
+  return message.role === "tool" && WRITE_TOOLS.has(String(message.meta?.toolName ?? ""));
+}
+
+function bumpFs(threadId: string, set: (partial: (state: Store) => Partial<Store>) => void): void {
+  const pending = fsTimers.get(threadId);
+  if (pending) window.clearTimeout(pending);
+  fsTimers.set(
+    threadId,
+    window.setTimeout(() => {
+      fsTimers.delete(threadId);
+      set((state) => ({
+        fsVersionByThread: {
+          ...state.fsVersionByThread,
+          [threadId]: (state.fsVersionByThread[threadId] ?? 0) + 1,
+        },
+      }));
+    }, FS_SETTLE_MS),
+  );
+}
+
 function upsertThread(threads: Thread[], thread: Thread): Thread[] {
   const next = threads.filter((item) => item.id !== thread.id);
   next.unshift(thread);
@@ -176,6 +205,7 @@ export const useStore = create<Store>((set, get) => ({
   approvalsByThread: {},
   tasksByThread: {},
   phaseByThread: {},
+  fsVersionByThread: {},
   commandsByCwd: {},
   filesByCwd: {},
   usage: null,
@@ -435,6 +465,7 @@ export const useStore = create<Store>((set, get) => ({
         return;
       }
       case "thread.message.updated": {
+        if (writes(event.message)) bumpFs(event.threadId, set);
         set((state) => ({
           messagesByThread: {
             ...state.messagesByThread,
@@ -477,6 +508,7 @@ export const useStore = create<Store>((set, get) => ({
         return;
       }
       case "thread.status": {
+        if (event.status !== "running") bumpFs(event.threadId, set);
         set((state) => ({
           // a turn you watched finish needs no marker; one you missed does
           finished:

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 
 import { api } from "../lib/api.ts";
-import type { ChangedFile, Message, Thread, TreeEntry } from "../lib/types.ts";
+import type { ChangedFile, Thread, TreeEntry } from "../lib/types.ts";
 import { useStore } from "../store.ts";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,8 +39,6 @@ import {
   WorktreeIcon,
   cn,
 } from "./ui.tsx";
-
-const NO_MESSAGES: Message[] = [];
 
 type Status = ChangedFile["status"];
 
@@ -417,7 +415,7 @@ export function FileTree({
   refreshToken: number;
   onClose: () => void;
 }) {
-  const messageCount = useStore((state) => (state.messagesByThread[thread.id] ?? NO_MESSAGES).length);
+  const fsTick = useStore((state) => state.fsVersionByThread[thread.id] ?? 0);
   const canReveal = useStore((state) => state.apps.some((app) => app.id === "finder"));
   const [dirs, setDirs] = useState<Record<string, TreeEntry[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set([""]));
@@ -438,7 +436,8 @@ export function FileTree({
     [thread.id],
   );
 
-  // reloading every open directory keeps files Claude just created from going missing
+  // reloading every open directory keeps files Claude just created from going missing; the
+  // trigger settles a moment after the last write, so a busy turn costs one pass, not fifty
   useEffect(() => {
     let cancelled = false;
     const open = [...expanded];
@@ -465,7 +464,7 @@ export function FileTree({
     return () => {
       cancelled = true;
     };
-  }, [thread.id, thread.status, messageCount, tick, refreshToken]);
+  }, [thread.id, fsTick, tick, refreshToken]);
 
   // opening straight onto the changed files is the whole point of the panel in a session
   useEffect(() => {

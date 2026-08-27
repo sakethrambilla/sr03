@@ -254,6 +254,7 @@ export function ChatView({ thread }: { thread: Thread }) {
   const tasks = useStore((state) => state.tasksByThread[thread.id] ?? NO_TASKS);
   const workspace = useStore((state) => state.filesByCwd[thread.cwd] ?? NO_FILES);
   const loadFiles = useStore((state) => state.loadFiles);
+  const fsTick = useStore((state) => state.fsVersionByThread[thread.id] ?? 0);
   const [treeOpen, setTreeOpen] = usePersistedState<boolean>("file-tree", false);
   const [terminalOpen, setTerminalOpen] = usePersistedState<boolean>("terminal", false);
   const [agentsOpen, setAgentsOpen] = usePersistedState<boolean>("agents", false);
@@ -330,10 +331,10 @@ export function ChatView({ thread }: { thread: Thread }) {
     if (unsaved[0]) setPendingClose(unsaved[0]);
   };
 
-  // a finished turn may have added or renamed files, so the index is re-read with each one
+  // a turn that wrote to disk may have added or renamed files, so the index follows it
   useEffect(() => {
     void loadFiles(thread.id, thread.cwd);
-  }, [loadFiles, thread.id, thread.cwd, thread.status, fsVersion]);
+  }, [loadFiles, thread.id, thread.cwd, fsTick, fsVersion]);
 
   // the panel owns the terminals, so it is left to decide which one a command lands in
   const runCommand = useCallback(
