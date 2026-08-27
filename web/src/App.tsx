@@ -29,16 +29,22 @@ export function App() {
     return connectEvents({ onEvent: applyEvent, onConnected: setConnected });
   }, [applyEvent, bootstrap, setConnected]);
 
-  // the sidebar lives in the store, so its shortcut works even with nothing open
+  // the sidebar and the draft live in the store, so their shortcuts work even with nothing open
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || !event.shiftKey || event.key.toLowerCase() !== "b") return;
-      event.preventDefault();
-      toggleSidebar();
+      if (!(event.metaKey || event.ctrlKey) || !event.shiftKey) return;
+      const key = event.key.toLowerCase();
+      if (key === "b") {
+        event.preventDefault();
+        toggleSidebar();
+      } else if (key === "n") {
+        event.preventDefault();
+        startDraft();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [toggleSidebar]);
+  }, [toggleSidebar, startDraft]);
 
   // the store carries one error at a time; sonner decides how long it stays on screen
   useEffect(() => {

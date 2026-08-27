@@ -77,6 +77,8 @@ REST for commands, WebSocket (`/ws`) for everything the server pushes back. Wire
 - Radii: `rounded-md` for anything interactive, `rounded-lg` for panels and bubbles, `rounded-full`
   only for actual dots. Nothing else.
 - Comments only where the code can't speak for itself.
+- Every keyboard shortcut is listed in `SHORTCUTS.md`. Add, change or remove its row in the same
+  change as the code.
 
 ## Claude session gotchas
 

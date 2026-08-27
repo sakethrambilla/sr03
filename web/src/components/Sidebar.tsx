@@ -385,14 +385,21 @@ export function Sidebar() {
       </header>
 
       <div className="px-2 pt-2 pb-1">
-        <Button
-          variant="secondary"
-          onClick={() => startDraft()}
-          className={cn("h-8 w-full justify-start gap-2 font-normal", draft && "bg-accent")}
-        >
-          <PlusIcon />
-          New
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="secondary"
+              onClick={() => startDraft()}
+              className={cn("h-8 w-full justify-start gap-2 font-normal", draft && "bg-accent")}
+            >
+              <PlusIcon />
+              New
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            New session <span className="text-faint">⌘⇧N</span>
+          </TooltipContent>
+        </Tooltip>
       </div>
 
       <div className="flex items-center gap-0.5 px-2 pb-1">
