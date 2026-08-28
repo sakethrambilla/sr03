@@ -2,7 +2,7 @@
 // machine's own Node, exactly as `pnpm start` would. Electron's bundled Node can't host it
 // (type stripping, node:sqlite and node-pty's ABI all want the real thing).
 const { app, BrowserWindow, dialog, shell } = require("electron");
-const { execFileSync, spawn } = require("node:child_process");
+const { execFile, execFileSync, spawn } = require("node:child_process");
 const fs = require("node:fs");
 const http = require("node:http");
 const net = require("node:net");
@@ -15,21 +15,50 @@ const ENTRY = path.join(PAYLOAD, "server", "src", "index.ts");
 
 let server = null;
 
+const SHELL_BIN = process.env.SHELL || "/bin/zsh";
+const PATH_ARGS = ["-ilc", "printf %s \"$PATH\""];
+
 // a GUI launch inherits a bare /usr/bin:/bin PATH, so nvm/homebrew installs are invisible.
 // the login shell is the only place the user's real PATH exists — the server needs it for
 // node itself, and the Claude CLI it spawns needs it for git
 function loginPath() {
   try {
-    const shellBin = process.env.SHELL || "/bin/zsh";
-    const found = execFileSync(shellBin, ["-ilc", "printf %s \"$PATH\""], {
-      encoding: "utf8",
-      timeout: 8000,
-    }).trim();
+    const found = execFileSync(SHELL_BIN, PATH_ARGS, { encoding: "utf8", timeout: 8000 }).trim();
     return found || process.env.PATH || "";
   } catch {
     return process.env.PATH || "";
   }
 }
+
+// an interactive shell takes up to a couple of seconds to start under a heavy rc file, so the
+// answer is kept for the next launch and refreshed once the window is already up
+const PATH_CACHE = path.join(app.getPath("userData"), "login-path");
+
+function cachedLoginPath() {
+  try {
+    return fs.readFileSync(PATH_CACHE, "utf8").trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function refreshLoginPath() {
+  execFile(SHELL_BIN, PATH_ARGS, { encoding: "utf8", timeout: 8000 }, (error, stdout) => {
+    const found = (stdout || "").trim();
+    if (error || !found) return;
+    try {
+      fs.mkdirSync(path.dirname(PATH_CACHE), { recursive: true });
+      fs.writeFileSync(PATH_CACHE, found);
+    } catch {}
+  });
+}
+
+// what the window shows for the second or two before the server answers
+const SPLASH =
+  "data:text/html;charset=utf-8," +
+  encodeURIComponent(
+    '<!doctype html><html style="background:#1f1e1c"><body style="margin:0;height:100vh;display:grid;place-items:center;font:13px -apple-system,system-ui,sans-serif;color:#7d7b76">Starting sr03…</body></html>',
+  );
 
 function findNode(searchPath) {
   for (const dir of searchPath.split(":")) {
@@ -74,8 +103,32 @@ function fail(message) {
   app.exit(1);
 }
 
+function openWindow() {
+  const window = new BrowserWindow({
+    width: 1440,
+    height: 900,
+    minWidth: 720,
+    minHeight: 480,
+    backgroundColor: "#1f1e1c",
+    // the app's own 60px header stands in for the title bar, so the traffic lights are placed on
+    // its centre line rather than left at the inset default, which sits ~10px higher
+    titleBarStyle: "hidden",
+    trafficLightPosition: { x: 20, y: 22 },
+    title: "sr03",
+  });
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  void window.loadURL(SPLASH);
+  return window;
+}
+
 async function start() {
-  const searchPath = loginPath();
+  // a stale cache (node moved) falls back to asking the shell, which then rewrites it
+  let searchPath = cachedLoginPath();
+  if (!searchPath || !findNode(searchPath)) searchPath = loginPath();
+  refreshLoginPath();
   const nodeBin = findNode(searchPath);
   if (!nodeBin) {
     fail(`No node found on PATH.\n\nsr03 needs Node 22.16 or newer.\n\nSearched:\n${searchPath}`);
@@ -86,6 +139,8 @@ async function start() {
     return;
   }
 
+  // the window goes up before the server does, so the click has something to show for itself
+  const window = openWindow();
   const port = await freePort();
   let log = "";
 
@@ -113,23 +168,7 @@ async function start() {
     return;
   }
 
-  const window = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: 720,
-    minHeight: 480,
-    backgroundColor: "#1f1e1c",
-    // the app's own 60px header stands in for the title bar, so the traffic lights are placed on
-    // its centre line rather than left at the inset default, which sits ~10px higher
-    titleBarStyle: "hidden",
-    trafficLightPosition: { x: 20, y: 22 },
-    title: "sr03",
-  });
-  window.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
-    return { action: "deny" };
-  });
-  void window.loadURL(`http://127.0.0.1:${port}`);
+  if (!window.isDestroyed()) void window.loadURL(`http://127.0.0.1:${port}`);
 }
 
 if (!app.requestSingleInstanceLock()) {
