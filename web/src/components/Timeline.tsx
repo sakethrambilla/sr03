@@ -194,11 +194,13 @@ function MessageActions({ children }: { children: ReactNode }) {
 // without this every bubble reparses its markdown for each token that arrives
 const Bubble = memo(function Bubble({
   message,
+  copyable,
   files,
   onRun,
   onRewind,
 }: {
   message: Message;
+  copyable: boolean;
   files: FileLinks;
   onRun: (command: string) => void;
   onRewind: (message: Message) => void;
@@ -214,7 +216,7 @@ const Bubble = memo(function Bubble({
           {message.text}
         </div>
         <MessageActions>
-          <CopyButton text={message.text} />
+          {copyable ? <CopyButton text={message.text} /> : null}
           <Button
             variant="ghost"
             size="icon"
@@ -246,9 +248,11 @@ const Bubble = memo(function Bubble({
       {message.meta?.partial === true ? (
         <p className="text-[11px] text-faint">Stopped before the reply finished</p>
       ) : null}
-      <MessageActions>
-        <CopyButton text={message.text} />
-      </MessageActions>
+      {copyable ? (
+        <MessageActions>
+          <CopyButton text={message.text} />
+        </MessageActions>
+      ) : null}
     </div>
   );
 });
@@ -280,6 +284,24 @@ function Activity({ phase }: { phase: ThreadPhase | null }) {
   );
 }
 
+// copying is offered on the reply that ends a turn, not on the commentary the model writes
+// between tool calls — walking back from the newest, the first model message after each user
+// message is that turn's last word
+function finalReplies(messages: Message[]): Set<string> {
+  const ids = new Set<string>();
+  let pending = true;
+  for (let at = messages.length - 1; at >= 0; at -= 1) {
+    const { id, role } = messages[at];
+    if (role === "user") {
+      pending = true;
+    } else if (role === "assistant" || role === "error") {
+      if (pending) ids.add(id);
+      pending = false;
+    }
+  }
+  return ids;
+}
+
 type Row = { id: string; message: Message } | { id: string; tools: Message[] };
 
 // consecutive tool calls collapse into one row, the way the Claude Code transcript folds them
@@ -297,27 +319,30 @@ function toRows(messages: Message[]): Row[] {
   return rows;
 }
 
+const NO_MESSAGES: Message[] = [];
+
+// subscribed here rather than in the chat view, so a streaming frame re-renders the transcript
+// and nothing around it
 export function Timeline({
   threadId,
-  messages,
-  streaming,
   running,
   files,
   onRun,
   onRewind,
 }: {
   threadId: string;
-  messages: Message[];
-  streaming: string;
   running: boolean;
   files: FileLinks;
   onRun: (command: string) => void;
   onRewind: (message: Message) => void;
 }) {
+  const messages = useStore((state) => state.messagesByThread[threadId] ?? NO_MESSAGES);
+  const streaming = useStore((state) => state.streamByThread[threadId] ?? "");
   const phase = useStore((state) => state.phaseByThread[threadId] ?? null);
   const scroller = useRef<HTMLDivElement>(null);
   const opened = useRef<string | null>(null);
   const rows = useMemo(() => toRows(messages), [messages]);
+  const copyable = useMemo(() => finalReplies(messages), [messages]);
 
   useEffect(() => {
     const el = scroller.current;
@@ -348,6 +373,7 @@ export function Timeline({
             <Bubble
               key={row.id}
               message={row.message}
+              copyable={row.message.role === "user" || copyable.has(row.message.id)}
               files={files}
               onRun={onRun}
               onRewind={onRewind}
