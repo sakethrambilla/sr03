@@ -262,6 +262,7 @@ export function Composer({
   const setError = useStore((state) => state.setError);
   const loadCommands = useStore((state) => state.loadCommands);
   const commands = useStore((state) => (cwd ? state.commandsByCwd[cwd] : null) ?? NO_COMMANDS);
+  const commandsLoaded = useStore((state) => (cwd ? state.commandsByCwd[cwd] !== undefined : false));
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false);
@@ -283,13 +284,15 @@ export function Composer({
     inputRef.current?.focus();
   }, [restore?.key]);
 
-  // reading the list spawns a CLI of its own, so it is asked for on mount rather than on the "/"
-  useEffect(() => {
-    if (cwd) void loadCommands(cwd);
-  }, [cwd, loadCommands]);
-
   // the menu only stands in for the command name, so it goes away as soon as arguments start
   const typing = /^\/(\S*)$/.exec(text)?.[1] ?? null;
+  const slashing = typing !== null;
+
+  // a cold read spawns a CLI of its own, so the list is asked for on the first "/" rather than
+  // on every mount — most sessions never type one
+  useEffect(() => {
+    if (cwd && slashing) void loadCommands(cwd);
+  }, [cwd, slashing, loadCommands]);
 
   const matches = useMemo(() => {
     if (typing === null) return NO_COMMANDS;
@@ -411,6 +414,8 @@ export function Composer({
         {chips ? <div className="mb-2 flex flex-wrap items-center gap-1.5 empty:hidden">{chips}</div> : null}
         {menu && active ? (
           <CommandMenu matches={matches} active={active} onPick={pickCommand} />
+        ) : slashing && !dismissed && !commandsLoaded ? (
+          <p className="mb-2 px-2 text-[11px] text-faint">Reading commands…</p>
         ) : null}
 
         <div
