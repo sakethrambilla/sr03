@@ -22,13 +22,18 @@ export function connectEvents(handlers: {
   let socket: WebSocket | null = null;
   let retry: number | null = null;
   let closed = false;
+  // a server that is down for a while is retried less and less often, up to every five seconds
+  let backoff = 1000;
 
   const open = () => {
     if (closed) return;
     const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
     socket = new WebSocket(url);
     active = socket;
-    socket.onopen = () => handlers.onConnected(true);
+    socket.onopen = () => {
+      backoff = 1000;
+      handlers.onConnected(true);
+    };
     socket.onmessage = (message) => {
       const event = JSON.parse(message.data as string) as ServerEvent;
       if (event.type.startsWith("pty.")) {
@@ -39,7 +44,8 @@ export function connectEvents(handlers: {
     };
     socket.onclose = () => {
       handlers.onConnected(false);
-      if (!closed) retry = window.setTimeout(open, 1000);
+      if (!closed) retry = window.setTimeout(open, backoff);
+      backoff = Math.min(backoff * 2, 5000);
     };
     socket.onerror = () => socket?.close();
   };

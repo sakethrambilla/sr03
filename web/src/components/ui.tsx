@@ -107,17 +107,24 @@ export function Dialog({
 export function StatusDot({
   status,
   done,
+  waiting,
 }: {
   status: "idle" | "running" | "error";
   done?: boolean;
+  // blocked on an approval: the one state that needs a person, so it gets the accent
+  waiting?: boolean;
 }) {
   return (
     <span
       className={cn(
         "size-[7px] shrink-0 rounded-full",
-        status === "running" && "animate-pulse bg-faint",
-        status === "error" && "bg-destructive",
-        status === "idle" && (done ? "bg-status-done" : "border border-faint/70"),
+        waiting
+          ? "bg-primary"
+          : [
+              status === "running" && "animate-pulse bg-faint",
+              status === "error" && "bg-destructive",
+              status === "idle" && (done ? "bg-status-done" : "border border-faint/70"),
+            ],
       )}
     />
   );

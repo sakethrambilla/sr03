@@ -13,9 +13,12 @@ const BULLET = /^(\s*)[-*+]\s+(.*)$/;
 const ORDERED = /^(\s*)\d+[.)]\s+(.*)$/;
 const QUOTE = /^ {0,3}>\s?(.*)$/;
 const RULE = /^ {0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/;
-const INLINE =
+// compiled once; matchAll hands each call its own cursor, so the recursion in inline() is safe
+const INLINE = new RegExp(
   "`([^`]+)`|\\*\\*([\\s\\S]+?)\\*\\*|~~([\\s\\S]+?)~~|\\*([^\\s*][^*\\n]*?)\\*|\\[([^\\]]*)\\]\\(([^)\\s]+)\\)|(https?:\\/\\/[^\\s<>)\\]]+)" +
-  `|(${FILE_REF_SOURCE})`;
+    `|(${FILE_REF_SOURCE})`,
+  "g",
+);
 const SCHEME = /^(?:[a-z][\w+.-]*:|\/\/)/i;
 
 // the whole subtree of one message shares these, so neither has to be threaded down
@@ -169,12 +172,10 @@ function cells(row: string): string[] {
 
 function inline(text: string, key: string): ReactNode[] {
   const out: ReactNode[] = [];
-  const re = new RegExp(INLINE, "g");
   let last = 0;
   let n = 0;
-  let match: RegExpExecArray | null;
 
-  while ((match = re.exec(text))) {
+  for (const match of text.matchAll(INLINE)) {
     if (match.index > last) out.push(text.slice(last, match.index));
     const k = `${key}i${n++}`;
     const [, code, strong, strike, em, linkText, href, bare, path] = match;
@@ -209,7 +210,7 @@ function inline(text: string, key: string): ReactNode[] {
     } else if (path !== undefined) {
       out.push(<PathSpan key={k} text={path} />);
     }
-    last = re.lastIndex;
+    last = match.index + match[0].length;
   }
   if (last < text.length) out.push(text.slice(last));
   return out;
