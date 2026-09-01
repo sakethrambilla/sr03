@@ -42,7 +42,6 @@ import { Button } from "@/components/ui/button";
 import { Toggle } from "@/components/ui/toggle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
-const NO_MESSAGES: Message[] = [];
 const NO_TASKS: ThreadTask[] = [];
 const NO_FILES: string[] = [];
 
@@ -249,8 +248,6 @@ function EditorTabs({
 
 export function ChatView({ thread }: { thread: Thread }) {
   const setError = useStore((state) => state.setError);
-  const messages = useStore((state) => state.messagesByThread[thread.id] ?? NO_MESSAGES);
-  const streaming = useStore((state) => state.streamByThread[thread.id] ?? "");
   const tasks = useStore((state) => state.tasksByThread[thread.id] ?? NO_TASKS);
   const workspace = useStore((state) => state.filesByCwd[thread.cwd] ?? NO_FILES);
   const loadFiles = useStore((state) => state.loadFiles);
@@ -306,6 +303,13 @@ export function ChatView({ thread }: { thread: Thread }) {
     if (dirty.has(path)) setPendingClose(path);
     else closeFile(path);
   };
+
+  // every mounted file view gets the same function objects, so a streaming frame that
+  // re-renders this component doesn't re-render each of them too
+  const latestRequestClose = useRef(requestClose);
+  latestRequestClose.current = requestClose;
+  const closeFileTab = useCallback((path: string) => latestRequestClose.current(path), []);
+  const savedFile = useCallback(() => setFsVersion((current) => current + 1), []);
 
   const saveAndClose = async (path: string) => {
     const saved = await savers.current.get(path)?.();
@@ -484,9 +488,9 @@ export function ChatView({ thread }: { thread: Thread }) {
               thread={thread}
               path={path}
               active={path === active}
-              onClose={() => requestClose(path)}
-              onDirtyChange={(isDirty) => markDirty(path, isDirty)}
-              onSaved={() => setFsVersion((current) => current + 1)}
+              onClose={closeFileTab}
+              onDirtyChange={markDirty}
+              onSaved={savedFile}
               registerSave={registerSave}
               reveal={reveal?.path === path ? reveal : null}
               links={links}
@@ -498,8 +502,6 @@ export function ChatView({ thread }: { thread: Thread }) {
           <>
             <Timeline
               threadId={thread.id}
-              messages={messages}
-              streaming={streaming}
               running={thread.status === "running"}
               files={links}
               onRun={runCommand}

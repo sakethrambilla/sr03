@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api.ts";
 import type { FileLinks, LineLink } from "../lib/fileref.ts";
@@ -166,7 +166,9 @@ function Marker({ block }: { block: Block }) {
   );
 }
 
-export function FileView({
+// a streaming token re-renders the chat around this; without memo every open file would
+// re-run its tokeniser and reconcile thousands of rows per frame
+export const FileView = memo(function FileView({
   thread,
   path,
   active,
@@ -180,8 +182,8 @@ export function FileView({
   thread: Thread;
   path: string;
   active: boolean;
-  onClose: () => void;
-  onDirtyChange: (dirty: boolean) => void;
+  onClose: (path: string) => void;
+  onDirtyChange: (path: string, dirty: boolean) => void;
   onSaved: () => void;
   registerSave: (path: string, save: (() => Promise<boolean>) | null) => void;
   reveal: { line: number; key: number } | null;
@@ -232,7 +234,7 @@ export function FileView({
     };
   }, [thread.id, path, fsTick]);
 
-  useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
+  useEffect(() => onDirtyChange(path, dirty), [path, dirty, onDirtyChange]);
 
   useEffect(() => {
     if (!active) {
@@ -306,7 +308,7 @@ export function FileView({
         return;
       }
       // undo and redo belong to the textarea, so only Escape is handled here
-      if (event.key === "Escape" && !dirty) onClose();
+      if (event.key === "Escape" && !dirty) onClose(path);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -323,12 +325,15 @@ export function FileView({
       segment(tokens, links.imports(path, tokens.map((token) => token.text).join(""))),
     );
   }, [file?.binary, text, path, links]);
-  const blocks = file ? parseBlocks(file.diff) : [];
-  const startsAt = new Map(blocks.map((block) => [block.start, block]));
-  const covers = new Map<number, Block>();
-  for (const block of blocks) {
-    for (let line = block.start; line <= block.end; line += 1) covers.set(line, block);
-  }
+  const diff = file?.diff ?? "";
+  const { blocks, startsAt, covers } = useMemo(() => {
+    const blocks = file ? parseBlocks(diff) : [];
+    const covers = new Map<number, Block>();
+    for (const block of blocks) {
+      for (let line = block.start; line <= block.end; line += 1) covers.set(line, block);
+    }
+    return { blocks, startsAt: new Map(blocks.map((block) => [block.start, block])), covers };
+  }, [file === null, diff]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -493,4 +498,4 @@ export function FileView({
       )}
     </div>
   );
-}
+});

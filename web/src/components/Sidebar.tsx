@@ -329,7 +329,10 @@ function ProjectFilter({
 }
 
 export function Sidebar() {
-  const { projects, threads, connected, draft } = useStore();
+  const projects = useStore((state) => state.projects);
+  const threads = useStore((state) => state.threads);
+  const connected = useStore((state) => state.connected);
+  const draft = useStore((state) => state.draft);
   const startDraft = useStore((state) => state.startDraft);
   const setSettingsOpen = useStore((state) => state.setSettingsOpen);
   const [worktreeProject, setWorktreeProject] = useState<Project | null>(null);
