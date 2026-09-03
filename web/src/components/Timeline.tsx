@@ -190,6 +190,25 @@ function MessageActions({ children }: { children: ReactNode }) {
   );
 }
 
+// the growing message is split at the last paragraph break outside a fence: the settled
+// part is handed to a memoized Markdown that skips re-rendering once its text stops changing,
+// so a long reply stops re-parsing everything it already said on every incoming token
+const SettledMarkdown = memo(Markdown);
+
+function splitStreaming(text: string): { settled: string; tail: string } {
+  let inFence = false;
+  let boundary = -1;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text.startsWith("```", i)) {
+      inFence = !inFence;
+      i += 2;
+      continue;
+    }
+    if (!inFence && text[i] === "\n" && text[i + 1] === "\n") boundary = i + 2;
+  }
+  return boundary === -1 ? { settled: "", tail: text } : { settled: text.slice(0, boundary), tail: text.slice(boundary) };
+}
+
 // a settled message never changes, but a streaming token rerenders the whole timeline —
 // without this every bubble reparses its markdown for each token that arrives
 const Bubble = memo(function Bubble({
@@ -321,8 +340,38 @@ function toRows(messages: Message[]): Row[] {
 
 const NO_MESSAGES: Message[] = [];
 
-// subscribed here rather than in the chat view, so a streaming frame re-renders the transcript
-// and nothing around it
+function StreamingReply({
+  text,
+  files,
+  onRun,
+}: {
+  text: string;
+  files: FileLinks;
+  onRun: (command: string) => void;
+}) {
+  const { settled, tail } = useMemo(() => splitStreaming(text), [text]);
+  return (
+    <>
+      {settled ? (
+        <SettledMarkdown
+          text={settled}
+          files={files}
+          onRun={onRun}
+          className="text-[14px] leading-[1.65] text-foreground"
+        />
+      ) : null}
+      <Markdown
+        text={`${tail}▏`}
+        files={files}
+        onRun={onRun}
+        className="text-[14px] leading-[1.65] text-foreground"
+      />
+    </>
+  );
+}
+
+// subscribed here rather than in the chat view, so a streaming frame re-renders the
+// transcript and nothing around it
 export function Timeline({
   threadId,
   running,
@@ -337,12 +386,14 @@ export function Timeline({
   onRewind: (message: Message) => void;
 }) {
   const messages = useStore((state) => state.messagesByThread[threadId] ?? NO_MESSAGES);
+  const loaded = useStore((state) => Boolean(state.loadedThreads[threadId]));
   const streaming = useStore((state) => state.streamByThread[threadId] ?? "");
   const phase = useStore((state) => state.phaseByThread[threadId] ?? null);
   const scroller = useRef<HTMLDivElement>(null);
   const opened = useRef<string | null>(null);
   const rows = useMemo(() => toRows(messages), [messages]);
   const copyable = useMemo(() => finalReplies(messages), [messages]);
+  const [pinned, setPinned] = useState(true);
 
   useEffect(() => {
     const el = scroller.current;
@@ -351,9 +402,32 @@ export function Timeline({
     // something stays put instead of being yanked back down on every token
     const fresh = opened.current !== threadId;
     opened.current = threadId;
-    if (!fresh && el.scrollHeight - el.scrollTop - el.clientHeight > 120) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 120;
+    if (!fresh && !atBottom) {
+      setPinned(false);
+      return;
+    }
+    setPinned(true);
     el.scrollTop = el.scrollHeight;
   }, [threadId, messages.length, streaming]);
+
+  // scrolling back down by hand re-arms auto-scroll for the rest of the turn
+  const onScroll = () => {
+    const el = scroller.current;
+    if (!el) return;
+    setPinned(el.scrollHeight - el.scrollTop - el.clientHeight <= 120);
+  };
+
+  const jumpToLatest = () => {
+    const el = scroller.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    setPinned(true);
+  };
+
+  // "not read yet" and "genuinely empty" would otherwise show the same copy, so a thread
+  // that has messages coming just renders nothing until they land instead of claiming it's new
+  if (!loaded) return null;
 
   if (messages.length === 0 && !streaming) {
     return (
@@ -364,7 +438,17 @@ export function Timeline({
   }
 
   return (
-    <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto">
+    <div ref={scroller} onScroll={onScroll} className="relative min-h-0 flex-1 overflow-y-auto">
+      {!pinned && (streaming || running || messages.length > 0) ? (
+        <button
+          type="button"
+          onClick={jumpToLatest}
+          className="sticky top-3 left-1/2 z-10 -ml-14 flex w-28 -translate-x-0 items-center gap-1.5 rounded-full border border-border/70 bg-card/95 px-3 py-1 text-[11.5px] text-muted-foreground shadow-md shadow-black/20 backdrop-blur transition hover:text-foreground"
+        >
+          <ChevronIcon className="size-3 rotate-180" />
+          Jump to latest
+        </button>
+      ) : null}
       <div className="mx-auto flex max-w-3xl flex-col gap-4 px-5 py-6">
         {rows.map((row) =>
           "tools" in row ? (
@@ -381,12 +465,7 @@ export function Timeline({
           ),
         )}
         {streaming ? (
-          <Markdown
-            text={`${streaming}▏`}
-            files={files}
-            onRun={onRun}
-            className="text-[14px] leading-[1.65] text-foreground"
-          />
+          <StreamingReply text={streaming} files={files} onRun={onRun} />
         ) : running ? (
           <Activity phase={phase} />
         ) : null}

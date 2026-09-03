@@ -44,6 +44,9 @@ interface Store extends AppState {
   // bumped a moment after a turn writes to disk or ends, so the panels showing the folder
   // re-read once per burst of tool calls instead of once per call
   fsVersionByThread: Record<string, number>;
+  // set once a thread's own messages have been read, so "no messages yet" and "not read yet"
+  // don't render the same empty state
+  loadedThreads: Record<string, true>;
   // slash commands belong to the folder, not the session — every thread in one shares a list
   commandsByCwd: Record<string, SlashCommand[]>;
   // every file in the folder, so a path a message mentions can be recognised as one
@@ -55,6 +58,8 @@ interface Store extends AppState {
   // threads whose turn ended while you were somewhere else, cleared when you open them
   finished: Record<string, true>;
   error: string | null;
+  // false until the first bootstrap resolves, so the empty state never flashes before it
+  booted: boolean;
 
   bootstrap: () => Promise<void>;
   refreshState: () => Promise<void>;
@@ -71,6 +76,7 @@ interface Store extends AppState {
   patchActive: (patch: { model?: string; permissionMode?: PermissionMode; effort?: Effort }) => Promise<void>;
   respond: (approvalId: string, decision: "allow" | "always" | "deny") => Promise<void>;
   refreshUsage: () => Promise<void>;
+  resync: () => Promise<void>;
   loadCommands: (cwd: string) => Promise<void>;
   loadFiles: (threadId: string, cwd: string) => Promise<void>;
   setAppearance: (patch: Partial<Appearance>) => void;
@@ -206,6 +212,7 @@ export const useStore = create<Store>((set, get) => ({
   tasksByThread: {},
   phaseByThread: {},
   fsVersionByThread: {},
+  loadedThreads: {},
   commandsByCwd: {},
   filesByCwd: {},
   usage: null,
@@ -213,6 +220,7 @@ export const useStore = create<Store>((set, get) => ({
   appearance: startingAppearance,
   finished: loadFinished(),
   error: null,
+  booted: false,
 
   toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
@@ -234,6 +242,27 @@ export const useStore = create<Store>((set, get) => ({
     const next = activeThreadId ?? threads[0]?.id ?? null;
     if (next) await get().openThread(next);
     else get().startDraft();
+    set({ booted: true });
+  },
+
+  // a reconnect after any real gap (sleep, a server restart) may have missed events, so the
+  // thread list and the open thread's own data are re-read rather than trusted as still current
+  resync: async () => {
+    await get().refreshState();
+    const id = get().activeThreadId;
+    if (!id) return;
+    try {
+      const { thread, messages: list, tasks } = await api.thread(id);
+      set((state) => ({
+        threads: upsertThread(state.threads, thread),
+        messagesByThread: { ...state.messagesByThread, [id]: list },
+        tasksByThread: { ...state.tasksByThread, [id]: tasks },
+        loadedThreads: { ...state.loadedThreads, [id]: true },
+      }));
+      void get().refreshUsage();
+    } catch (error) {
+      set({ error: (error as Error).message });
+    }
   },
 
   refreshState: async () => {
@@ -267,6 +296,7 @@ export const useStore = create<Store>((set, get) => ({
         threads: upsertThread(state.threads, thread),
         messagesByThread: { ...state.messagesByThread, [id]: messages },
         tasksByThread: { ...state.tasksByThread, [id]: tasks },
+        loadedThreads: { ...state.loadedThreads, [id]: true },
       }));
       void get().refreshUsage();
     } catch (error) {
@@ -318,6 +348,7 @@ export const useStore = create<Store>((set, get) => ({
       threads: upsertThread(state.threads, thread),
       activeThreadId: thread.id,
       messagesByThread: { ...state.messagesByThread, [thread.id]: [] },
+      loadedThreads: { ...state.loadedThreads, [thread.id]: true },
       draft: null,
     }));
     await api.sendTurn(thread.id, text);

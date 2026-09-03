@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 
 import { connectEvents } from "./lib/ws.ts";
@@ -15,6 +15,8 @@ export function App() {
   const bootstrap = useStore((state) => state.bootstrap);
   const applyEvent = useStore((state) => state.applyEvent);
   const setConnected = useStore((state) => state.setConnected);
+  const resync = useStore((state) => state.resync);
+  const booted = useStore((state) => state.booted);
   const error = useStore((state) => state.error);
   const setError = useStore((state) => state.setError);
   const draft = useStore((state) => state.draft);
@@ -24,10 +26,19 @@ export function App() {
   const toggleSidebar = useStore((state) => state.toggleSidebar);
   const thread = useActiveThread();
 
+  // a reconnect after any real gap (sleep, a server restart) may have missed events entirely,
+  // so anything past the very first connection re-reads state instead of trusting the socket
+  const everConnected = useRef(false);
+  const onConnected = (connected: boolean) => {
+    setConnected(connected);
+    if (connected && everConnected.current) void resync();
+    if (connected) everConnected.current = true;
+  };
+
   useEffect(() => {
     void bootstrap();
-    return connectEvents({ onEvent: applyEvent, onConnected: setConnected });
-  }, [applyEvent, bootstrap, setConnected]);
+    return connectEvents({ onEvent: applyEvent, onConnected });
+  }, [applyEvent, bootstrap]);
 
   // the sidebar and the draft live in the store, so their shortcuts work even with nothing open
   useEffect(() => {
@@ -52,6 +63,10 @@ export function App() {
     toast.error(error);
     setError(null);
   }, [error, setError]);
+
+  // the empty state and the first thread would otherwise flash in sequence while bootstrap
+  // is still in flight; a blank frame the same colour as the app reads as instant instead
+  if (!booted) return <div className="h-full w-full bg-background" />;
 
   return (
     <TooltipProvider>
