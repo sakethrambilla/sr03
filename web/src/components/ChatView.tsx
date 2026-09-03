@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { api } from "../lib/api.ts";
@@ -10,7 +10,6 @@ import { AgentsPanel } from "./AgentsPanel.tsx";
 import { ThreadComposer } from "./Composer.tsx";
 import { FileTree } from "./FileTree.tsx";
 import { FileView } from "./FileView.tsx";
-import { TerminalPanel } from "./TerminalPanel.tsx";
 import { Timeline } from "./Timeline.tsx";
 import { SidebarToggle } from "./Sidebar.tsx";
 import { Separator } from "@/components/ui/separator";
@@ -44,6 +43,12 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 
 const NO_TASKS: ThreadTask[] = [];
 const NO_FILES: string[] = [];
+
+// xterm is ~490 KB of the main bundle for a panel most sessions never open — load it only
+// once someone actually asks for a terminal
+const TerminalPanel = lazy(() =>
+  import("./TerminalPanel.tsx").then((module) => ({ default: module.TerminalPanel })),
+);
 
 function PanelToggle({
   pressed,
@@ -512,7 +517,9 @@ export function ChatView({ thread }: { thread: Thread }) {
         ) : null}
 
         {terminalOpen ? (
-          <TerminalPanel thread={thread} command={command} onClose={() => setTerminalOpen(false)} />
+          <Suspense fallback={null}>
+            <TerminalPanel thread={thread} command={command} onClose={() => setTerminalOpen(false)} />
+          </Suspense>
         ) : null}
       </main>
       {agentsOpen ? <AgentsPanel thread={thread} onClose={() => setAgentsOpen(false)} /> : null}

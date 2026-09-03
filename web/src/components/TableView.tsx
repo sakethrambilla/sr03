@@ -26,8 +26,10 @@ import {
 
 const NO_FILTERS: TableFilter[] = [];
 const PAGE = 500;
-// the DOM is the limit here rather than the file — past this the footer's jump takes over
-const LOADED = 10_000;
+// the DOM is the limit here rather than the file — past this the footer's jump takes over.
+// wide sheets multiply rows by columns fast, so this stays well under what a browser tab
+// can hold comfortably rather than at the ceiling of what it can hold at all
+const LOADED = 2_000;
 const NUMERIC = /^-?[\d,]*\.?\d+%?$/;
 const SPREADSHEET = /\.(xlsx|xlsm)$/i;
 
