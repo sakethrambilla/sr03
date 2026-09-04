@@ -1,3 +1,5 @@
+// The settings page — a view beside the sessions rather than a layer over them. Two sections:
+// the Claude provider card (install, account, models, logout) and the appearance panel.
 import { useEffect, useMemo, useState } from "react";
 
 import { api } from "../lib/api.ts";

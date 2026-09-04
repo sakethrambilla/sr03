@@ -1,3 +1,6 @@
+// The prompt box, in two layers: `Composer` is the plain one the draft screen uses — textarea,
+// attachments, dictation, slash-command menu, and the model / permission / effort pickers — and
+// `ThreadComposer` wires it to a live thread, adding the tool-approval prompts above it.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 

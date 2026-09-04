@@ -1,3 +1,5 @@
+// Every server call the client makes, one method each, matching api.ts's route table. A non-2xx
+// response throws with the server's own message, which is what the toast shows.
 import type {
   AppState,
   ApprovalDecision,
@@ -73,6 +75,8 @@ export const api = {
   git: (projectId: string) => call<GitSnapshot>(`/api/projects/${projectId}/git`),
   addWorktree: (projectId: string, input: { branch: string; createBranch: boolean; base?: string }) =>
     post<Worktree>(`/api/projects/${projectId}/worktrees`, input),
+  checkout: (projectId: string, input: { branch: string; createBranch: boolean; base?: string }) =>
+    post<{ branch: string }>(`/api/projects/${projectId}/checkout`, input),
   removeWorktree: (projectId: string, path: string, force = false) =>
     call<{ ok: true }>(`/api/projects/${projectId}/worktrees`, {
       method: "DELETE",

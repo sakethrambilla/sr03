@@ -1,3 +1,7 @@
+// One long-lived Agent SDK session per thread, and everything folded out of its message stream:
+// the transcript rows, the streamed text, tool-approval prompts (canUseTool), subagent progress,
+// slash-command lists, and the usage numbers behind the meter. Also owns a session's lifecycle —
+// interrupt, idle parking, and the truncation that /clear and rewind do.
 import { randomUUID } from "node:crypto";
 import {
   query,

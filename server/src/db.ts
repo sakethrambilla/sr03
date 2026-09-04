@@ -1,3 +1,6 @@
+// The whole persistence layer, on node:sqlite: the schema, the additive migrations and boot-time
+// cleanup that run as this module loads, and one accessor object per table — settings, usage,
+// projects, threads, messages. Nothing else in the server touches sql.
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 

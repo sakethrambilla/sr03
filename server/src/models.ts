@@ -1,3 +1,5 @@
+// What the three composer pickers offer: the model catalog read off the CLI (cached in settings,
+// refreshed in the background), and the permission-mode and effort tables, which are ours.
 import os from "node:os";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 

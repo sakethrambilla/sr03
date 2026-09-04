@@ -1,3 +1,6 @@
+// The session folder's tree: lazily expanded directories, git status decorations, and the row
+// actions — open, create, rename, trash, reveal in Finder. Re-reads itself when a turn writes
+// to disk, which the store signals through fsVersionByThread.
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 

@@ -15,12 +15,13 @@ const ENTRY = path.join(PAYLOAD, "server", "src", "index.ts");
 
 let server = null;
 
+const WINDOWS = process.platform === "win32";
 const SHELL_BIN = process.env.SHELL || "/bin/zsh";
 const PATH_ARGS = ["-ilc", "printf %s \"$PATH\""];
 
-// a GUI launch inherits a bare /usr/bin:/bin PATH, so nvm/homebrew installs are invisible.
-// the login shell is the only place the user's real PATH exists — the server needs it for
-// node itself, and the Claude CLI it spawns needs it for git
+// on macOS a GUI launch inherits a bare /usr/bin:/bin PATH, so nvm/homebrew installs are
+// invisible. the login shell is the only place the user's real PATH exists — the server needs it
+// for node itself, and the Claude CLI it spawns needs it for git
 function loginPath() {
   try {
     const found = execFileSync(SHELL_BIN, PATH_ARGS, { encoding: "utf8", timeout: 8000 }).trim();
@@ -61,14 +62,25 @@ const SPLASH =
   );
 
 function findNode(searchPath) {
-  for (const dir of searchPath.split(":")) {
+  for (const dir of searchPath.split(path.delimiter)) {
     if (!dir) continue;
-    const candidate = path.join(dir, "node");
+    const candidate = path.join(dir, WINDOWS ? "node.exe" : "node");
     try {
       if (fs.statSync(candidate).isFile()) return candidate;
     } catch {}
   }
   return null;
+}
+
+// Windows resolves the user's PATH from the registry before the process starts, so a GUI launch
+// already has the real one and there is no login shell to ask
+function resolveSearchPath() {
+  if (WINDOWS) return process.env.PATH || "";
+  // a stale cache (node moved) falls back to asking the shell, which then rewrites it
+  const cached = cachedLoginPath();
+  const found = cached && findNode(cached) ? cached : loginPath();
+  refreshLoginPath();
+  return found;
 }
 
 function freePort() {
@@ -110,10 +122,11 @@ function openWindow() {
     minWidth: 720,
     minHeight: 480,
     backgroundColor: "#1f1e1c",
-    // the app's own 60px header stands in for the title bar, so the traffic lights are placed on
-    // its centre line rather than left at the inset default, which sits ~10px higher
-    titleBarStyle: "hidden",
-    trafficLightPosition: { x: 20, y: 22 },
+    // on macOS the app's own 60px header stands in for the title bar, so the traffic lights are
+    // placed on its centre line rather than left at the inset default, which sits ~10px higher.
+    // Windows keeps its native frame — its controls sit on the right, where panes have no
+    // reserved room for them
+    ...(WINDOWS ? {} : { titleBarStyle: "hidden", trafficLightPosition: { x: 20, y: 22 } }),
     title: "sr03",
   });
   window.webContents.setWindowOpenHandler(({ url }) => {
@@ -125,10 +138,7 @@ function openWindow() {
 }
 
 async function start() {
-  // a stale cache (node moved) falls back to asking the shell, which then rewrites it
-  let searchPath = cachedLoginPath();
-  if (!searchPath || !findNode(searchPath)) searchPath = loginPath();
-  refreshLoginPath();
+  const searchPath = resolveSearchPath();
   const nodeBin = findNode(searchPath);
   if (!nodeBin) {
     fail(`No node found on PATH.\n\nsr03 needs Node 22.16 or newer.\n\nSearched:\n${searchPath}`);
