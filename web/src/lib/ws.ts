@@ -1,3 +1,5 @@
+// The /ws connection: server events go to the store, terminal traffic goes straight to its own
+// listeners, and a dropped socket is retried with backoff.
 import type { ClientMessage, ServerEvent } from "./types.ts";
 
 type PtyEvent = Extract<ServerEvent, { type: `pty.${string}` }>;

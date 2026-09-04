@@ -1,3 +1,5 @@
+// Every server call the client makes, one method each, matching api.ts's route table. A non-2xx
+// response throws with the server's own message, which is what the toast shows.
 import type {
   AppState,
   ChangedFile,

@@ -1,3 +1,6 @@
+// Everything sr03 asks git: repo and branch info, worktree add/remove/list, the changed-file list
+// behind a session's file tree, per-file diffs, and which paths are ignored. Every call shells out
+// to the git binary — there is no cache and no library.
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";

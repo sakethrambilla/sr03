@@ -1,3 +1,6 @@
+// The composer's usage button and the popover behind it: the session's context ring and cost,
+// the account's plan rate-limit windows, and the process resource sample — which the server only
+// takes while this is open.
 import { useEffect, useState } from "react";
 
 import { sendClientMessage } from "../lib/ws.ts";

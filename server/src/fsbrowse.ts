@@ -1,3 +1,7 @@
+// Filesystem work that isn't git: the folder picker's directory listing and the native macOS
+// dialog behind it, dropped-file uploads, the session folder's own tree — read, write, create,
+// rename, trash, reveal — and the "open in Cursor/VS Code/Zed/Finder" app list. Every path that
+// names something inside a session goes through safeJoin, which refuses to leave the folder.
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";

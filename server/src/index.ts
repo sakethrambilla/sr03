@@ -1,3 +1,7 @@
+// The process entry point. One http server serves the REST API (api.ts) and the built UI out of
+// web/dist, and a WebSocket at /ws fans every server event out to every open client. The socket
+// also carries the only traffic that flows the other way: terminal keystrokes and the resource
+// meter's on/off switch.
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";

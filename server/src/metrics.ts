@@ -1,3 +1,6 @@
+// The resource meter's sampler: `ps` on a tick, differenced against the previous reading for cpu,
+// and each process in the tree attributed to the thread that owns it — its agent, its terminals,
+// or the leftovers the server spawned for itself. Runs only while a client is watching.
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import { promisify } from "node:util";

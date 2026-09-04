@@ -1,3 +1,7 @@
+// The single client store, and the only place server state lives. `applyEvent` folds every
+// socket event into it; every other action is a REST call plus the local update. Also holds the
+// per-thread caches (messages, streaming text, approvals, subagents) and the streaming buffer
+// that lets a reply out a slice per frame instead of in paragraph-sized lumps.
 import { create } from "zustand";
 
 import { api } from "./lib/api.ts";

@@ -1,3 +1,6 @@
+// The syntax highlighter, shared by the file view and markdown's fenced blocks: a handful of
+// coarse grammars (js/ts, json, css, shell, python, yaml-ish) and one forward-pass tokenizer,
+// which is enough to colour a listing and small enough to retokenise while typing.
 export type TokenKind =
   | "comment"
   | "string"

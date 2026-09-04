@@ -1,3 +1,6 @@
+// One open session: the header, the transcript and composer, and the panels around them — file
+// tree, file tabs, terminal, agents. Owns which files are open, which of them have unsaved edits,
+// and the session-scoped shortcuts listed in SHORTCUTS.md.
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 

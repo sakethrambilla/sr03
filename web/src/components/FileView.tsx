@@ -1,3 +1,6 @@
+// One open file tab: the highlighted listing with its diff markers in the gutter, an editable
+// textarea over it, cmd-click navigation to whatever an import or a symbol resolves to, and a
+// preview for markdown. A csv, tsv or xlsx hands off to TableView instead.
 import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api.ts";

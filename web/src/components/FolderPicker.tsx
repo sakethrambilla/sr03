@@ -1,3 +1,5 @@
+// The add-a-folder dialog: browses the machine's directories through the server, since the
+// browser can't hand over a real path, with the native macOS picker as the other way in.
 import { useEffect, useState } from "react";
 
 import { api } from "../lib/api.ts";

@@ -1,3 +1,6 @@
+// Every REST route, as one flat table of method + regex + handler. Commands come in here;
+// results go back out over the socket through bus.ts. A handler returning a value means 200
+// with that value as json, and a thrown HttpError means its status.
 import path from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 

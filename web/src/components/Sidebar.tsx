@@ -1,3 +1,6 @@
+// The session list, grouped by folder — folders are derived from sessions, so one with none is
+// not listed. Holds the folder and status filters, the per-session menu (rename, fork, archive,
+// delete), and the buttons that start a session or open a project's worktrees.
 import { useMemo, useRef, useState } from "react";
 
 import type { Project, Thread } from "../lib/types.ts";
