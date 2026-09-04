@@ -95,6 +95,26 @@ export const PERMISSION_MODES: Array<{ value: PermissionMode; label: string; hin
 
 export const DEFAULT_PERMISSION_MODE: PermissionMode = "default";
 
+const DEFAULT_PERMISSION_MODE_KEY = "defaultPermissionMode";
+
+function loadDefaultPermissionMode(): PermissionMode {
+  const stored = settings.all()[DEFAULT_PERMISSION_MODE_KEY];
+  return isPermissionMode(stored) ? stored : DEFAULT_PERMISSION_MODE;
+}
+
+let defaultPermissionMode: PermissionMode = loadDefaultPermissionMode();
+
+export function currentDefaults(): { model: string; permissionMode: PermissionMode; effort: Effort } {
+  return { model: DEFAULT_MODEL, permissionMode: defaultPermissionMode, effort: DEFAULT_EFFORT };
+}
+
+// persisted machine-wide, so every new session on this machine opens in the mode chosen once
+// in Settings — an existing thread keeps whatever mode it already has
+export function setDefaultPermissionMode(mode: PermissionMode): void {
+  defaultPermissionMode = mode;
+  settings.set(DEFAULT_PERMISSION_MODE_KEY, mode);
+}
+
 // the SDK silently downgrades a level the chosen model can't do
 export const EFFORT_LEVELS: Array<{ value: Effort; label: string; hint: string }> = [
   { value: "low", label: "Low", hint: "Minimal thinking, fastest" },

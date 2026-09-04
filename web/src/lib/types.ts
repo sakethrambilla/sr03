@@ -43,12 +43,30 @@ export interface Message {
 // what the CLI is busy with between visible output, for the turn's waiting label
 export type ThreadPhase = { kind: "starting" } | { kind: "thinking" } | { kind: "tool"; name: string };
 
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+// one AskUserQuestion question; `question` is also the key its answer is sent back under
+export interface Question {
+  question: string;
+  header: string;
+  options: QuestionOption[];
+  multiSelect: boolean;
+}
+
 export interface PendingApproval {
   id: string;
   threadId: string;
   toolName: string;
   input: unknown;
+  // set only for AskUserQuestion, which is answered rather than allowed or denied
+  questions?: Question[];
 }
+
+// answers are keyed by question text, which is what the CLI looks them up by
+export type ApprovalDecision = "allow" | "always" | "deny" | { answers: Record<string, string> };
 
 export interface ThreadTask {
   id: string;
@@ -200,6 +218,7 @@ export type ServerEvent =
   | { type: "resources"; resources: Resources }
   | { type: "thread.updated"; thread: Thread }
   | { type: "models.changed"; models: ModelOption[] }
+  | { type: "defaults.changed"; defaults: { model: string; permissionMode: PermissionMode; effort: Effort } }
   | { type: "pty.data"; threadId: string; terminalId: string; data: string }
   | { type: "pty.snapshot"; threadId: string; terminalId: string; data: string }
   | { type: "pty.terminals"; threadId: string; ids: string[] }

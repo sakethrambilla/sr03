@@ -9,7 +9,10 @@ import { applyAppearance, loadAppearance, saveAppearance } from "./lib/appearanc
 import type { Appearance } from "./lib/appearance.ts";
 import type {
   AppState,
+  ApprovalDecision,
+  Branch,
   Effort,
+  GitSnapshot,
   Message,
   PendingApproval,
   PermissionMode,
@@ -26,11 +29,63 @@ export interface Draft {
   projectId: string | null;
   branch: string | null;
   createBranch: boolean;
+  // set only by the worktree panel, meaning "run in this one"; a branch pick clears it
   worktreePath: string | null;
   worktree: boolean;
   model: string;
   permissionMode: PermissionMode;
   effort: Effort;
+}
+
+// What the draft's branch + worktree pair will actually do on send. `folder` with no checkout runs
+// in the project folder as it stands; a ticked worktree always branches, so it can never conflict.
+export type DraftPlan =
+  | { kind: "folder"; checkout: { branch: string; createBranch: boolean } | null }
+  | { kind: "worktree"; branch: string; base: string | null }
+  | { kind: "here"; path: string }
+  | { kind: "blocked"; reason: string };
+
+function unusedBranch(base: string, branches: Branch[]): string {
+  const taken = new Set(branches.map((branch) => branch.name));
+  let name = `${base}-wt`;
+  let counter = 2;
+  while (taken.has(name)) name = `${base}-wt${counter++}`;
+  return name;
+}
+
+export function resolvePlan(draft: Draft, snapshot: GitSnapshot | null): DraftPlan {
+  if (draft.worktree && draft.worktreePath) return { kind: "here", path: draft.worktreePath };
+
+  const current = snapshot?.branch ?? null;
+  const branches = snapshot?.branches ?? [];
+  const selected = draft.branch ?? current;
+
+  if (draft.worktree) {
+    if (!selected) return { kind: "blocked", reason: "Pick a branch to base the worktree on" };
+    // a name typed into the picker doesn't exist yet, so it becomes the worktree's own branch
+    if (draft.createBranch) return { kind: "worktree", branch: selected, base: null };
+    return { kind: "worktree", branch: unusedBranch(selected, branches), base: selected };
+  }
+
+  if (!selected || (selected === current && !draft.createBranch)) {
+    return { kind: "folder", checkout: null };
+  }
+  if (!draft.createBranch) {
+    const held = branches.find((branch) => branch.name === selected)?.worktreePath;
+    if (held && held !== snapshot?.root) {
+      return { kind: "blocked", reason: `${selected} is checked out in a worktree — tick worktree instead` };
+    }
+    // `switch -c` carries uncommitted work onto the new branch, but switching to an existing one
+    // can drag it across unrelated commits
+    const dirty = snapshot?.dirty ?? 0;
+    if (dirty > 0) {
+      return {
+        kind: "blocked",
+        reason: `The folder has ${dirty} uncommitted change${dirty === 1 ? "" : "s"} — commit them or tick worktree`,
+      };
+    }
+  }
+  return { kind: "folder", checkout: { branch: selected, createBranch: draft.createBranch } };
 }
 
 interface Store extends AppState {
@@ -78,7 +133,8 @@ interface Store extends AppState {
   send: (text: string) => Promise<void>;
   interrupt: () => Promise<void>;
   patchActive: (patch: { model?: string; permissionMode?: PermissionMode; effort?: Effort }) => Promise<void>;
-  respond: (approvalId: string, decision: "allow" | "always" | "deny") => Promise<void>;
+  setDefaultPermissionMode: (mode: PermissionMode) => Promise<void>;
+  respond: (approval: PendingApproval, decision: ApprovalDecision) => Promise<void>;
   refreshUsage: () => Promise<void>;
   resync: () => Promise<void>;
   loadCommands: (cwd: string) => Promise<void>;
@@ -329,18 +385,31 @@ export const useStore = create<Store>((set, get) => ({
   patchDraft: (patch) =>
     set((state) => (state.draft ? { draft: { ...state.draft, ...patch } } : {})),
 
-  // a thread only exists once its first turn is sent, so cwd/branch are fixed for its lifetime
+  // a thread only exists once its first turn is sent, so cwd/branch are fixed for its lifetime.
+  // the draft may have sat open while branches moved, so the plan is resolved again here
   startFromDraft: async (text) => {
     const draft = get().draft;
     if (!draft?.projectId) throw new Error("Choose a folder first");
-    let cwd = draft.worktreePath ?? undefined;
-    if (!cwd && draft.worktree && draft.branch) {
+    const snapshot = await api.git(draft.projectId).catch(() => null);
+    const plan = resolvePlan(draft, snapshot);
+    if (plan.kind === "blocked") throw new Error(plan.reason);
+
+    let cwd: string | undefined;
+    if (plan.kind === "here") cwd = plan.path;
+    if (plan.kind === "worktree") {
       const worktree = await api.addWorktree(draft.projectId, {
-        branch: draft.branch,
-        createBranch: draft.createBranch,
+        branch: plan.branch,
+        createBranch: true,
+        ...(plan.base ? { base: plan.base } : {}),
       });
       cwd = worktree.path;
+      void get().refreshState();
     }
+    if (plan.kind === "folder" && plan.checkout) {
+      await api.checkout(draft.projectId, plan.checkout);
+      void get().refreshState();
+    }
+
     const thread = await api.createThread({
       projectId: draft.projectId,
       ...(cwd ? { cwd } : {}),
@@ -434,16 +503,29 @@ export const useStore = create<Store>((set, get) => ({
     }
   },
 
-  respond: async (approvalId, decision) => {
-    const id = get().activeThreadId;
-    if (!id) return;
+  // machine-wide, not thread-scoped — patchActive above only ever touches the open thread
+  setDefaultPermissionMode: async (mode) => {
+    const previous = get().defaults;
+    set({ defaults: { ...previous, permissionMode: mode } });
+    try {
+      const { defaults } = await api.saveDefaults({ permissionMode: mode });
+      set({ defaults });
+    } catch (error) {
+      set({ error: (error as Error).message });
+      await get().refreshState();
+    }
+  },
+
+  // the approval carries its own thread, so answering after switching sessions still lands right
+  respond: async (approval, decision) => {
+    const { id, threadId } = approval;
     set((state) => ({
       approvalsByThread: {
         ...state.approvalsByThread,
-        [id]: (state.approvalsByThread[id] ?? []).filter((approval) => approval.id !== approvalId),
+        [threadId]: (state.approvalsByThread[threadId] ?? []).filter((entry) => entry.id !== id),
       },
     }));
-    await api.respondToApproval(id, approvalId, decision).catch((error: Error) =>
+    await api.respondToApproval(threadId, id, decision).catch((error: Error) =>
       set({ error: error.message }),
     );
   },
@@ -571,6 +653,10 @@ export const useStore = create<Store>((set, get) => ({
       }
       case "models.changed": {
         set({ models: event.models });
+        return;
+      }
+      case "defaults.changed": {
+        set({ defaults: event.defaults });
         return;
       }
       case "thread.approval": {
