@@ -1,33 +1,61 @@
-// What the three composer pickers offer: the model catalog read off the CLI (cached in settings,
-// refreshed in the background), and the permission-mode and effort tables, which are ours.
+// Provider-scoped model and mode catalogs. Discovered models are cached in sqlite and pushed to
+// clients; the UI always has a small fallback catalog for a new draft.
 import os from "node:os";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 
 import { publish } from "./bus.ts";
 import { settings } from "./db.ts";
-import type { Effort, PermissionMode } from "./types.ts";
+import type {
+  Effort,
+  EffortOption,
+  ModelOption,
+  PermissionMode,
+  PermissionModeOption,
+  ProviderCatalog,
+  ProviderId,
+} from "./types.ts";
 
-export interface ModelOption {
-  slug: string;
-  label: string;
-  hint: string;
-  // the wire id the slug stands for, so a thread pinned to that id still matches this row
-  resolved?: string;
-}
-
-// the CLI's own "default" row, so a thread started before the catalog answers still resolves
+export const DEFAULT_PROVIDER_ID: ProviderId = "claude";
 export const DEFAULT_MODEL = "default";
+export const DEFAULT_PERMISSION_MODE: PermissionMode = "default";
+export const DEFAULT_EFFORT: Effort = "high";
 
-const FALLBACK_MODELS: ModelOption[] = [
-  { slug: DEFAULT_MODEL, label: "Default", hint: "Whichever model the CLI picks" },
+export const EFFORT_LEVELS: EffortOption[] = [
+  { value: "low", label: "Low", hint: "Minimal thinking, fastest" },
+  { value: "medium", label: "Medium", hint: "Moderate thinking" },
+  { value: "high", label: "High", hint: "Deep reasoning" },
+  { value: "xhigh", label: "Extra", hint: "Deeper than high" },
+  { value: "max", label: "Max", hint: "Maximum effort" },
 ];
 
-const MODELS_KEY = "models";
+const CLAUDE_MODES: PermissionModeOption[] = [
+  { value: "default", label: "Ask", hint: "Prompt before tool use" },
+  { value: "acceptEdits", label: "Accept edits", hint: "Auto-approve file edits" },
+  { value: "plan", label: "Plan", hint: "Read-only, plan first" },
+  { value: "bypassPermissions", label: "Bypass", hint: "Run everything, no prompts" },
+];
 
-// asking the CLI costs a cold spawn (seconds, a quarter gigabyte), and the answer changes
-// once in a blue moon — so the last read is served straight away and refreshed behind it
-function loadStored(): ModelOption[] | null {
-  const raw = settings.all()[MODELS_KEY];
+const CURSOR_MODES: PermissionModeOption[] = [
+  { value: "default", label: "Agent", hint: "Prompt before risky tool use" },
+  { value: "autoReview", label: "Auto-review", hint: "Automatically review safe tool calls" },
+  { value: "plan", label: "Plan", hint: "Read-only planning mode" },
+  { value: "ask", label: "Ask", hint: "Read-only questions and explanations" },
+  { value: "bypassPermissions", label: "Force", hint: "Allow tools unless explicitly denied" },
+];
+
+const FALLBACKS: Record<ProviderId, ModelOption[]> = {
+  claude: [{ slug: DEFAULT_MODEL, label: "Default", hint: "Whichever model Claude Code picks" }],
+  cursor: [{ slug: "auto", label: "Auto", hint: "Whichever model Cursor picks" }],
+};
+
+const MODELS_KEY: Record<ProviderId, string> = {
+  claude: "models:claude",
+  cursor: "models:cursor:acp",
+};
+
+function loadStored(providerId: ProviderId): ModelOption[] | null {
+  const stored = settings.all();
+  const raw = stored[MODELS_KEY[providerId]] ?? (providerId === "claude" ? stored.models : undefined);
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as ModelOption[];
@@ -37,13 +65,70 @@ function loadStored(): ModelOption[] | null {
   }
 }
 
-let known: ModelOption[] = loadStored() ?? FALLBACK_MODELS;
+const known: Record<ProviderId, ModelOption[]> = {
+  claude: loadStored("claude") ?? FALLBACKS.claude,
+  cursor: loadStored("cursor") ?? FALLBACKS.cursor,
+};
 
-export function currentModels(): ModelOption[] {
-  return known;
+function makeCatalog(providerId: ProviderId): ProviderCatalog {
+  if (providerId === "claude") {
+    return {
+      id: "claude",
+      label: "Claude Code",
+      models: known.claude,
+      permissionModes: CLAUDE_MODES,
+      effortLevels: EFFORT_LEVELS,
+      defaults: {
+        model: DEFAULT_MODEL,
+        permissionMode: DEFAULT_PERMISSION_MODE,
+        effort: DEFAULT_EFFORT,
+      },
+      capabilities: {
+        effort: true,
+        slashCommands: true,
+        usage: true,
+        tasks: true,
+        fork: true,
+        questions: false,
+        liveModelSwitch: true,
+        livePermissionModeSwitch: true,
+      },
+    };
+  }
+  return {
+    id: "cursor",
+    label: "Cursor CLI",
+    models: known.cursor,
+    permissionModes: CURSOR_MODES,
+    effortLevels: [],
+    defaults: { model: "auto", permissionMode: "default", effort: DEFAULT_EFFORT },
+    capabilities: {
+      effort: false,
+      slashCommands: false,
+      usage: false,
+      tasks: false,
+      fork: false,
+      questions: true,
+      liveModelSwitch: false,
+      livePermissionModeSwitch: false,
+    },
+  };
 }
 
-async function readCatalog(): Promise<ModelOption[]> {
+export function currentProvider(providerId: ProviderId): ProviderCatalog {
+  return makeCatalog(providerId);
+}
+
+export function currentProviders(): ProviderCatalog[] {
+  return [makeCatalog("claude"), makeCatalog("cursor")];
+}
+
+export function defaultProviderId(): ProviderId {
+  const value = settings.all().defaultProviderId;
+  return isProviderId(value) ? value : DEFAULT_PROVIDER_ID;
+}
+
+async function readClaudeCatalog(): Promise<ModelOption[]> {
   const session = query({
     prompt: (async function* () {})(),
     options: { systemPrompt: { type: "preset", preset: "claude_code" }, cwd: os.homedir() },
@@ -51,7 +136,7 @@ async function readCatalog(): Promise<ModelOption[]> {
   try {
     const models = await session.supportedModels();
     return models.length === 0
-      ? FALLBACK_MODELS
+      ? FALLBACKS.claude
       : models.map((model) => ({
           slug: model.value,
           label: model.displayName,
@@ -63,53 +148,62 @@ async function readCatalog(): Promise<ModelOption[]> {
   }
 }
 
-let catalog: Promise<ModelOption[]> | null = null;
+const inFlight: Partial<Record<ProviderId, Promise<ModelOption[]>>> = {};
 
-// every caller shares one warm lookup; a fresh answer that differs from the stored one is
-// persisted and pushed to every open client
-export function listModels(): Promise<ModelOption[]> {
-  catalog ??= readCatalog()
+// Every provider shares one warm lookup. Changed answers are persisted and pushed to every client.
+export function listModels(providerId: ProviderId): Promise<ModelOption[]> {
+  if (providerId === "cursor") return Promise.resolve(known.cursor);
+  const existing = inFlight[providerId];
+  if (existing) return existing;
+  const reading = readClaudeCatalog()
     .then((models) => {
-      const json = JSON.stringify(models);
-      if (json !== JSON.stringify(known)) {
-        known = models;
-        settings.set(MODELS_KEY, json);
-        publish({ type: "models.changed", models });
-      }
+      updateProviderModels(providerId, models);
       return models;
     })
     .catch((error: Error) => {
-      console.error("[models] could not read the CLI catalog:", error.message);
-      catalog = null;
-      return known;
+      console.error(`[models:${providerId}] ${error.message}`);
+      delete inFlight[providerId];
+      return known[providerId];
     });
-  return catalog;
+  inFlight[providerId] = reading;
+  return reading;
 }
 
-export const PERMISSION_MODES: Array<{ value: PermissionMode; label: string; hint: string }> = [
-  { value: "default", label: "Ask", hint: "Prompt before tool use" },
-  { value: "acceptEdits", label: "Accept edits", hint: "Auto-approve file edits" },
-  { value: "plan", label: "Plan", hint: "Read-only, plan first" },
-  { value: "bypassPermissions", label: "Bypass", hint: "Run everything, no prompts" },
-];
-
-export const DEFAULT_PERMISSION_MODE: PermissionMode = "default";
-
-// the SDK silently downgrades a level the chosen model can't do
-export const EFFORT_LEVELS: Array<{ value: Effort; label: string; hint: string }> = [
-  { value: "low", label: "Low", hint: "Minimal thinking, fastest" },
-  { value: "medium", label: "Medium", hint: "Moderate thinking" },
-  { value: "high", label: "High", hint: "Deep reasoning" },
-  { value: "xhigh", label: "Extra", hint: "Deeper than high" },
-  { value: "max", label: "Max", hint: "Maximum effort" },
-];
-
-export const DEFAULT_EFFORT: Effort = "high";
-
-export function isEffort(value: unknown): value is Effort {
-  return EFFORT_LEVELS.some((level) => level.value === value);
+// Cursor advertises the model IDs accepted by ACP only after session setup. CLI aliases from
+// `--list-models` are deliberately not used because `session/set_model` rejects them.
+export function updateProviderModels(providerId: ProviderId, models: ModelOption[]): ProviderCatalog {
+  if (models.length === 0 || JSON.stringify(models) === JSON.stringify(known[providerId])) {
+    return makeCatalog(providerId);
+  }
+  known[providerId] = models;
+  settings.set(MODELS_KEY[providerId], JSON.stringify(models));
+  const provider = makeCatalog(providerId);
+  publish({ type: "provider.changed", provider });
+  return provider;
 }
 
-export function isPermissionMode(value: unknown): value is PermissionMode {
-  return PERMISSION_MODES.some((mode) => mode.value === value);
+export function isProviderId(value: unknown): value is ProviderId {
+  return value === "claude" || value === "cursor";
+}
+
+export function isPermissionMode(
+  providerId: ProviderId,
+  value: unknown,
+): value is PermissionMode {
+  return makeCatalog(providerId).permissionModes.some((mode) => mode.value === value);
+}
+
+export function isModel(providerId: ProviderId, value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.trim().length > 0 &&
+    makeCatalog(providerId).models.some((model) => model.slug === value)
+  );
+}
+
+export function isEffort(providerId: ProviderId, value: unknown): value is Effort {
+  const provider = makeCatalog(providerId);
+  return provider.capabilities.effort
+    ? provider.effortLevels.some((level) => level.value === value)
+    : value === provider.defaults.effort;
 }

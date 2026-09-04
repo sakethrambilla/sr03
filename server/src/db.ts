@@ -11,12 +11,34 @@ import type {
   MessageRole,
   PermissionMode,
   Project,
+  ProviderId,
   Thread,
   ThreadStatus,
 } from "./types.ts";
 
+function isBusy(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "errcode" in error &&
+    (error as Error & { errcode?: number }).errcode === 5
+  );
+}
+
+function retryBusy(action: () => void): void {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      action();
+      return;
+    } catch (error) {
+      if (!isBusy(error) || attempt === 199) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
+  }
+}
+
 const db = new DatabaseSync(DB_PATH);
-db.exec("PRAGMA journal_mode = WAL");
+db.exec("PRAGMA busy_timeout = 5000");
+retryBusy(() => db.exec("PRAGMA journal_mode = WAL"));
 db.exec("PRAGMA foreign_keys = ON");
 db.exec(`
   CREATE TABLE IF NOT EXISTS projects (
@@ -29,6 +51,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS threads (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    provider_id TEXT NOT NULL DEFAULT 'claude',
     title TEXT NOT NULL,
     cwd TEXT NOT NULL,
     branch TEXT,
@@ -38,6 +61,7 @@ db.exec(`
     effort TEXT NOT NULL DEFAULT 'high',
     session_id TEXT,
     status TEXT NOT NULL DEFAULT 'idle',
+    owner_id TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
@@ -60,26 +84,131 @@ db.exec(`
     json TEXT NOT NULL,
     updated_at INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS server_instances (
+    id TEXT PRIMARY KEY,
+    pid INTEGER NOT NULL,
+    heartbeat_at INTEGER NOT NULL
+  );
 `);
 
-// sqlite has no ADD COLUMN IF NOT EXISTS, so additive migrations check first
-const threadColumns = db
-  .prepare("SELECT name FROM pragma_table_info('threads')")
-  .all()
-  .map((row) => (row as Record<string, unknown>).name as string);
-if (!threadColumns.includes("effort")) {
-  db.exec("ALTER TABLE threads ADD COLUMN effort TEXT NOT NULL DEFAULT 'high'");
+// sqlite has no ADD COLUMN IF NOT EXISTS. The write lock makes the check-and-alter sequence safe
+// when the desktop app and a development server start against the same data directory.
+db.exec("BEGIN IMMEDIATE");
+try {
+  const threadColumns = db
+    .prepare("SELECT name FROM pragma_table_info('threads')")
+    .all()
+    .map((row) => (row as Record<string, unknown>).name as string);
+  if (!threadColumns.includes("effort")) {
+    db.exec("ALTER TABLE threads ADD COLUMN effort TEXT NOT NULL DEFAULT 'high'");
+  }
+  if (!threadColumns.includes("archived")) {
+    db.exec("ALTER TABLE threads ADD COLUMN archived INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!threadColumns.includes("provider_id")) {
+    db.exec("ALTER TABLE threads ADD COLUMN provider_id TEXT NOT NULL DEFAULT 'claude'");
+  }
+  if (!threadColumns.includes("owner_id")) {
+    db.exec("ALTER TABLE threads ADD COLUMN owner_id TEXT");
+  }
+  db.exec("COMMIT");
+} catch (error) {
+  db.exec("ROLLBACK");
+  throw error;
 }
-if (!threadColumns.includes("archived")) {
-  db.exec("ALTER TABLE threads ADD COLUMN archived INTEGER NOT NULL DEFAULT 0");
+
+const INSTANCE_ID = randomUUID();
+const INSTANCE_LEASE_MS = 30_000;
+const instanceUpsert = db.prepare(
+  `INSERT INTO server_instances (id, pid, heartbeat_at) VALUES (?, ?, ?)
+   ON CONFLICT(id) DO UPDATE SET heartbeat_at = excluded.heartbeat_at`,
+);
+const ownerlessThreadRelease = db.prepare(
+  `UPDATE threads SET status = 'idle', updated_at = ?
+   WHERE status = 'running' AND owner_id IS NULL`,
+);
+const ownedThreadRelease = db.prepare(
+  `UPDATE threads
+   SET status = CASE WHEN status = 'running' THEN 'idle' ELSE status END,
+       owner_id = NULL,
+       updated_at = ?
+   WHERE owner_id = ?`,
+);
+const staleInstances = db.prepare(
+  "SELECT id, pid FROM server_instances WHERE id <> ? AND heartbeat_at < ?",
+);
+const instanceDelete = db.prepare("DELETE FROM server_instances WHERE id = ?");
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
 }
+
+function refreshInstanceLease(): void {
+  const now = Date.now();
+  let began = false;
+  retryBusy(() => {
+    try {
+      db.exec("BEGIN IMMEDIATE");
+      began = true;
+      instanceUpsert.run(INSTANCE_ID, process.pid, now);
+      ownerlessThreadRelease.run(now);
+      const stale = staleInstances.all(INSTANCE_ID, now - INSTANCE_LEASE_MS) as Array<{
+        id: string;
+        pid: number;
+      }>;
+      for (const instance of stale) {
+        if (processIsAlive(instance.pid)) continue;
+        ownedThreadRelease.run(now, instance.id);
+        instanceDelete.run(instance.id);
+      }
+      db.exec("COMMIT");
+      began = false;
+    } catch (error) {
+      if (began) db.exec("ROLLBACK");
+      began = false;
+      throw error;
+    }
+  });
+}
+
+refreshInstanceLease();
+const instanceHeartbeat = setInterval(() => {
+  try {
+    refreshInstanceLease();
+  } catch (error) {
+    console.error(`[db] Could not refresh server lease: ${(error as Error).message}`);
+  }
+}, 5_000);
+instanceHeartbeat.unref();
+
+function releaseInstanceLease(): void {
+  clearInterval(instanceHeartbeat);
+  try {
+    db.prepare(
+      "UPDATE threads SET status = 'idle', owner_id = NULL, updated_at = ? WHERE owner_id = ?",
+    ).run(Date.now(), INSTANCE_ID);
+    db.prepare("DELETE FROM server_instances WHERE id = ?").run(INSTANCE_ID);
+  } catch {}
+}
+
+process.once("exit", releaseInstanceLease);
+process.once("SIGINT", () => {
+  releaseInstanceLease();
+  process.exit(130);
+});
+process.once("SIGTERM", () => {
+  releaseInstanceLease();
+  process.exit(143);
+});
 
 // folders are derived from threads, so a project without any is stale state
 db.exec("DELETE FROM projects WHERE id NOT IN (SELECT project_id FROM threads)");
 db.exec("DELETE FROM usage WHERE id <> 'account' AND id NOT IN (SELECT id FROM threads)");
-
-// A crash mid-turn would otherwise leave threads stuck in `running`.
-db.exec("UPDATE threads SET status = 'idle' WHERE status = 'running'");
 
 type Row = Record<string, unknown>;
 
@@ -97,6 +226,7 @@ function toThread(row: Row): Thread {
   return {
     id: row.id as string,
     projectId: row.project_id as string,
+    providerId: row.provider_id === "cursor" ? "cursor" : "claude",
     title: row.title as string,
     cwd: row.cwd as string,
     branch: (row.branch as string | null) ?? null,
@@ -145,8 +275,31 @@ const sql = {
   threadsList: db.prepare("SELECT * FROM threads ORDER BY updated_at DESC"),
   threadById: db.prepare("SELECT * FROM threads WHERE id = ?"),
   threadInsert: db.prepare(
-    `INSERT INTO threads (id, project_id, title, cwd, branch, is_worktree, model, permission_mode, effort, session_id, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO threads (id, project_id, provider_id, title, cwd, branch, is_worktree, model, permission_mode, effort, session_id, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ),
+  threadClaim: db.prepare(
+    `UPDATE threads SET status = 'running', owner_id = ?, updated_at = ?
+     WHERE id = ?
+       AND status <> 'running'
+       AND (owner_id IS NULL OR owner_id = ?)`,
+  ),
+  threadOwned: db.prepare("SELECT 1 FROM threads WHERE id = ? AND owner_id = ?"),
+  threadOwner: db.prepare("SELECT owner_id FROM threads WHERE id = ?"),
+  threadOwnedRunning: db.prepare(
+    `UPDATE threads SET status = 'running', updated_at = ?
+     WHERE id = ? AND owner_id = ?`,
+  ),
+  threadOwnedRunningSession: db.prepare(
+    `UPDATE threads SET status = 'running', session_id = ?, updated_at = ?
+     WHERE id = ? AND owner_id = ?`,
+  ),
+  threadOwnedRelease: db.prepare(
+    `UPDATE threads SET status = ?, updated_at = ?
+     WHERE id = ? AND owner_id = ?`,
+  ),
+  threadRelease: db.prepare(
+    "UPDATE threads SET owner_id = NULL, updated_at = ? WHERE id = ? AND owner_id = ?",
   ),
   threadTouch: db.prepare("UPDATE threads SET updated_at = ? WHERE id = ?"),
   threadRemove: db.prepare("DELETE FROM threads WHERE id = ?"),
@@ -237,6 +390,7 @@ export const threads = {
   },
   create(input: {
     projectId: string;
+    providerId: ProviderId;
     title: string;
     cwd: string;
     branch: string | null;
@@ -258,6 +412,7 @@ export const threads = {
     sql.threadInsert.run(
       thread.id,
       thread.projectId,
+      thread.providerId,
       thread.title,
       thread.cwd,
       thread.branch,
@@ -271,6 +426,30 @@ export const threads = {
       thread.updatedAt,
     );
     return thread;
+  },
+  claim(id: string): boolean {
+    return sql.threadClaim.run(INSTANCE_ID, Date.now(), id, INSTANCE_ID).changes === 1;
+  },
+  owns(id: string): boolean {
+    return Boolean(sql.threadOwned.get(id, INSTANCE_ID));
+  },
+  canOperate(id: string): boolean {
+    const row = sql.threadOwner.get(id) as { owner_id: string | null } | undefined;
+    return Boolean(row && (row.owner_id === null || row.owner_id === INSTANCE_ID));
+  },
+  setOwnedStatus(id: string, status: ThreadStatus, sessionId?: string | null): boolean {
+    const now = Date.now();
+    if (status === "running") {
+      const result =
+        sessionId === undefined
+          ? sql.threadOwnedRunning.run(now, id, INSTANCE_ID)
+          : sql.threadOwnedRunningSession.run(sessionId, now, id, INSTANCE_ID);
+      return result.changes === 1;
+    }
+    return sql.threadOwnedRelease.run(status, now, id, INSTANCE_ID).changes === 1;
+  },
+  release(id: string): void {
+    sql.threadRelease.run(Date.now(), id, INSTANCE_ID);
   },
   update(
     id: string,

@@ -5,8 +5,17 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { api } from "../lib/api.ts";
-import type { Effort, PendingApproval, PermissionMode, SlashCommand, Thread } from "../lib/types.ts";
-import { useStore } from "../store.ts";
+import type {
+  Effort,
+  EffortOption,
+  PendingApproval,
+  PendingQuestion,
+  PermissionMode,
+  ProviderId,
+  SlashCommand,
+  Thread,
+} from "../lib/types.ts";
+import { commandKey, EMPTY_PROVIDER, useStore } from "../store.ts";
 import { UsageMeter } from "./UsageMeter.tsx";
 import { Button } from "@/components/ui/button";
 import { Command, CommandItem, CommandList } from "@/components/ui/command";
@@ -25,6 +34,7 @@ import {
 } from "./ui.tsx";
 
 const NO_APPROVALS: PendingApproval[] = [];
+const NO_QUESTIONS: PendingQuestion[] = [];
 const NO_COMMANDS: SlashCommand[] = [];
 
 interface Recognizer {
@@ -44,8 +54,15 @@ const speech = window as unknown as {
 };
 const Dictation = speech.SpeechRecognition ?? speech.webkitSpeechRecognition;
 
-function EffortPicker({ effort, onPick }: { effort: Effort; onPick: (effort: Effort) => void }) {
-  const levels = useStore((state) => state.effortLevels);
+function EffortPicker({
+  effort,
+  levels,
+  onPick,
+}: {
+  effort: Effort;
+  levels: EffortOption[];
+  onPick: (effort: Effort) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [dragging, setDragging] = useState<number | null>(null);
   const trackRef = useRef<HTMLDivElement>(null);
@@ -231,6 +248,7 @@ export function Composer({
   chips,
   above,
   cwd,
+  providerId,
   model,
   permissionMode,
   effort,
@@ -247,6 +265,7 @@ export function Composer({
   chips?: ReactNode;
   above?: ReactNode;
   cwd?: string;
+  providerId: ProviderId;
   model: string;
   permissionMode: PermissionMode;
   effort: Effort;
@@ -260,12 +279,15 @@ export function Composer({
   blocked?: boolean;
   restore?: { text: string; key: number } | null;
 }) {
-  const models = useStore((state) => state.models);
-  const permissionModes = useStore((state) => state.permissionModes);
+  const provider = useStore(
+    (state) => state.providers.find((entry) => entry.id === providerId) ?? EMPTY_PROVIDER,
+  );
+  const { models, permissionModes, effortLevels, capabilities } = provider;
   const setError = useStore((state) => state.setError);
   const loadCommands = useStore((state) => state.loadCommands);
-  const commands = useStore((state) => (cwd ? state.commandsByCwd[cwd] : null) ?? NO_COMMANDS);
-  const commandsLoaded = useStore((state) => (cwd ? state.commandsByCwd[cwd] !== undefined : false));
+  const key = cwd ? commandKey(providerId, cwd) : null;
+  const commands = useStore((state) => (key ? state.commandsByCwd[key] : null) ?? NO_COMMANDS);
+  const commandsLoaded = useStore((state) => (key ? state.commandsByCwd[key] !== undefined : false));
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false);
@@ -288,14 +310,14 @@ export function Composer({
   }, [restore?.key]);
 
   // the menu only stands in for the command name, so it goes away as soon as arguments start
-  const typing = /^\/(\S*)$/.exec(text)?.[1] ?? null;
+  const typing = capabilities.slashCommands ? (/^\/(\S*)$/.exec(text)?.[1] ?? null) : null;
   const slashing = typing !== null;
 
   // a cold read spawns a CLI of its own, so the list is asked for on the first "/" rather than
   // on every mount — most sessions never type one
   useEffect(() => {
-    if (cwd && slashing) void loadCommands(cwd);
-  }, [cwd, slashing, loadCommands]);
+    if (cwd && slashing) void loadCommands(providerId, cwd);
+  }, [providerId, cwd, slashing, loadCommands]);
 
   const matches = useMemo(() => {
     if (typing === null) return NO_COMMANDS;
@@ -328,7 +350,7 @@ export function Composer({
     inputRef.current?.focus();
   };
 
-  // dropped files land in the data dir; the message carries their paths so Claude can read them
+  // Dropped files land in the data dir; the message carries their paths so the provider can read them.
   const addFiles = async (files: File[]) => {
     for (const file of files) {
       try {
@@ -537,18 +559,28 @@ export function Composer({
         </div>
 
         <div className="mt-1.5 flex items-center gap-0.5 px-1">
-          <Menu
-            title="Permission mode"
-            heading="Mode"
-            trigger={permissionModes.find((mode) => mode.value === permissionMode)?.label ?? permissionMode}
-            items={permissionModes.map((mode) => ({
-              id: mode.value,
-              label: mode.label,
-              hint: mode.hint,
-              selected: mode.value === permissionMode,
-            }))}
-            onPick={(id) => onPermissionMode(id as PermissionMode)}
-          />
+          {permissionModes.length > 0 ? (
+            <Menu
+              title={
+                running && !capabilities.livePermissionModeSwitch
+                  ? "Permission mode can change after this turn"
+                  : "Permission mode"
+              }
+              heading="Mode"
+              trigger={
+                permissionModes.find((mode) => mode.value === permissionMode)?.label ??
+                permissionMode
+              }
+              items={permissionModes.map((mode) => ({
+                id: mode.value,
+                label: mode.label,
+                hint: mode.hint,
+                selected: mode.value === permissionMode,
+              }))}
+              onPick={(id) => onPermissionMode(id as PermissionMode)}
+              disabled={Boolean(running && !capabilities.livePermissionModeSwitch)}
+            />
+          ) : null}
           <Button
             variant="ghost"
             size="icon"
@@ -572,7 +604,11 @@ export function Composer({
           <div className="flex-1" />
           <Menu
             align="end"
-            title="Model"
+            title={
+              running && !capabilities.liveModelSwitch
+                ? "Model can change after this turn"
+                : "Model"
+            }
             heading="Models"
             trigger={models.find((option) => option.slug === model || option.resolved === model)?.label ?? model}
             items={models.map((option) => ({
@@ -582,9 +618,12 @@ export function Composer({
               selected: option.slug === model,
             }))}
             onPick={onModel}
+            disabled={Boolean(running && !capabilities.liveModelSwitch)}
           />
-          <EffortPicker effort={effort} onPick={onEffort} />
-          <UsageMeter />
+          {capabilities.effort && effortLevels.length > 0 ? (
+            <EffortPicker effort={effort} levels={effortLevels} onPick={onEffort} />
+          ) : null}
+          <UsageMeter showProviderUsage={capabilities.usage} />
         </div>
       </div>
 
@@ -610,14 +649,73 @@ function ApprovalPanel({ approval }: { approval: PendingApproval }) {
       </p>
       <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">{detail}</p>
       <div className="mt-2 flex gap-2">
-        <Button variant="default" onClick={() => void respond(approval.id, "allow")}>
-          Allow once
-        </Button>
-        <Button onClick={() => void respond(approval.id, "always")}>Always allow</Button>
-        <Button variant="destructive" onClick={() => void respond(approval.id, "deny")}>
-          Deny
-        </Button>
+        {approval.decisions.includes("allow") ? (
+          <Button variant="default" onClick={() => void respond(approval.id, "allow")}>
+            Allow once
+          </Button>
+        ) : null}
+        {approval.decisions.includes("always") ? (
+          <Button onClick={() => void respond(approval.id, "always")}>Always allow</Button>
+        ) : null}
+        {approval.decisions.includes("deny") ? (
+          <Button variant="destructive" onClick={() => void respond(approval.id, "deny")}>
+            Deny
+          </Button>
+        ) : null}
       </div>
+    </div>
+  );
+}
+
+function QuestionPanel({ request }: { request: PendingQuestion }) {
+  const answerQuestion = useStore((state) => state.answerQuestion);
+  const [answers, setAnswers] = useState<Record<string, string[]>>({});
+  const complete = request.questions.every((question) => (answers[question.id]?.length ?? 0) > 0);
+
+  const pick = (questionId: string, optionId: string, multiple: boolean) => {
+    setAnswers((current) => {
+      if (!multiple) return { ...current, [questionId]: [optionId] };
+      const selected = current[questionId] ?? [];
+      return {
+        ...current,
+        [questionId]: selected.includes(optionId)
+          ? selected.filter((id) => id !== optionId)
+          : [...selected, optionId],
+      };
+    });
+  };
+
+  return (
+    <div className="mb-2 rounded-lg border border-primary/50 bg-primary/10 px-3 py-2.5">
+      {request.title ? <p className="text-[13px] font-medium">{request.title}</p> : null}
+      <div className="mt-1.5 flex flex-col gap-3">
+        {request.questions.map((question) => (
+          <div key={question.id}>
+            <p className="text-[12.5px] text-foreground">{question.prompt}</p>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {question.options.map((option) => {
+                const selected = answers[question.id]?.includes(option.id) ?? false;
+                return (
+                  <Button
+                    key={option.id}
+                    variant={selected ? "default" : "outline"}
+                    onClick={() => pick(question.id, option.id, question.allowMultiple)}
+                  >
+                    {option.label}
+                  </Button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+      <Button
+        className="mt-3"
+        disabled={!complete}
+        onClick={() => void answerQuestion(request.id, answers)}
+      >
+        Submit
+      </Button>
     </div>
   );
 }
@@ -633,21 +731,34 @@ export function ThreadComposer({
   const interrupt = useStore((state) => state.interrupt);
   const patchActive = useStore((state) => state.patchActive);
   const approvals = useStore((state) => state.approvalsByThread[thread.id] ?? NO_APPROVALS);
+  const questions = useStore((state) => state.questionsByThread[thread.id] ?? NO_QUESTIONS);
+  const provider = useStore(
+    (state) => state.providers.find((entry) => entry.id === thread.providerId) ?? EMPTY_PROVIDER,
+  );
   const running = thread.status === "running";
+  const name = thread.providerId === "cursor" ? "Cursor" : "Claude";
 
   return (
     <Composer
-      above={approvals.map((approval) => (
-        <ApprovalPanel key={approval.id} approval={approval} />
-      ))}
+      above={
+        <>
+          {approvals.map((approval) => (
+            <ApprovalPanel key={approval.id} approval={approval} />
+          ))}
+          {provider.capabilities.questions
+            ? questions.map((question) => <QuestionPanel key={question.id} request={question} />)
+            : null}
+        </>
+      }
       cwd={thread.cwd}
+      providerId={thread.providerId}
       model={thread.model}
       permissionMode={thread.permissionMode}
       effort={thread.effort}
       onModel={(model) => void patchActive({ model })}
       onPermissionMode={(permissionMode) => void patchActive({ permissionMode })}
       onEffort={(effort) => void patchActive({ effort })}
-      placeholder={running ? "Claude is working…" : "Ask Claude to change something…"}
+      placeholder={running ? `${name} is working…` : `Ask ${name} to change something…`}
       onSubmit={(text) => send(text)}
       running={running}
       onInterrupt={() => void interrupt()}

@@ -1,5 +1,5 @@
 // The settings page — a view beside the sessions rather than a layer over them. Two sections:
-// the Claude provider card (install, account, models, logout) and the appearance panel.
+// local provider status/catalogs and the appearance panel.
 import { useEffect, useMemo, useState } from "react";
 
 import { api } from "../lib/api.ts";
@@ -50,6 +50,7 @@ function ProviderCard({
 }) {
   const style = STATE_STYLE[provider.state];
   const [confirming, setConfirming] = useState(false);
+  const [showAllModels, setShowAllModels] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -85,7 +86,9 @@ function ProviderCard({
         {provider.state !== "ready" ? (
           <div className="rounded-md border border-border/70 bg-background px-3 py-2.5">
             <p className="text-[12px] text-muted-foreground">{provider.signInHint}</p>
-            <p className="mt-1.5 font-mono text-[12px] text-code-string">claude auth login</p>
+            <p className="mt-1.5 font-mono text-[12px] text-code-string">
+              {provider.signInCommand}
+            </p>
           </div>
         ) : null}
 
@@ -111,7 +114,7 @@ function ProviderCard({
         <div className="flex flex-col gap-1.5">
           <span className="text-[12px] text-muted-foreground">Models</span>
           <ul className="flex flex-col gap-1">
-            {provider.models.map((model) => (
+            {(showAllModels ? provider.models : provider.models.slice(0, 12)).map((model) => (
               <li key={model.slug} className="flex items-center gap-2 text-[13px]">
                 <span className="text-foreground">{model.label}</span>
                 <span className="font-mono text-[11px] text-faint">{model.slug}</span>
@@ -123,6 +126,15 @@ function ProviderCard({
               </li>
             ))}
           </ul>
+          {provider.models.length > 12 ? (
+            <Button
+              variant="ghost"
+              onClick={() => setShowAllModels((current) => !current)}
+              className="mt-1 self-start px-1.5 text-faint"
+            >
+              {showAllModels ? "Show fewer" : `Show all ${provider.models.length}`}
+            </Button>
+          ) : null}
         </div>
 
         <Separator />
@@ -130,7 +142,7 @@ function ProviderCard({
         <div className="flex items-center gap-3">
           <p className="min-w-0 flex-1 text-[11px] text-faint">
             Project and local settings resolve inside each session folder. Credentials stay in the
-            system keychain — sr03 reuses the CLI's own login and never stores them itself.
+            provider's own credential store — sr03 reuses the CLI login and never stores it itself.
           </p>
           {provider.state === "ready" ? (
             <Button
@@ -160,9 +172,10 @@ function ProviderCard({
           }
         >
           <p className="text-[13px] text-muted-foreground">
-            This runs <span className="font-mono text-foreground">claude auth logout</span>, which
-            signs out the Claude Code CLI on this machine — not just sr03. Running sessions will
-            stop working until you sign in again.
+            This runs{" "}
+            <span className="font-mono text-foreground">{provider.logoutCommand}</span>, which
+            signs out {provider.label} on this machine — not just sr03. Running sessions may stop
+            working until you sign in again.
           </p>
         </Dialog>
       ) : null}
@@ -306,6 +319,9 @@ type Section = (typeof SECTIONS)[number]["id"];
 
 export function SettingsView() {
   const setSettingsOpen = useStore((state) => state.setSettingsOpen);
+  const catalogs = useStore((state) => state.providers);
+  const defaultProviderId = useStore((state) => state.defaultProviderId);
+  const refreshState = useStore((state) => state.refreshState);
   const [section, setSection] = usePersistedState<Section>("settings-section", "providers");
   const [providers, setProviders] = useState<ProviderStatus[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -386,6 +402,36 @@ export function SettingsView() {
             {section === "appearance" ? <AppearancePanel /> : null}
             {section === "providers" ? (
               <>
+                <section className="rounded-lg border border-border/70 bg-card/40 px-4 py-3">
+                  <div className="flex items-center gap-4">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[13px] text-foreground">Default provider</p>
+                      <p className="text-[11.5px] text-faint">
+                        Used for each new session; existing sessions keep their provider.
+                      </p>
+                    </div>
+                    <Select
+                      value={defaultProviderId}
+                      onValueChange={(value) => {
+                        void api
+                          .saveSetting("defaultProviderId", value)
+                          .then(() => refreshState())
+                          .catch((cause: Error) => setError(cause.message));
+                      }}
+                    >
+                      <SelectTrigger className="w-44 shrink-0">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {catalogs.map((provider) => (
+                          <SelectItem key={provider.id} value={provider.id}>
+                            {provider.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </section>
                 {error ? <p className="text-[12px] text-destructive">{error}</p> : null}
                 {providers === null && !error ? (
                   <p className="text-[12px] text-faint">Checking…</p>

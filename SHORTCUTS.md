@@ -21,7 +21,7 @@ Active while a session is open.
 | `⌘O` | Open the session's folder in the preferred app (the one marked in the **Open** menu) | `web/src/components/ChatView.tsx` |
 | `⌘B` | Show / hide the file tree | `web/src/components/ChatView.tsx` |
 | `⌘J` | Show / hide the terminal | `web/src/components/ChatView.tsx` |
-| `⌘⇧A` | Show / hide the agents panel | `web/src/components/ChatView.tsx` |
+| `⌘⇧A` | Show / hide the agents panel, when the provider reports subagent tasks | `web/src/components/ChatView.tsx` |
 | `⌘W` | Close the active file tab — the chat tab is pinned | `web/src/components/ChatView.tsx` |
 | `⌘K` then `W` | Close every file tab | `web/src/components/ChatView.tsx` |
 
@@ -45,7 +45,7 @@ Active while a file tab is selected.
 | `↑` / `↓` | Slash-command menu: move the highlight | `web/src/components/Composer.tsx` |
 | `⏎` or `Tab` | Slash-command menu: pick the highlighted command | `web/src/components/Composer.tsx` |
 | `Esc` | Slash-command menu: dismiss; image preview: close | `web/src/components/Composer.tsx` |
-| `1`–`9` | Model or permission-mode menu open: pick the nth item | `web/src/components/ui.tsx` |
+| `1`–`9` | Provider, model or permission-mode menu open: pick the nth item | `web/src/components/ui.tsx` |
 | `←` / `→` | Effort slider focused: step the level | `web/src/components/Composer.tsx` |
 
 ## Sidebar

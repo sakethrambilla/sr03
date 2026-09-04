@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 
 import { api } from "../lib/api.ts";
 import type { Branch, GitSnapshot } from "../lib/types.ts";
-import { useStore } from "../store.ts";
+import { EMPTY_PROVIDER, useStore } from "../store.ts";
 import type { Draft } from "../store.ts";
 import {
   Command,
@@ -22,6 +22,7 @@ import {
   CheckIcon,
   Chip,
   FolderIcon,
+  Menu,
   PlusIcon,
   SparkleIcon,
   StatusDot,
@@ -94,6 +95,9 @@ function BranchMenu({
 
 function DraftChips({ draft }: { draft: Draft }) {
   const project = useStore((state) => state.projects.find((item) => item.id === draft.projectId));
+  const providers = useStore((state) => state.providers);
+  const provider =
+    providers.find((entry) => entry.id === draft.providerId) ?? EMPTY_PROVIDER;
   const patchDraft = useStore((state) => state.patchDraft);
   const refreshState = useStore((state) => state.refreshState);
   const setError = useStore((state) => state.setError);
@@ -191,6 +195,18 @@ function DraftChips({ draft }: { draft: Draft }) {
 
   return (
     <>
+      <Menu
+        title="Provider"
+        heading="Provider"
+        trigger={provider.label}
+        items={providers.map((entry) => ({
+          id: entry.id,
+          label: entry.label,
+          hint: entry.id === "claude" ? "Claude Agent SDK" : "Cursor Agent over ACP",
+          selected: entry.id === draft.providerId,
+        }))}
+        onPick={(id) => patchDraft({ providerId: id === "cursor" ? "cursor" : "claude" })}
+      />
       <Chip
         icon={<FolderIcon />}
         onClick={() => void chooseFolder()}
@@ -295,6 +311,7 @@ export function DraftView({ draft }: { draft: Draft }) {
       <Composer
         chips={<DraftChips draft={draft} />}
         cwd={draft.worktreePath ?? project?.path}
+        providerId={draft.providerId}
         model={draft.model}
         permissionMode={draft.permissionMode}
         effort={draft.effort}
