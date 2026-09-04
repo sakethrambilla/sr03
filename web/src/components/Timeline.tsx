@@ -231,7 +231,7 @@ const Bubble = memo(function Bubble({
   if (message.role === "user") {
     return (
       <div className="group flex flex-col items-end">
-        <div className="max-w-[85%] rounded-lg bg-accent px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap text-foreground">
+        <div className="max-w-[85%] rounded-lg bg-accent px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap break-words text-foreground">
           {message.text}
         </div>
         <MessageActions>
