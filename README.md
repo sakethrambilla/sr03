@@ -14,8 +14,9 @@ server, no ORM, no event sourcing.
 - pnpm 11
 - [Claude Code](https://claude.com/claude-code) installed and signed in — sr03 runs through the
   Agent SDK, which reuses the CLI's own login and its `~/.claude` settings
-- macOS. The core works anywhere, but the native folder picker, "reveal in Finder", the open-in app
-  list, the resource meter and the `.dmg` build are all macOS-only
+- macOS or Windows. The core works on both, but the native folder and file pickers, "reveal in
+  Finder", the open-in app list and the resource meter are macOS-only, and both installers are
+  built from macOS
 
 ## Quick start
 
@@ -35,7 +36,8 @@ pnpm dev         # server :3399 + Vite :5399 (open http://localhost:5399)
 pnpm typecheck   # both packages
 pnpm build       # web → web/dist, which the server then serves itself
 pnpm start       # server only, serving web/dist
-pnpm dmg         # desktop/dist/sr03-<version>-arm64.dmg (arm64, ad-hoc signed)
+pnpm dmg         # desktop/dist/sr03-<version>-arm64.dmg (macOS arm64, ad-hoc signed)
+pnpm exe         # desktop/dist/sr03-<version>-x64-setup.exe (Windows x64 NSIS, unsigned)
 ```
 
 ## Configuration
@@ -129,13 +131,14 @@ Every source file carries a header comment saying what it holds. In short:
 ### `desktop` — the Electron shell
 
 Deliberately **outside** the pnpm workspace, with its own workspace file and lockfile, so an
-ordinary `pnpm install` never pulls Electron's ~200 MB. `pnpm dmg` installs it.
+ordinary `pnpm install` never pulls Electron's ~200 MB. `pnpm dmg` and `pnpm exe` install it.
 
 | File | Contents |
 | --- | --- |
 | `main.js` | Resolves the login shell's `PATH`, spawns the machine's own `node` to run the server, opens the window |
-| `payload.mjs` | Collects `web/dist` plus a symlink-free server copy into `desktop/payload` |
-| `build/icon.png` | The app icon; electron-builder converts it to `.icns` itself |
+| `payload.mjs` | Collects `web/dist` plus a symlink-free server copy into `desktop/payload`, for one target platform |
+| `report.mjs` | Prints where the installer landed, as the build's last line |
+| `build/icon.png` | The app icon; electron-builder converts it to `.icns` and `.ico` itself |
 
 The shell does not host the server in Electron's Node — type stripping, `node:sqlite` and
 node-pty's ABI all want the real thing. It also gets a free port rather than 3399, so a packaged

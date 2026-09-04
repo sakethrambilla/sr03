@@ -84,8 +84,10 @@ export function createSession(threadId: string, cwd: string, cols: number, rows:
   }
 
   const terminalId = randomUUID();
-  const shell = process.env.SHELL ?? "/bin/sh";
-  const term = spawn(shell, ["-l"], {
+  const windows = process.platform === "win32";
+  const shell = windows ? "powershell.exe" : (process.env.SHELL ?? "/bin/sh");
+  // -l makes a POSIX shell read the user's rc files; powershell has no equivalent flag
+  const term = spawn(shell, windows ? [] : ["-l"], {
     cwd,
     cols: Math.max(cols, 2),
     rows: Math.max(rows, 1),
