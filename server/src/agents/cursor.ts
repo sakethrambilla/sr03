@@ -1,6 +1,7 @@
 // Cursor CLI provider adapter. One `cursor-agent acp` process owns each warm thread; standard and
 // Cursor-extension messages are normalized into the provider-neutral runtime contract.
 import { randomUUID } from "node:crypto";
+import os from "node:os";
 
 import { currentProvider } from "../models.ts";
 import { findCursor } from "../providers.ts";
@@ -108,6 +109,12 @@ interface CursorNativeSession {
 const STARTUP_TIMEOUT_MS = 30_000;
 const LOAD_TIMEOUT_MS = 90_000;
 const SETTINGS_TIMEOUT_MS = 15_000;
+const CLIENT_CAPABILITIES = {
+  fs: { readTextFile: false, writeTextFile: false },
+  terminal: false,
+  image: false,
+  _meta: { parameterizedModelPicker: true },
+};
 const CANCEL_WRITE_TIMEOUT_MS = 2_000;
 const CANCEL_FINISH_TIMEOUT_MS = 8_000;
 const LOAD_REPLAY_IDLE_MS = 175;
@@ -140,6 +147,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function acpBaseId(modelId: string): string {
+  const trimmed = modelId.trim();
+  const bracket = trimmed.indexOf("[");
+  const base = bracket === -1 ? trimmed : trimmed.slice(0, bracket);
+  return base === "default[]" ? "default" : base;
+}
+
+function catalogSlug(modelId: string, label?: string | null): string {
+  const base = acpBaseId(modelId);
+  return base === "default" || label?.toLowerCase() === "auto" ? "auto" : base;
+}
+
+function nativeModelId(slug: string, models: Map<string, string>): string {
+  const wanted = slug === "auto" ? "default" : acpBaseId(slug);
+  const mapped = models.get(slug) ?? models.get(wanted);
+  if (mapped) {
+    const base = acpBaseId(mapped);
+    return base === "default[]" ? "default" : base;
+  }
+  for (const [key, native] of models) {
+    if (acpBaseId(key) === wanted || acpBaseId(native) === wanted) return acpBaseId(native);
+  }
+  return wanted;
 }
 
 function errorMessage(error: unknown): string {
@@ -767,14 +799,14 @@ function setupModels(value: unknown): {
     const modelId = stringValue(entry.modelId);
     const label = stringValue(entry.name);
     if (!modelId || !label) continue;
-    const slug = modelId === "default[]" || label.toLowerCase() === "auto" ? "auto" : modelId;
+    const slug = catalogSlug(modelId, label);
     if (nativeBySlug.has(slug)) continue;
     nativeBySlug.set(slug, modelId);
     models.push({
       slug,
       label,
       hint: stringValue(entry.description) ?? "Available through Cursor ACP",
-      resolved: modelId,
+      resolved: acpBaseId(modelId),
     });
   }
   return {
@@ -802,13 +834,14 @@ async function applySetupSettings(
   const advertised = setupModels(setup);
   if (advertised.models.length > 0) {
     session.models = advertised.nativeBySlug;
-    session.emit({ type: "models.changed", models: advertised.models });
+    const known = currentProvider("cursor").models;
+    if (known.length <= 1) {
+      session.emit({ type: "models.changed", models: advertised.models });
+    }
   }
-  const nativeModel = session.models.get(thread.model);
-  if (!nativeModel) {
-    throw new Error(`Cursor model "${thread.model}" is no longer available`);
-  }
-  if (advertised.currentModelId !== nativeModel) {
+  const nativeModel = nativeModelId(thread.model, session.models);
+  const current = advertised.currentModelId;
+  if (current && acpBaseId(current) !== nativeModel && current !== nativeModel) {
     await session.connection.request(
       "session/set_model",
       { sessionId: session.sessionId, modelId: nativeModel },
@@ -990,8 +1023,7 @@ async function applySettings(
     return "applied";
   }
   if (session.disposed || !session.sessionId) return "restart";
-  const nativeModel = session.models.get(patch.model);
-  if (!nativeModel) throw new Error(`Cursor model "${patch.model}" is no longer available`);
+  const nativeModel = nativeModelId(patch.model, session.models);
   try {
     await session.connection.request(
       "session/set_model",
@@ -1066,11 +1098,7 @@ async function open(
       "initialize",
       {
         protocolVersion: 1,
-        clientCapabilities: {
-          fs: { readTextFile: false, writeTextFile: false },
-          terminal: false,
-          image: false,
-        },
+        clientCapabilities: CLIENT_CAPABILITIES,
         clientInfo: { name: "sr03", version: "0.0.0" },
       },
       { timeoutMs: STARTUP_TIMEOUT_MS, signal },
@@ -1180,6 +1208,81 @@ async function readUsage(): Promise<Usage> {
     credits: null,
     windowsAt: null,
   };
+}
+
+function listedModelHint(entry: Record<string, unknown>): string {
+  const options = Array.isArray(entry.configOptions) ? entry.configOptions : [];
+  const names = options.flatMap((option) => {
+    if (!isRecord(option)) return [];
+    const name = stringValue(option.name);
+    return name ? [name] : [];
+  });
+  return names.length > 0 ? names.join(" · ") : "Available through Cursor ACP";
+}
+
+function parseListedModels(value: unknown): ModelOption[] {
+  const listed = isRecord(value) && Array.isArray(value.models) ? value.models : [];
+  const models: ModelOption[] = [];
+  const seen = new Set<string>();
+  for (const entry of listed) {
+    if (!isRecord(entry)) continue;
+    const modelId = stringValue(entry.value);
+    const label = stringValue(entry.name);
+    if (!modelId || !label) continue;
+    const slug = catalogSlug(modelId, label);
+    if (seen.has(slug)) continue;
+    seen.add(slug);
+    models.push({
+      slug,
+      label,
+      hint: listedModelHint(entry),
+      resolved: acpBaseId(modelId),
+    });
+  }
+  return models;
+}
+
+// Cursor only advertises picker IDs through ACP. Probe once at startup so drafts can choose a
+// model before any thread exists; session setup still reapplies the selected slug.
+export async function discoverCursorModels(): Promise<ModelOption[]> {
+  const binary = await findCursor();
+  if (!binary) return [];
+  const connection = spawnAcp({
+    binary,
+    args: ["acp"],
+    cwd: os.tmpdir(),
+    onStderr(text) {
+      const message = text.trim();
+      if (message) console.error(`[cursor:models] ${message}`);
+    },
+  });
+  try {
+    await connection.request(
+      "initialize",
+      {
+        protocolVersion: 1,
+        clientCapabilities: CLIENT_CAPABILITIES,
+        clientInfo: { name: "sr03", version: "0.0.0" },
+      },
+      { timeoutMs: STARTUP_TIMEOUT_MS },
+    );
+    await connection.request(
+      "authenticate",
+      { methodId: "cursor_login" },
+      { timeoutMs: STARTUP_TIMEOUT_MS },
+    );
+    const listed = await connection.request(
+      "cursor/list_available_models",
+      {},
+      { timeoutMs: SETTINGS_TIMEOUT_MS },
+    );
+    return parseListedModels(listed);
+  } catch (error) {
+    console.error(`[cursor:models] ${errorMessage(error)}`);
+    return [];
+  } finally {
+    connection.close();
+  }
 }
 
 export const cursorProvider: AgentProvider = {

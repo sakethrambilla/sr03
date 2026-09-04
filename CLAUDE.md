@@ -108,9 +108,10 @@ REST for commands, WebSocket (`/ws`) for everything the server pushes back. Wire
 - Auto-review and Force are process flags. Agent, Plan and Ask are reapplied with
   `session/set_mode` after every new or loaded session; changing a permission mode parks the idle
   process first.
-- Cursor's CLI model aliases are not ACP model IDs. The adapter learns the accepted IDs from the
-  first session setup, caches them for future drafts, and reapplies the selected model after every
-  new or loaded session.
+- Cursor advertises picker slugs through `cursor/list_available_models` at startup (Auto, Composer,
+  Grok, …). `initialize` sets `parameterizedModelPicker`, so `session/set_model` accepts those
+  slugs rather than the parameterized ACP IDs. The selected slug is reapplied after every new or
+  loaded session.
 - `session/load` replays prior updates. The adapter suppresses that replay because sr03 already owns
   the persisted transcript; replaying it would duplicate every message and tool row.
 - ACP request-permission options are provider supplied. Only decisions present in that request may

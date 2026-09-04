@@ -8,6 +8,7 @@ import { api } from "../lib/api.ts";
 import type {
   Effort,
   EffortOption,
+  ModelOption,
   PendingApproval,
   PendingQuestion,
   PermissionMode,
@@ -18,13 +19,14 @@ import type {
 import { commandKey, EMPTY_PROVIDER, useStore } from "../store.ts";
 import { UsageMeter } from "./UsageMeter.tsx";
 import { Button } from "@/components/ui/button";
-import { Command, CommandItem, CommandList } from "@/components/ui/command";
+import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import { Toggle } from "@/components/ui/toggle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   CloseIcon,
+  CheckIcon,
   Menu,
   MicIcon,
   PlusIcon,
@@ -164,6 +166,68 @@ function EffortPicker({
             </div>
             <p className="mt-1.5 text-[11px] text-faint">{current?.hint}</p>
           </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function ModelPicker({
+  model,
+  models,
+  disabled,
+  title,
+  onPick,
+}: {
+  model: string;
+  models: ModelOption[];
+  disabled?: boolean;
+  title: string;
+  onPick: (model: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = models.find((option) => option.slug === model || option.resolved === model);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={disabled}
+          title={title}
+          className="h-7 max-w-44 px-1.5 text-[12.5px] text-muted-foreground"
+        >
+          <span className="truncate">{selected?.label ?? model}</span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" side="top" className="w-72 p-0">
+        <Command>
+          {models.length > 8 ? <CommandInput placeholder="Search models…" /> : null}
+          <CommandList className="max-h-80 p-1">
+            <CommandEmpty className="py-4 text-center text-[12px] text-faint">No models</CommandEmpty>
+            {models.map((option) => (
+              <CommandItem
+                key={option.slug}
+                value={`${option.label} ${option.slug} ${option.hint}`}
+                onSelect={() => {
+                  onPick(option.slug);
+                  setOpen(false);
+                }}
+                className="gap-3"
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px]">{option.label}</span>
+                  {option.hint ? (
+                    <span className="block truncate text-[11px] text-faint">{option.hint}</span>
+                  ) : null}
+                </span>
+                {option.slug === model || option.resolved === model ? (
+                  <CheckIcon className="text-primary" />
+                ) : null}
+              </CommandItem>
+            ))}
+          </CommandList>
+        </Command>
       </PopoverContent>
     </Popover>
   );
@@ -602,21 +666,14 @@ export function Composer({
             </Toggle>
           ) : null}
           <div className="flex-1" />
-          <Menu
-            align="end"
+          <ModelPicker
+            model={model}
+            models={models}
             title={
               running && !capabilities.liveModelSwitch
                 ? "Model can change after this turn"
                 : "Model"
             }
-            heading="Models"
-            trigger={models.find((option) => option.slug === model || option.resolved === model)?.label ?? model}
-            items={models.map((option) => ({
-              id: option.slug,
-              label: option.label,
-              hint: option.hint,
-              selected: option.slug === model,
-            }))}
             onPick={onModel}
             disabled={Boolean(running && !capabilities.liveModelSwitch)}
           />
