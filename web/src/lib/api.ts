@@ -1,5 +1,6 @@
 import type {
   AppState,
+  ApprovalDecision,
   ChangedFile,
   DirListing,
   Effort,
@@ -187,6 +188,9 @@ export const api = {
   rewind: (id: string, messageId: string) =>
     post<{ text: string }>(`/api/threads/${id}/rewind`, { messageId }),
   interrupt: (id: string) => post<{ ok: true }>(`/api/threads/${id}/interrupt`),
-  respondToApproval: (threadId: string, approvalId: string, decision: "allow" | "always" | "deny") =>
-    post<{ ok: true }>(`/api/threads/${threadId}/approvals/${approvalId}`, { decision }),
+  respondToApproval: (threadId: string, approvalId: string, decision: ApprovalDecision) =>
+    post<{ ok: true }>(
+      `/api/threads/${threadId}/approvals/${approvalId}`,
+      typeof decision === "string" ? { decision } : decision,
+    ),
 };

@@ -37,6 +37,7 @@ import {
   isPermissionMode,
   setDefaultPermissionMode,
 } from "./models.ts";
+import type { Question } from "./types.ts";
 import { publish } from "./bus.ts";
 
 class HttpError extends Error {
@@ -81,6 +82,29 @@ function requireString(body: Record<string, unknown>, key: string): string {
     throw new HttpError(400, `\`${key}\` is required`);
   }
   return value.trim();
+}
+
+function readDecision(body: Record<string, unknown>): "allow" | "always" | "deny" {
+  const decision = requireString(body, "decision");
+  if (decision !== "allow" && decision !== "always" && decision !== "deny") {
+    throw new HttpError(400, "Unknown decision");
+  }
+  return decision;
+}
+
+// every question must come back answered — a half-filled map would leave the model guessing
+function readAnswers(body: Record<string, unknown>, questions: Question[]): Record<string, string> {
+  const given = body.answers;
+  if (!given || typeof given !== "object") throw new HttpError(400, "`answers` is required");
+  const answers: Record<string, string> = {};
+  for (const question of questions) {
+    const answer = (given as Record<string, unknown>)[question.question];
+    if (typeof answer !== "string" || answer.trim().length === 0) {
+      throw new HttpError(400, `No answer for "${question.question}"`);
+    }
+    answers[question.question] = answer.trim();
+  }
+  return answers;
 }
 
 // the search and the per-column checklists travel as query params, so one parser reads both
@@ -676,10 +700,16 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
     handler: async ({ params, request }) => {
       const thread = requireThread(params[0]!);
       const body = await readBody(request);
-      const decision = requireString(body, "decision");
-      if (decision !== "allow" && decision !== "always" && decision !== "deny") {
-        throw new HttpError(400, "Unknown decision");
-      }
+      const pending = claude
+        .pendingApprovals()
+        .find((approval) => approval.threadId === thread.id && approval.id === params[1]);
+      if (!pending) throw new HttpError(410, "Approval is no longer pending");
+
+      // a question is answered rather than allowed, but dismissing it is still a plain deny
+      const decision =
+        pending.questions && body.decision !== "deny"
+          ? { answers: readAnswers(body, pending.questions) }
+          : readDecision(body);
       const resolved = claude.resolveApproval(thread.id, params[1]!, decision);
       if (!resolved) throw new HttpError(410, "Approval is no longer pending");
       return { ok: true };

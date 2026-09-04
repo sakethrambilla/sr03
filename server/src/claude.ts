@@ -14,10 +14,13 @@ import { publish } from "./bus.ts";
 import { IDLE_PARK_MS } from "./config.ts";
 import { messages as messageStore, threads as threadStore, usage as usageStore } from "./db.ts";
 import type {
+  ApprovalDecision,
   Effort,
   Message,
   PendingApproval,
   PermissionMode,
+  Question,
+  QuestionOption,
   SlashCommand,
   Thread,
   ThreadPhase,
@@ -61,8 +64,6 @@ function createInputQueue(): InputQueue {
     },
   };
 }
-
-type ApprovalDecision = "allow" | "always" | "deny";
 
 interface Session {
   threadId: string;
@@ -506,15 +507,52 @@ export function listCommands(cwd: string): Promise<SlashCommand[]> {
     .catch(() => cachedCommands(cwd));
 }
 
+// the CLI routes this one through canUseTool in every permission mode, unlike every other tool —
+// so the question panel is reached even under acceptEdits and bypassPermissions
+const ASK = "AskUserQuestion";
+
+function parseQuestions(input: Record<string, unknown>): Question[] {
+  const raw = Array.isArray(input.questions) ? input.questions : [];
+  return raw.flatMap((entry): Question[] => {
+    if (!entry || typeof entry !== "object") return [];
+    const value = entry as Record<string, unknown>;
+    const question = typeof value.question === "string" ? value.question : "";
+    if (!question) return [];
+    const options = (Array.isArray(value.options) ? value.options : []).flatMap(
+      (option): QuestionOption[] => {
+        if (!option || typeof option !== "object") return [];
+        const label = (option as Record<string, unknown>).label;
+        const description = (option as Record<string, unknown>).description;
+        if (typeof label !== "string" || label.length === 0) return [];
+        return [{ label, description: typeof description === "string" ? description : "" }];
+      },
+    );
+    return [
+      {
+        question,
+        header: typeof value.header === "string" ? value.header : "Question",
+        options,
+        multiSelect: value.multiSelect === true,
+      },
+    ];
+  });
+}
+
 function makeCanUseTool(session: Session): CanUseTool {
   return async (toolName, input, options) => {
-    if (session.alwaysAllow.has(toolName)) return { behavior: "allow", updatedInput: input };
+    // a question is answered, never blanket-allowed, so alwaysAllow must not swallow it
+    const questions = toolName === ASK ? parseQuestions(input) : [];
+    const asking = questions.length > 0;
+    if (!asking && session.alwaysAllow.has(toolName)) {
+      return { behavior: "allow", updatedInput: input };
+    }
 
     const approval: PendingApproval = {
       id: randomUUID(),
       threadId: session.threadId,
       toolName,
       input,
+      ...(asking ? { questions } : {}),
     };
     publish({ type: "thread.approval", approval });
 
@@ -531,7 +569,12 @@ function makeCanUseTool(session: Session): CanUseTool {
       });
     });
 
-    if (decision === "deny") return { behavior: "deny", message: "Denied by user." };
+    if (typeof decision === "object") {
+      return { behavior: "allow", updatedInput: { questions: input.questions, answers: decision.answers } };
+    }
+    if (decision === "deny") {
+      return { behavior: "deny", message: asking ? "Question dismissed by user." : "Denied by user." };
+    }
     if (decision === "always") {
       session.alwaysAllow.add(toolName);
       return {

@@ -24,6 +24,7 @@ const TOOL_PHRASES: Record<string, { verb: string; noun: string }> = {
   Task: { verb: "Launched", noun: "agents" },
   TodoWrite: { verb: "Updated", noun: "todos" },
   ExitPlanMode: { verb: "Presented", noun: "plans" },
+  AskUserQuestion: { verb: "Asked", noun: "questions" },
 };
 
 const ANY_TOOL = { verb: "Used", noun: "tools" };
