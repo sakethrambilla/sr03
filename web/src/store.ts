@@ -5,6 +5,7 @@ import { applyAppearance, loadAppearance, saveAppearance } from "./lib/appearanc
 import type { Appearance } from "./lib/appearance.ts";
 import type {
   AppState,
+  ApprovalDecision,
   Effort,
   Message,
   PendingApproval,
@@ -75,7 +76,7 @@ interface Store extends AppState {
   interrupt: () => Promise<void>;
   patchActive: (patch: { model?: string; permissionMode?: PermissionMode; effort?: Effort }) => Promise<void>;
   setDefaultPermissionMode: (mode: PermissionMode) => Promise<void>;
-  respond: (approvalId: string, decision: "allow" | "always" | "deny") => Promise<void>;
+  respond: (approval: PendingApproval, decision: ApprovalDecision) => Promise<void>;
   refreshUsage: () => Promise<void>;
   resync: () => Promise<void>;
   loadCommands: (cwd: string) => Promise<void>;
@@ -444,16 +445,16 @@ export const useStore = create<Store>((set, get) => ({
     }
   },
 
-  respond: async (approvalId, decision) => {
-    const id = get().activeThreadId;
-    if (!id) return;
+  // the approval carries its own thread, so answering after switching sessions still lands right
+  respond: async (approval, decision) => {
+    const { id, threadId } = approval;
     set((state) => ({
       approvalsByThread: {
         ...state.approvalsByThread,
-        [id]: (state.approvalsByThread[id] ?? []).filter((approval) => approval.id !== approvalId),
+        [threadId]: (state.approvalsByThread[threadId] ?? []).filter((entry) => entry.id !== id),
       },
     }));
-    await api.respondToApproval(id, approvalId, decision).catch((error: Error) =>
+    await api.respondToApproval(threadId, id, decision).catch((error: Error) =>
       set({ error: error.message }),
     );
   },
