@@ -25,6 +25,16 @@ Active while a session is open.
 | `⌘W` | Close the active file tab — the chat tab is pinned | `web/src/components/ChatView.tsx` |
 | `⌘K` then `W` | Close every file tab | `web/src/components/ChatView.tsx` |
 
+## Transcript
+
+Active while the turn rail — the ticks in the transcript's left gutter — has focus.
+
+| Shortcut | Action | Code |
+| --- | --- | --- |
+| `↑` / `↓` | Move to the previous / next turn | `web/src/components/Timeline.tsx` |
+| `Home` / `End` | Move to the first / last turn | `web/src/components/Timeline.tsx` |
+| `⏎` / `Space` | Scroll the transcript to that turn | `web/src/components/Timeline.tsx` |
+
 ## File editor
 
 Active while a file tab is selected.
