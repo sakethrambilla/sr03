@@ -692,6 +692,8 @@ function startSession(thread: Thread): Session {
       cwd: thread.cwd,
       model: thread.model,
       permissionMode: thread.permissionMode,
+      // required by the SDK for bypassPermissions to actually skip canUseTool, not just be set
+      allowDangerouslySkipPermissions: true,
       effort: thread.effort,
       includePartialMessages: true,
       abortController: abort,
