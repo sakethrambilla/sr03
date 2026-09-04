@@ -6,14 +6,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
-import {
-  DEFAULT_EFFORT,
-  DEFAULT_MODEL,
-  DEFAULT_PERMISSION_MODE,
-  EFFORT_LEVELS,
-  listModels,
-  PERMISSION_MODES,
-} from "./models.ts";
+import { currentDefaults, EFFORT_LEVELS, listModels, PERMISSION_MODES } from "./models.ts";
 import type { ModelOption } from "./models.ts";
 
 const exec = promisify(execFile);
@@ -119,11 +112,7 @@ export async function listProviders(): Promise<ProviderStatus[]> {
       account,
       settingSources: SETTING_SOURCES,
       models: await listModels(),
-      defaults: {
-        model: DEFAULT_MODEL,
-        permissionMode: DEFAULT_PERMISSION_MODE,
-        effort: DEFAULT_EFFORT,
-      },
+      defaults: currentDefaults(),
       // sr03 runs through the Agent SDK, which reuses the CLI's own login
       signInHint: "Run `claude auth login` in a terminal to sign in.",
     },
