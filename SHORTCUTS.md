@@ -45,7 +45,7 @@ Active while a file tab is selected.
 | `↑` / `↓` | Slash-command menu: move the highlight | `web/src/components/Composer.tsx` |
 | `⏎` or `Tab` | Slash-command menu: pick the highlighted command | `web/src/components/Composer.tsx` |
 | `Esc` | Slash-command menu: dismiss; image preview: close | `web/src/components/Composer.tsx` |
-| `1`–`9` | Provider, model or permission-mode menu open: pick the nth item | `web/src/components/ui.tsx` |
+| `1`–`9` | Provider or permission-mode menu open: pick the nth item | `web/src/components/ui.tsx` |
 | `←` / `→` | Effort slider focused: step the level | `web/src/components/Composer.tsx` |
 
 ## Sidebar

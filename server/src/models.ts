@@ -150,15 +150,20 @@ async function readClaudeCatalog(): Promise<ModelOption[]> {
 
 const inFlight: Partial<Record<ProviderId, Promise<ModelOption[]>>> = {};
 
+async function readCursorCatalog(): Promise<ModelOption[]> {
+  const { discoverCursorModels } = await import("./agents/cursor.ts");
+  const models = await discoverCursorModels();
+  return models.length === 0 ? known.cursor : models;
+}
+
 // Every provider shares one warm lookup. Changed answers are persisted and pushed to every client.
 export function listModels(providerId: ProviderId): Promise<ModelOption[]> {
-  if (providerId === "cursor") return Promise.resolve(known.cursor);
   const existing = inFlight[providerId];
   if (existing) return existing;
-  const reading = readClaudeCatalog()
+  const reading = (providerId === "cursor" ? readCursorCatalog() : readClaudeCatalog())
     .then((models) => {
       updateProviderModels(providerId, models);
-      return models;
+      return known[providerId];
     })
     .catch((error: Error) => {
       console.error(`[models:${providerId}] ${error.message}`);
@@ -169,8 +174,8 @@ export function listModels(providerId: ProviderId): Promise<ModelOption[]> {
   return reading;
 }
 
-// Cursor advertises the model IDs accepted by ACP only after session setup. CLI aliases from
-// `--list-models` are deliberately not used because `session/set_model` rejects them.
+// Cursor advertises picker slugs through `cursor/list_available_models`. Session setup still
+// maps those slugs onto ACP `session/set_model` after every new or loaded session.
 export function updateProviderModels(providerId: ProviderId, models: ModelOption[]): ProviderCatalog {
   if (models.length === 0 || JSON.stringify(models) === JSON.stringify(known[providerId])) {
     return makeCatalog(providerId);
@@ -194,11 +199,15 @@ export function isPermissionMode(
 }
 
 export function isModel(providerId: ProviderId, value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    value.trim().length > 0 &&
-    makeCatalog(providerId).models.some((model) => model.slug === value)
-  );
+  if (typeof value !== "string" || value.trim().length === 0) return false;
+  const wanted = value === "auto" ? "default" : value.includes("[") ? value.slice(0, value.indexOf("[")) : value;
+  return makeCatalog(providerId).models.some((model) => {
+    if (model.slug === value || model.resolved === value) return true;
+    const slug = model.slug === "auto" ? "default" : model.slug;
+    const resolved = model.resolved ?? model.slug;
+    const resolvedBase = resolved.includes("[") ? resolved.slice(0, resolved.indexOf("[")) : resolved;
+    return slug === wanted || resolvedBase === wanted;
+  });
 }
 
 export function isEffort(providerId: ProviderId, value: unknown): value is Effort {

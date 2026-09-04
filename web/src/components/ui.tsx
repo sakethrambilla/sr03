@@ -318,9 +318,9 @@ export function Menu({
       <DropdownMenuTrigger
         title={title}
         disabled={disabled}
-        className="flex h-7 shrink-0 items-center rounded-md px-1.5 text-[12.5px] text-muted-foreground transition outline-none hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 data-[state=open]:bg-accent data-[state=open]:text-foreground"
+        className="flex h-7 max-w-44 shrink-0 items-center rounded-md px-1.5 text-[12.5px] text-muted-foreground transition outline-none hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 data-[state=open]:bg-accent data-[state=open]:text-foreground"
       >
-        {trigger}
+        <span className="truncate">{trigger}</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align={align}

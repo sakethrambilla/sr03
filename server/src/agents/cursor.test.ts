@@ -41,6 +41,17 @@ for await (const line of lines) {
     });
   } else if (message.method === "session/set_model" || message.method === "session/set_mode") {
     send({ jsonrpc: "2.0", id: message.id, result: {} });
+  } else if (message.method === "cursor/list_available_models") {
+    send({
+      jsonrpc: "2.0",
+      id: message.id,
+      result: {
+        models: [
+          { value: "default", name: "Auto", configOptions: [] },
+          { value: "composer-2.5", name: "Composer 2.5", configOptions: [{ id: "fast", name: "Fast" }] }
+        ]
+      }
+    });
   } else if (message.method === "session/prompt") {
     promptId = message.id;
     send({
@@ -199,8 +210,8 @@ test("normalizes Cursor ACP setup and interactive events", async (context) => {
       ? setupModels.models.map(({ slug, resolved }) => ({ slug, resolved }))
       : [],
     [
-      { slug: "auto", resolved: "default[]" },
-      { slug: "composer-2.5[fast=true]", resolved: "composer-2.5[fast=true]" },
+      { slug: "auto", resolved: "default" },
+      { slug: "composer-2.5", resolved: "composer-2.5" },
     ],
   );
 
@@ -230,7 +241,7 @@ test("normalizes Cursor ACP setup and interactive events", async (context) => {
     sent.some(
       (message) =>
         message.method === "session/set_model" &&
-        (message.params as { modelId?: string }).modelId === "default[]",
+        (message.params as { modelId?: string }).modelId === "default",
     ),
   );
   assert.ok(
@@ -247,4 +258,42 @@ test("normalizes Cursor ACP setup and interactive events", async (context) => {
       answers: [{ questionId: "color", selectedOptionIds: ["blue"] }],
     },
   });
+});
+
+test("discovers Cursor models without opening a thread", async (context) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "sr03-cursor-models-"));
+  const binary = path.join(directory, "cursor-agent");
+  const logPath = path.join(directory, "messages.ndjson");
+  await fs.writeFile(binary, MOCK_AGENT, { mode: 0o755 });
+
+  const previousPath = process.env.PATH;
+  const previousData = process.env.SR03_DATA_DIR;
+  const previousLog = process.env.MOCK_CURSOR_LOG;
+  process.env.PATH = `${directory}${path.delimiter}${previousPath ?? ""}`;
+  process.env.SR03_DATA_DIR = path.join(directory, "data");
+  process.env.MOCK_CURSOR_LOG = logPath;
+  context.after(async () => {
+    process.env.PATH = previousPath;
+    if (previousData === undefined) delete process.env.SR03_DATA_DIR;
+    else process.env.SR03_DATA_DIR = previousData;
+    if (previousLog === undefined) delete process.env.MOCK_CURSOR_LOG;
+    else process.env.MOCK_CURSOR_LOG = previousLog;
+    await fs.rm(directory, { recursive: true, force: true });
+  });
+
+  const { discoverCursorModels } = await import("./cursor.ts");
+  const models = await discoverCursorModels();
+  assert.deepEqual(
+    models.map(({ slug, label, resolved }) => ({ slug, label, resolved })),
+    [
+      { slug: "auto", label: "Auto", resolved: "default" },
+      { slug: "composer-2.5", label: "Composer 2.5", resolved: "composer-2.5" },
+    ],
+  );
+  const sent = (await fs.readFile(logPath, "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  assert.ok(sent.some((message) => message.method === "cursor/list_available_models"));
+  assert.ok(!sent.some((message) => message.method === "session/new"));
 });
