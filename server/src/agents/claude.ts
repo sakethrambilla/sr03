@@ -17,6 +17,8 @@ import { usage as usageStore } from "../db.ts";
 import type {
   ApprovalDecision,
   PendingApproval,
+  Question,
+  QuestionOption,
   SlashCommand,
   Thread,
   ThreadTask,
@@ -52,6 +54,7 @@ interface ClaudeSession {
   alwaysAllow: Set<string>;
   interrupted: boolean;
   stopped: boolean;
+  busy: boolean;
 }
 
 function createInputQueue(): InputQueue {
@@ -153,19 +156,39 @@ function trackTask(session: ClaudeSession, message: SystemMessage): void {
     }
     case "task_notification": {
       const task = known(message.task_id);
-      if (!task) return;
-      saveTask(session, {
-        ...task,
-        status: TASK_STATUS[message.status] ?? task.status,
-        tokens: message.usage?.total_tokens ?? task.tokens,
-        toolUses: message.usage?.tool_uses ?? task.toolUses,
-        endedAt: task.endedAt ?? Date.now(),
-      });
+      if (task) {
+        saveTask(session, {
+          ...task,
+          status: TASK_STATUS[message.status] ?? task.status,
+          tokens: message.usage?.total_tokens ?? task.tokens,
+          toolUses: message.usage?.tool_uses ?? task.toolUses,
+          endedAt: task.endedAt ?? Date.now(),
+        });
+      }
+      wakeIfIdle(session, message.ambient === true);
       return;
     }
     default:
       return;
   }
+}
+
+// the CLI backgrounds a task and lets the turn end right away — its result lands as a
+// task_notification with no turn open to hear it, so nothing would ever prompt the model to
+// report back. This nudges it the same way typing "continue" does, just without the wait.
+function wakeIfIdle(session: ClaudeSession, ambient: boolean): void {
+  if (ambient || session.busy || session.stopped) return;
+  session.busy = true;
+  session.emit({ type: "notice", text: "Resumed automatically — a background task finished" });
+  session.emit({ type: "turn.active" });
+  session.input.push({
+    type: "user",
+    session_id: session.sessionId,
+    parent_tool_use_id: null,
+    isSynthetic: true,
+    origin: { kind: "auto-continuation" },
+    message: { role: "user", content: "A background task just finished. Continue." },
+  } as SDKUserMessage);
 }
 
 function settleTasks(session: ClaudeSession): void {
@@ -392,15 +415,53 @@ function listCommands(cwd: string): Promise<SlashCommand[]> {
   return live.query.supportedCommands().then(toCommands).catch(() => cachedCommands(cwd));
 }
 
+// the CLI routes this one through canUseTool in every permission mode, unlike every other tool —
+// so the question panel is reached even under acceptEdits and bypassPermissions
+const ASK = "AskUserQuestion";
+
+function parseQuestions(input: Record<string, unknown>): Question[] {
+  const raw = Array.isArray(input.questions) ? input.questions : [];
+  return raw.flatMap((entry): Question[] => {
+    if (!entry || typeof entry !== "object") return [];
+    const value = entry as Record<string, unknown>;
+    const question = typeof value.question === "string" ? value.question : "";
+    if (!question) return [];
+    const options = (Array.isArray(value.options) ? value.options : []).flatMap(
+      (option): QuestionOption[] => {
+        if (!option || typeof option !== "object") return [];
+        const label = (option as Record<string, unknown>).label;
+        const description = (option as Record<string, unknown>).description;
+        if (typeof label !== "string" || label.length === 0) return [];
+        return [{ label, description: typeof description === "string" ? description : "" }];
+      },
+    );
+    return [
+      {
+        question,
+        header: typeof value.header === "string" ? value.header : "Question",
+        options,
+        multiSelect: value.multiSelect === true,
+      },
+    ];
+  });
+}
+
 function makeCanUseTool(session: ClaudeSession): CanUseTool {
   return async (toolName, input, options) => {
-    if (session.alwaysAllow.has(toolName)) return { behavior: "allow", updatedInput: input };
+    // a question is answered, never blanket-allowed, so alwaysAllow must not swallow it
+    const questions = toolName === ASK ? parseQuestions(input) : [];
+    const asking = questions.length > 0;
+    if (!asking && session.alwaysAllow.has(toolName)) {
+      return { behavior: "allow", updatedInput: input };
+    }
+
     const approval: PendingApproval = {
       id: randomUUID(),
       threadId: session.threadId,
       toolName,
       input,
       decisions: ["allow", "always", "deny"],
+      ...(asking ? { questions } : {}),
     };
     const decision = await new Promise<ApprovalDecision>((resolve) => {
       session.approvals.set(approval.id, { approval, resolve });
@@ -410,7 +471,12 @@ function makeCanUseTool(session: ClaudeSession): CanUseTool {
         resolve("deny");
       });
     });
-    if (decision === "deny") return { behavior: "deny", message: "Denied by user." };
+    if (typeof decision === "object") {
+      return { behavior: "allow", updatedInput: { questions: input.questions, answers: decision.answers } };
+    }
+    if (decision === "deny") {
+      return { behavior: "deny", message: asking ? "Question dismissed by user." : "Denied by user." };
+    }
     if (decision === "always") {
       session.alwaysAllow.add(toolName);
       return {
@@ -499,6 +565,7 @@ function handleMessage(session: ClaudeSession, message: SDKMessage): void {
       return;
     case "result":
       settleTasks(session);
+      session.busy = false;
       session.emit({
         type: "turn.completed",
         ...(session.interrupted || message.subtype === "success"
@@ -518,6 +585,7 @@ async function pump(session: ClaudeSession): Promise<void> {
   } catch (error) {
     if (!session.stopped && session.interrupted) {
       settleTasks(session);
+      session.busy = false;
       session.emit({ type: "turn.completed" });
       session.interrupted = false;
     } else if (!session.stopped) {
@@ -560,6 +628,7 @@ async function open(
     alwaysAllow: new Set(),
     interrupted: false,
     stopped: false,
+    busy: false,
     query: undefined as unknown as Query,
   };
   session.query = query({
@@ -590,6 +659,7 @@ async function open(
 
   return {
     async send(text) {
+      session.busy = true;
       session.input.push({
         type: "user",
         session_id: session.sessionId,

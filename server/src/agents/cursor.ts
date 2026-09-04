@@ -6,7 +6,6 @@ import os from "node:os";
 import { currentProvider } from "../models.ts";
 import { findCursor } from "../providers.ts";
 import type {
-  ApprovalDecision,
   ModelOption,
   PendingApproval,
   PendingQuestion,
@@ -39,9 +38,11 @@ interface Deferred<T> {
   settled: boolean;
 }
 
+type PermissionVerdict = "allow" | "always" | "deny";
+
 interface NativeApproval {
   approval: PendingApproval;
-  choices: Map<ApprovalDecision, string>;
+  choices: Map<PermissionVerdict, string>;
   toolCallId: string | null;
   resolve(response: PermissionResponse): void;
   settled: boolean;
@@ -533,11 +534,11 @@ function offeredPermission(option: Record<string, unknown>): OfferedPermission {
   return null;
 }
 
-function permissionChoices(params: Record<string, unknown>): Map<ApprovalDecision, string> {
+function permissionChoices(params: Record<string, unknown>): Map<PermissionVerdict, string> {
   const options = Array.isArray(params.options)
     ? params.options.filter(isRecord)
     : [];
-  const choices = new Map<ApprovalDecision, string>();
+  const choices = new Map<PermissionVerdict, string>();
   const allow = options.find((option) => offeredPermission(option) === "allow");
   const always = options.find((option) => offeredPermission(option) === "always");
   const rejectOnce = options.find((option) => offeredPermission(option) === "deny_once");
@@ -586,9 +587,7 @@ function handlePermissionRequest(
     threadId: session.threadId,
     toolName: tool.name,
     input: tool.input,
-    decisions: (["allow", "always", "deny"] as ApprovalDecision[]).filter((decision) =>
-      choices.has(decision),
-    ),
+    decisions: (["allow", "always", "deny"] as const).filter((decision) => choices.has(decision)),
   };
   return new Promise<PermissionResponse>((resolve) => {
     const pending: NativeApproval = {
@@ -1165,6 +1164,7 @@ async function open(
       return interruptSession(context);
     },
     async respondToApproval(id, decision) {
+      if (typeof decision !== "string") return false;
       const pending = context.approvals.get(id);
       const choice = pending?.choices.get(decision);
       if (!pending || !choice || pending.settled) return false;

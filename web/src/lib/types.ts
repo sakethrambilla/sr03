@@ -11,7 +11,6 @@ export type PermissionMode =
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 export type ThreadStatus = "idle" | "running" | "error";
 export type MessageRole = "user" | "assistant" | "tool" | "system" | "error";
-export type ApprovalDecision = "allow" | "always" | "deny";
 
 export interface Project {
   id: string;
@@ -52,12 +51,27 @@ export interface Message {
 // what the CLI is busy with between visible output, for the turn's waiting label
 export type ThreadPhase = { kind: "starting" } | { kind: "thinking" } | { kind: "tool"; name: string };
 
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+// one AskUserQuestion question; `question` is also the key its answer is sent back under
+export interface Question {
+  question: string;
+  header: string;
+  options: QuestionOption[];
+  multiSelect: boolean;
+}
+
 export interface PendingApproval {
   id: string;
   threadId: string;
   toolName: string;
   input: unknown;
-  decisions: ApprovalDecision[];
+  decisions: Array<"allow" | "always" | "deny">;
+  // set only for AskUserQuestion, which is answered rather than allowed or denied
+  questions?: Question[];
 }
 
 export interface PendingQuestion {
@@ -71,6 +85,9 @@ export interface PendingQuestion {
     allowMultiple: boolean;
   }>;
 }
+
+// answers are keyed by question text, which is what the CLI looks them up by
+export type ApprovalDecision = "allow" | "always" | "deny" | { answers: Record<string, string> };
 
 export interface ThreadTask {
   id: string;
@@ -136,6 +153,7 @@ export interface AppState {
   threads: Thread[];
   providers: ProviderCatalog[];
   defaultProviderId: ProviderId;
+  defaults: { model: string; permissionMode: PermissionMode; effort: Effort };
   apps: ExternalApp[];
 }
 
@@ -244,6 +262,7 @@ export type ServerEvent =
   | { type: "resources"; resources: Resources }
   | { type: "thread.updated"; thread: Thread }
   | { type: "provider.changed"; provider: ProviderCatalog }
+  | { type: "defaults.changed"; defaults: { model: string; permissionMode: PermissionMode; effort: Effort } }
   | { type: "pty.data"; threadId: string; terminalId: string; data: string }
   | { type: "pty.snapshot"; threadId: string; terminalId: string; data: string }
   | { type: "pty.terminals"; threadId: string; ids: string[] }

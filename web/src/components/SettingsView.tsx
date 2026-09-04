@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { api } from "../lib/api.ts";
 import { THEMES, availableFonts } from "../lib/appearance.ts";
-import type { ProviderStatus } from "../lib/types.ts";
+import type { PermissionMode, ProviderStatus } from "../lib/types.ts";
 import { useStore } from "../store.ts";
 import { SidebarToggle } from "./Sidebar.tsx";
 import {
@@ -244,6 +244,48 @@ function FontPicker({ label, hint, value, options, onPick }: {
   );
 }
 
+function GeneralPanel() {
+  const providers = useStore((state) => state.providers);
+  const defaultProviderId = useStore((state) => state.defaultProviderId);
+  const permissionModes =
+    providers.find((provider) => provider.id === defaultProviderId)?.permissionModes ?? [];
+  const defaultPermissionMode = useStore((state) => state.defaults.permissionMode);
+  const setDefaultPermissionMode = useStore((state) => state.setDefaultPermissionMode);
+
+  return (
+    <section className="rounded-lg border border-border/70 bg-card/40">
+      <header className="border-b border-border/60 px-4 py-3">
+        <h2 className="text-[14px] font-medium">Session defaults</h2>
+        <p className="mt-0.5 text-[12px] text-muted-foreground">
+          Applied to every new session started on this machine from now on. Sessions already
+          open keep whatever mode they were started with.
+        </p>
+      </header>
+      <div className="flex items-center gap-4 px-4 py-4">
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] text-foreground">Permission mode</p>
+          <p className="text-[11.5px] text-faint">How much a new session can do without asking</p>
+        </div>
+        <Select
+          value={defaultPermissionMode}
+          onValueChange={(next) => void setDefaultPermissionMode(next as PermissionMode)}
+        >
+          <SelectTrigger className="w-56 shrink-0">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {permissionModes.map((mode) => (
+              <SelectItem key={mode.value} value={mode.value}>
+                {mode.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    </section>
+  );
+}
+
 function AppearancePanel() {
   const appearance = useStore((state) => state.appearance);
   const setAppearance = useStore((state) => state.setAppearance);
@@ -311,6 +353,7 @@ function AppearancePanel() {
 }
 
 const SECTIONS = [
+  { id: "general", label: "General" },
   { id: "providers", label: "Providers" },
   { id: "appearance", label: "Appearance" },
 ] as const;
@@ -322,7 +365,7 @@ export function SettingsView() {
   const catalogs = useStore((state) => state.providers);
   const defaultProviderId = useStore((state) => state.defaultProviderId);
   const refreshState = useStore((state) => state.refreshState);
-  const [section, setSection] = usePersistedState<Section>("settings-section", "providers");
+  const [section, setSection] = usePersistedState<Section>("settings-section", "general");
   const [providers, setProviders] = useState<ProviderStatus[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -399,6 +442,7 @@ export function SettingsView() {
 
         <div className="min-h-0 flex-1 overflow-auto">
           <div className="mx-auto flex max-w-2xl flex-col gap-4 px-6 py-6">
+            {section === "general" ? <GeneralPanel /> : null}
             {section === "appearance" ? <AppearancePanel /> : null}
             {section === "providers" ? (
               <>

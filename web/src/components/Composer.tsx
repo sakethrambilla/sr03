@@ -13,6 +13,7 @@ import type {
   PendingQuestion,
   PermissionMode,
   ProviderId,
+  Question,
   SlashCommand,
   Thread,
 } from "../lib/types.ts";
@@ -20,13 +21,14 @@ import { commandKey, EMPTY_PROVIDER, useStore } from "../store.ts";
 import { UsageMeter } from "./UsageMeter.tsx";
 import { Button } from "@/components/ui/button";
 import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import { Toggle } from "@/components/ui/toggle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
-  CloseIcon,
   CheckIcon,
+  CloseIcon,
   Menu,
   MicIcon,
   PlusIcon,
@@ -707,15 +709,15 @@ function ApprovalPanel({ approval }: { approval: PendingApproval }) {
       <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">{detail}</p>
       <div className="mt-2 flex gap-2">
         {approval.decisions.includes("allow") ? (
-          <Button variant="default" onClick={() => void respond(approval.id, "allow")}>
+          <Button variant="default" onClick={() => void respond(approval, "allow")}>
             Allow once
           </Button>
         ) : null}
         {approval.decisions.includes("always") ? (
-          <Button onClick={() => void respond(approval.id, "always")}>Always allow</Button>
+          <Button onClick={() => void respond(approval, "always")}>Always allow</Button>
         ) : null}
         {approval.decisions.includes("deny") ? (
-          <Button variant="destructive" onClick={() => void respond(approval.id, "deny")}>
+          <Button variant="destructive" onClick={() => void respond(approval, "deny")}>
             Deny
           </Button>
         ) : null}
@@ -724,7 +726,7 @@ function ApprovalPanel({ approval }: { approval: PendingApproval }) {
   );
 }
 
-function QuestionPanel({ request }: { request: PendingQuestion }) {
+function CursorQuestionPanel({ request }: { request: PendingQuestion }) {
   const answerQuestion = useStore((state) => state.answerQuestion);
   const [answers, setAnswers] = useState<Record<string, string[]>>({});
   const complete = request.questions.every((question) => (answers[question.id]?.length ?? 0) > 0);
@@ -777,6 +779,209 @@ function QuestionPanel({ request }: { request: PendingQuestion }) {
   );
 }
 
+interface Draft {
+  selected: string[];
+  custom: string;
+}
+
+const EMPTY_DRAFT: Draft = { selected: [], custom: "" };
+
+// a typed answer wins over the options, so "Other" and a selection can never both be live;
+// multi-select answers travel comma-separated, which is the shape the CLI reads them back in
+function answerOf(draft: Draft): string {
+  return draft.custom.trim() || draft.selected.join(", ");
+}
+
+// AskUserQuestion arrives through the same approval channel as any other tool, but it is answered
+// rather than allowed — one question at a time, with the options as rows and a free-text way out
+function QuestionPanel({ approval }: { approval: PendingApproval }) {
+  const respond = useStore((state) => state.respond);
+  const questions = approval.questions ?? [];
+  const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  const [at, setAt] = useState(0);
+  const [otherFor, setOtherFor] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  const index = Math.min(at, questions.length - 1);
+  const question = questions[index] as Question | undefined;
+  const last = index === questions.length - 1;
+
+  // the digit shortcuts only reach the panel if the composer does not hold the caret
+  useEffect(() => panelRef.current?.focus(), []);
+
+  const draft = (question && drafts[question.question]) ?? EMPTY_DRAFT;
+  const answer = answerOf(draft);
+  const otherOpen = question !== undefined && otherFor === question.question;
+
+  const setDraft = (next: Draft) => {
+    if (!question) return;
+    setDrafts((current) => ({ ...current, [question.question]: next }));
+  };
+
+  const send = async (answers: Record<string, string>) => {
+    setBusy(true);
+    await respond(approval, { answers });
+  };
+
+  const advance = (answers: Record<string, string>) => {
+    if (last) return void send(answers);
+    setAt(index + 1);
+    setOtherFor(null);
+  };
+
+  const pick = (label: string) => {
+    if (!question || busy) return;
+    const selected = question.multiSelect
+      ? draft.selected.includes(label)
+        ? draft.selected.filter((entry) => entry !== label)
+        : [...draft.selected, label]
+      : [label];
+    setDraft({ selected, custom: "" });
+    setOtherFor(null);
+    // one choice is the whole answer, so a single-select question needs no confirm step
+    if (!question.multiSelect) {
+      advance({ ...collect(drafts, questions, index), [question.question]: label });
+    }
+  };
+
+  const confirm = () => {
+    if (!question || !answer || busy) return;
+    advance({ ...collect(drafts, questions, index), [question.question]: answer });
+  };
+
+  if (!question) return null;
+
+  return (
+    <div
+      ref={panelRef}
+      tabIndex={-1}
+      onKeyDown={(event) => {
+        if (event.metaKey || event.ctrlKey || event.altKey) return;
+        const target = event.target;
+        if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
+        const digit = Number(event.key);
+        if (!Number.isInteger(digit) || digit < 1 || digit > question.options.length) return;
+        event.preventDefault();
+        pick(question.options[digit - 1]!.label);
+      }}
+      className="mb-2 rounded-lg border border-primary/50 bg-primary/10 px-3 py-2.5 outline-none"
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] font-medium text-primary">{question.header}</span>
+        <div className="flex-1" />
+        {questions.length > 1 ? (
+          <span className="text-[11px] tabular-nums text-faint">
+            {index + 1}/{questions.length}
+          </span>
+        ) : null}
+      </div>
+      <p className="mt-1 text-[13px] font-medium">{question.question}</p>
+      {question.multiSelect ? (
+        <p className="mt-0.5 text-[11px] text-faint">Pick one or more.</p>
+      ) : null}
+
+      <div className="mt-2 space-y-0.5">
+        {question.options.map((option, position) => {
+          const chosen = !draft.custom.trim() && draft.selected.includes(option.label);
+          return (
+            <button
+              key={`${position}:${option.label}`}
+              type="button"
+              disabled={busy}
+              onClick={() => pick(option.label)}
+              className={cn(
+                "flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors",
+                chosen ? "bg-accent text-foreground" : "hover:bg-accent/50",
+                busy && "opacity-50",
+              )}
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13px]">{option.label}</span>
+                {option.description && option.description !== option.label ? (
+                  <span className="block truncate text-[11px] text-faint">{option.description}</span>
+                ) : null}
+              </span>
+              {chosen ? (
+                <CheckIcon className="size-3.5 text-primary" />
+              ) : position < 9 ? (
+                <kbd className="text-[10px] tabular-nums text-faint">{position + 1}</kbd>
+              ) : null}
+            </button>
+          );
+        })}
+
+        {otherOpen ? (
+          <Input
+            autoFocus
+            value={draft.custom}
+            onChange={(event) => setDraft({ selected: [], custom: event.target.value })}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                confirm();
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setDraft({ ...draft, custom: "" });
+                setOtherFor(null);
+                panelRef.current?.focus();
+              }
+            }}
+            placeholder="Your own answer…"
+            className="h-8 text-[13px]"
+          />
+        ) : (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => setOtherFor(question.question)}
+            className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] text-muted-foreground transition-colors hover:bg-accent/50"
+          >
+            <PlusIcon className="size-3" />
+            Other…
+          </button>
+        )}
+      </div>
+
+      <div className="mt-2 flex gap-2">
+        {question.multiSelect || otherOpen ? (
+          <Button variant="default" disabled={!answer || busy} onClick={confirm}>
+            {last ? "Send" : "Next"}
+          </Button>
+        ) : null}
+        {index > 0 ? (
+          <Button
+            disabled={busy}
+            onClick={() => {
+              setAt(index - 1);
+              setOtherFor(null);
+            }}
+          >
+            Back
+          </Button>
+        ) : null}
+        <Button disabled={busy} onClick={() => void respond(approval, "deny")}>
+          Dismiss
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// every question before the current one is already answered, and they all travel together
+function collect(
+  drafts: Record<string, Draft>,
+  questions: Question[],
+  upTo: number,
+): Record<string, string> {
+  const answers: Record<string, string> = {};
+  for (const question of questions.slice(0, upTo)) {
+    answers[question.question] = answerOf(drafts[question.question] ?? EMPTY_DRAFT);
+  }
+  return answers;
+}
+
 export function ThreadComposer({
   thread,
   restore,
@@ -799,11 +1004,17 @@ export function ThreadComposer({
     <Composer
       above={
         <>
-          {approvals.map((approval) => (
-            <ApprovalPanel key={approval.id} approval={approval} />
-          ))}
+          {approvals.map((approval) =>
+            approval.questions ? (
+              <QuestionPanel key={approval.id} approval={approval} />
+            ) : (
+              <ApprovalPanel key={approval.id} approval={approval} />
+            ),
+          )}
           {provider.capabilities.questions
-            ? questions.map((question) => <QuestionPanel key={question.id} request={question} />)
+            ? questions.map((question) => (
+                <CursorQuestionPanel key={question.id} request={question} />
+              ))
             : null}
         </>
       }
