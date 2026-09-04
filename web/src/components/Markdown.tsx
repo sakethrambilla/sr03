@@ -1,3 +1,6 @@
+// The markdown renderer for assistant replies and .md previews. Hand-written rather than a
+// dependency because the interesting part is what it does past markdown: a path in prose becomes
+// a link that opens the file, and a shell fence gets a button that runs it in the terminal.
 import { createContext, useContext } from "react";
 import type { ReactNode } from "react";
 

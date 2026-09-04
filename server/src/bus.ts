@@ -1,3 +1,5 @@
+// In-process pub/sub, and the whole of sr03's push side: anything that changes publishes one
+// ServerEvent here, and index.ts is the listener that writes it to every open socket.
 import type { ServerEvent } from "./types.ts";
 
 // the wire form travels with the event, so one serialisation feeds every socket

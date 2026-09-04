@@ -1,3 +1,5 @@
+// What the settings page shows about Claude Code itself: whether the `claude` binary is on PATH,
+// its version, which account is signed in, and the logout that hands off to the CLI's own.
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";

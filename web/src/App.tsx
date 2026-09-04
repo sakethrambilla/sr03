@@ -1,3 +1,6 @@
+// The shell. Opens the event socket, keeps the store in sync across reconnects, owns the two
+// app-wide shortcuts, and picks the one view on screen: settings, the new-session draft, a
+// session, or the empty state.
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 

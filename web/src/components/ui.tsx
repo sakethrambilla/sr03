@@ -1,3 +1,7 @@
+// The app's own layer over shadcn: small compositions every view reuses (Pill, Dialog, StatusDot,
+// Chip, CopyButton, Menu), the lucide icon aliases — imported by role, so a glyph changes in one
+// place — usePersistedState for per-view preferences, and the file-type icon map. Restyling
+// belongs here rather than in components/ui/*, which is generated.
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import {

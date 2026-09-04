@@ -17,7 +17,8 @@ pnpm dev         # server :3399 + Vite :5399 (open http://localhost:5399)
 pnpm typecheck   # both packages
 pnpm build       # web → web/dist, which the server then serves itself
 pnpm start       # server only, serving web/dist
-pnpm dmg         # desktop/dist/sr03-<version>-arm64.dmg (arm64, ad-hoc signed)
+pnpm dmg         # desktop/dist/sr03-<version>-arm64.dmg (macOS arm64, ad-hoc signed)
+pnpm exe         # desktop/dist/sr03-<version>-x64-setup.exe (Windows x64 NSIS, unsigned)
 ```
 
 `SR03_PORT` moves the server port (Vite proxies to it); `SR03_DATA_DIR` moves state, default
@@ -43,6 +44,7 @@ web/src      Vite + React 19 + Tailwind v4 + shadcn/ui + zustand
 desktop      Electron shell — a window over the ordinary server, nothing app-specific in it
   main.js    resolves the login shell's PATH, spawns the server, opens the window
   payload.mjs collects web/dist + a symlink-free server copy into desktop/payload
+  report.mjs prints where the installer landed, as the build's last line
 ```
 
 `desktop` is deliberately **outside** the pnpm workspace, with its own `pnpm-workspace.yaml` and
@@ -98,19 +100,43 @@ REST for commands, WebSocket (`/ws`) for everything the server pushes back. Wire
 - The shell does not host the server in Electron's Node — it spawns the machine's own `node` as a
   child, the same command `pnpm start` runs. Type stripping, `node:sqlite` and node-pty's ABI all
   want the real thing.
-- A GUI launch inherits a bare `PATH`, so `main.js` reads the login shell's (`$SHELL -ilc`). Without
-  it an nvm or homebrew node is invisible, and the Claude CLI the server spawns can't find git.
+- A macOS GUI launch inherits a bare `PATH`, so `main.js` reads the login shell's (`$SHELL -ilc`).
+  Without it an nvm or homebrew node is invisible, and the Claude CLI the server spawns can't find
+  git. Windows resolves the real `PATH` from the registry before the process starts, so there it
+  uses `process.env.PATH` as-is.
+- macOS hides the native title bar and the app's own headers stand in for it (the `.mac` class on
+  `<html>` is what reserves room for the traffic lights). Windows keeps its native frame, since its
+  controls sit right where the panes have nothing to spare.
 - The window gets a free port, not 3399, so a packaged app and `pnpm dev` can run side by side.
-  Both share `~/.sr03`.
+  Both share `~/.sr03`. Only one instance runs at a time (`requestSingleInstanceLock`), so a
+  freshly built app exits on launch while an installed one is open.
 - Electron 44 ships no postinstall, so its binary never lands from a plain install — `desktop`'s own
   `postinstall` runs `install-electron` to fetch it. electron-builder downloads its own copy anyway,
   so this only matters for `pnpm -C desktop dev`.
 - `desktop/build/icon.png` is the app icon (1024², dark squircle + the mono `S`); electron-builder
-  picks it up by convention and converts it to `.icns` itself.
+  picks it up by convention and converts it to `.icns` and `.ico` itself.
 - `payload.mjs` deploys the server with a filtered `--prod` install, which pnpm records as the
   workspace's install state — every later `pnpm <script>` would then want a production install and
   try to purge `node_modules`. The plain `pnpm install` right after the deploy undoes that; don't
-  drop it.
+  drop it, and keep its `--config.confirmModulesPurge=false` — without it that install can stop on
+  a confirmation prompt, which on a pipe fails the build and strands the production install state.
+- `payload.mjs` takes the target triple (`darwin-arm64`, `win32-x64`, …) and makes the payload
+  carry only that platform: it keeps that one node-pty prebuild and deletes the rest, and it
+  swaps the Agent SDK's per-platform CLI package. That swap is what makes cross-building work at
+  all — the deploy resolves the *host's* optional dependency, so a Windows payload built on macOS
+  would otherwise ship a Mach-O `claude` and the SDK, which looks for
+  `claude-agent-sdk-<platform>-<arch>/claude[.exe]`, would find nothing and fail every turn.
+  Both installers cross-build from macOS; neither needs wine. The Windows one is unsigned, so
+  SmartScreen warns.
+- If a build dies between the deploy and its restoring install, the workspace is left needing a
+  production install and every later `pnpm <script>` fails in `runDepsStatusCheck`. Recover with
+  `pnpm install --config.confirmModulesPurge=false`.
+- Windows gets the server's POSIX-only features degraded, not ported. The native folder and file
+  pickers and reveal-in-Finder throw, and "open in <editor>" lists nothing; browsing to a project
+  path by hand still works. `findClaude` shells out to `which`, so Settings reports the CLI as not
+  found even when it is installed. The resources meter shells out to `ps` and `lsof`, so while it
+  is open each tick logs `spawn ps ENOENT` and publishes no sample. Turns themselves are unaffected
+  — the Agent SDK finds its own bundled CLI.
 
 ## Testing changes
 

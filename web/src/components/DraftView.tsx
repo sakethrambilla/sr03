@@ -1,9 +1,12 @@
+// The new-session screen: pick a folder, a branch, and whether to run in a worktree. Nothing is
+// created until the first turn is sent — a thread's cwd and branch are fixed for its lifetime,
+// so this is the only chance to choose them.
 import { useEffect, useState } from "react";
 
 import { api } from "../lib/api.ts";
 import type { Branch, GitSnapshot } from "../lib/types.ts";
-import { useStore } from "../store.ts";
-import type { Draft } from "../store.ts";
+import { resolvePlan, useStore } from "../store.ts";
+import type { Draft, DraftPlan } from "../store.ts";
 import {
   Command,
   CommandEmpty,
@@ -23,20 +26,11 @@ import {
   SparkleIcon,
   StatusDot,
   WorktreeIcon,
-  cn,
 } from "./ui.tsx";
 import { Composer } from "./Composer.tsx";
 import { SidebarToggle } from "./Sidebar.tsx";
 import { Separator } from "@/components/ui/separator";
 import { FolderPicker } from "./FolderPicker.tsx";
-
-function unusedBranch(base: string, branches: Branch[]): string {
-  const taken = new Set(branches.map((branch) => branch.name));
-  let name = `${base}-wt`;
-  let counter = 2;
-  while (taken.has(name)) name = `${base}-wt${counter++}`;
-  return name;
-}
 
 function BranchMenu({
   branches,
@@ -65,7 +59,7 @@ function BranchMenu({
           <CommandItem value={needle} onSelect={() => onPick({ name: needle, create: true })}>
             <PlusIcon className="text-primary" />
             <span className="min-w-0 flex-1 truncate font-mono text-[12.5px]">{needle}</span>
-            <span className="text-[11px] text-faint">new branch · worktree</span>
+            <span className="text-[11px] text-faint">new branch</span>
           </CommandItem>
         ) : null}
         {branches.map((branch) => (
@@ -89,30 +83,54 @@ function BranchMenu({
   );
 }
 
-function DraftChips({ draft }: { draft: Draft }) {
+// what the branch + worktree pair will do on send, spelled out — the derived branch name in
+// particular has to be visible before it exists
+function PlanChip({ plan }: { plan: DraftPlan }) {
+  if (plan.kind === "blocked") {
+    return <span className="text-[11px] text-destructive">{plan.reason}</span>;
+  }
+  if (plan.kind === "worktree") {
+    return (
+      <span className="inline-flex items-center gap-1 text-[11px] text-faint">
+        <WorktreeIcon className="size-3 text-primary" />
+        new worktree on <span className="font-mono">{plan.branch}</span>
+      </span>
+    );
+  }
+  if (plan.kind === "here") {
+    return (
+      <span className="inline-flex items-center gap-1 text-[11px] text-faint">
+        <WorktreeIcon className="size-3 text-primary" />
+        <span className="max-w-56 truncate font-mono">{plan.path.split("/").pop()}</span>
+      </span>
+    );
+  }
+  if (plan.checkout) {
+    return (
+      <span className="text-[11px] text-faint">
+        checks out in the folder{plan.checkout.createBranch ? ", off the current branch" : ""}
+      </span>
+    );
+  }
+  return null;
+}
+
+function DraftChips({
+  draft,
+  snapshot,
+  plan,
+}: {
+  draft: Draft;
+  snapshot: GitSnapshot | null;
+  plan: DraftPlan;
+}) {
   const project = useStore((state) => state.projects.find((item) => item.id === draft.projectId));
   const patchDraft = useStore((state) => state.patchDraft);
   const refreshState = useStore((state) => state.refreshState);
   const setError = useStore((state) => state.setError);
-  const [snapshot, setSnapshot] = useState<GitSnapshot | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [choosing, setChoosing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-
-  useEffect(() => {
-    setSnapshot(null);
-    if (!draft.projectId) return;
-    let cancelled = false;
-    api
-      .git(draft.projectId)
-      .then((next) => {
-        if (!cancelled) setSnapshot(next);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [draft.projectId]);
 
   const useFolder = async (path: string) => {
     const project = await api.addProject(path);
@@ -142,47 +160,18 @@ function DraftChips({ draft }: { draft: Draft }) {
   const branches = snapshot?.branches ?? [];
   const current = snapshot?.branch ?? null;
   const selected = draft.branch ?? current;
-  const lockedWorktree = Boolean(draft.worktreePath);
-  const mainPath = snapshot?.worktrees.find((worktree) => worktree.isMain)?.path ?? null;
-  // the main checkout is a worktree too, but running there is not "a worktree session"
+  // the folder's own checkout is a worktree too, but running there is not "a worktree session"
   const linkedWorktree = (branch: Branch) =>
-    branch.worktreePath && branch.worktreePath !== mainPath ? branch.worktreePath : null;
+    branch.worktreePath && branch.worktreePath !== snapshot?.root ? branch.worktreePath : null;
 
-  const toggleWorktree = () => {
-    if (lockedWorktree) return;
-    if (draft.worktree) {
-      patchDraft({ worktree: false, branch: null, createBranch: false, worktreePath: null });
-      return;
-    }
-    const entry = branches.find((branch) => branch.name === selected);
-    if (entry && !entry.isCurrent && !linkedWorktree(entry)) {
-      patchDraft({ worktree: true, branch: entry.name, createBranch: false });
-      return;
-    }
-    // the selected branch is checked out already, so a worktree needs a branch of its own
-    patchDraft({
-      worktree: true,
-      branch: unusedBranch(selected ?? "session", branches),
-      createBranch: true,
-    });
-  };
-
+  // a branch pick and the checkbox are independent: neither may rewrite or disable the other
   const pickBranch = (branch: Branch | { name: string; create: true }) => {
     setMenuOpen(false);
-    if ("create" in branch) {
-      patchDraft({ branch: branch.name, createBranch: true, worktreePath: null, worktree: true });
-      return;
-    }
-    const existing = linkedWorktree(branch);
-    if (existing) {
-      patchDraft({ branch: branch.name, createBranch: false, worktreePath: existing, worktree: true });
-      return;
-    }
     patchDraft({
       branch: branch.name,
-      createBranch: false,
+      createBranch: "create" in branch,
+      // whichever worktree the panel pointed at, it isn't the one this branch asks for
       worktreePath: null,
-      worktree: !branch.isCurrent,
     });
   };
 
@@ -202,10 +191,12 @@ function DraftChips({ draft }: { draft: Draft }) {
           <div className="inline-flex h-7 items-center overflow-hidden rounded-md border border-border/70 bg-accent/40 text-[12px] text-muted-foreground">
             <Popover open={menuOpen} onOpenChange={setMenuOpen}>
               <PopoverTrigger
-                title="Branch"
+                title={draft.worktree ? "Branch the worktree starts from" : "Branch to work on"}
                 className="flex h-full items-center gap-1.5 px-2 transition outline-none hover:text-foreground"
               >
                 <BranchIcon />
+                {/* ticked, the pick is only a base — the worktree gets a branch of its own */}
+                {draft.worktree && !draft.createBranch ? <span className="text-[11px]">from</span> : null}
                 <span className="max-w-40 truncate font-mono">{selected ?? "detached"}</span>
                 {draft.createBranch ? <span className="text-[11px] text-primary">new</span> : null}
               </PopoverTrigger>
@@ -222,30 +213,26 @@ function DraftChips({ draft }: { draft: Draft }) {
             <Separator orientation="vertical" className="h-4" />
             <Tooltip>
               <TooltipTrigger asChild>
-                <label
-                  className={cn(
-                    "flex h-full items-center gap-1.5 px-2 transition hover:text-foreground",
-                    lockedWorktree ? "cursor-default" : "cursor-pointer",
-                  )}
-                >
+                <label className="flex h-full cursor-pointer items-center gap-1.5 px-2 transition hover:text-foreground">
                   <Checkbox
                     checked={draft.worktree}
-                    disabled={lockedWorktree}
-                    onCheckedChange={toggleWorktree}
+                    onCheckedChange={() => patchDraft({ worktree: !draft.worktree })}
                     className="size-3"
                   />
                   worktree
                 </label>
               </TooltipTrigger>
               <TooltipContent>
-                {lockedWorktree
-                  ? "This branch already has a worktree, so the session runs there"
-                  : "Run this session in its own git worktree"}
+                {draft.worktree
+                  ? "A new worktree is created when you send, on a branch of its own"
+                  : "Run this session in the folder itself, on the branch above"}
               </TooltipContent>
             </Tooltip>
           </div>
         </div>
       ) : null}
+
+      <PlanChip plan={plan} />
 
       {pickerOpen ? (
         <FolderPicker onClose={() => setPickerOpen(false)} onPick={useFolder} />
@@ -259,6 +246,26 @@ export function DraftView({ draft }: { draft: Draft }) {
   const patchDraft = useStore((state) => state.patchDraft);
   const startFromDraft = useStore((state) => state.startFromDraft);
   const setError = useStore((state) => state.setError);
+  const projects = useStore((state) => state.projects);
+  const [snapshot, setSnapshot] = useState<GitSnapshot | null>(null);
+
+  // re-read once the project list changes too: a worktree added elsewhere moves what a branch means
+  useEffect(() => {
+    setSnapshot(null);
+    if (!draft.projectId) return;
+    let cancelled = false;
+    api
+      .git(draft.projectId)
+      .then((next) => {
+        if (!cancelled) setSnapshot(next);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [draft.projectId, projects]);
+
+  const plan = resolvePlan(draft, snapshot);
 
   return (
     <main className="flex h-full min-w-0 flex-1 flex-col">
@@ -290,8 +297,8 @@ export function DraftView({ draft }: { draft: Draft }) {
       </div>
 
       <Composer
-        chips={<DraftChips draft={draft} />}
-        cwd={draft.worktreePath ?? project?.path}
+        chips={<DraftChips draft={draft} snapshot={snapshot} plan={plan} />}
+        cwd={plan.kind === "here" ? plan.path : project?.path}
         model={draft.model}
         permissionMode={draft.permissionMode}
         effort={draft.effort}
@@ -299,7 +306,7 @@ export function DraftView({ draft }: { draft: Draft }) {
         onPermissionMode={(permissionMode) => patchDraft({ permissionMode })}
         onEffort={(effort) => patchDraft({ effort })}
         placeholder={draft.projectId ? "Describe a task or ask a question" : "Choose a folder to start…"}
-        blocked={!draft.projectId}
+        blocked={!draft.projectId || plan.kind === "blocked"}
         onSubmit={async (text) => {
           try {
             await startFromDraft(text);

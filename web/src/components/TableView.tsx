@@ -1,3 +1,6 @@
+// The csv / xlsx viewer: rows paged in from the server a window at a time, a search that costs a
+// full pass so it waits for Enter, per-column value checklists, the sheet picker, and single-cell
+// edits written back through the mtime the window was read at.
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api.ts";

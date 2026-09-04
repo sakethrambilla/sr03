@@ -1,3 +1,6 @@
+// The terminal panel: xterm tabs, each bound to one of the server's PTYs over the socket rather
+// than through the store, since a keystroke must not re-render the app. Lazily imported by
+// ChatView — xterm is ~490 KB, for a panel most sessions never open.
 import { useEffect, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
