@@ -245,14 +245,16 @@ function trackTask(threadId: string, message: SystemMessage): void {
     }
     case "task_notification": {
       const task = known(message.task_id);
-      if (!task) return;
-      saveTask(threadId, {
-        ...task,
-        status: TASK_STATUS[message.status] ?? task.status,
-        tokens: message.usage?.total_tokens ?? task.tokens,
-        toolUses: message.usage?.tool_uses ?? task.toolUses,
-        endedAt: task.endedAt ?? Date.now(),
-      });
+      if (task) {
+        saveTask(threadId, {
+          ...task,
+          status: TASK_STATUS[message.status] ?? task.status,
+          tokens: message.usage?.total_tokens ?? task.tokens,
+          toolUses: message.usage?.tool_uses ?? task.toolUses,
+          endedAt: task.endedAt ?? Date.now(),
+        });
+      }
+      wakeIfIdle(threadId, message.ambient === true);
       return;
     }
     default:
@@ -260,8 +262,28 @@ function trackTask(threadId: string, message: SystemMessage): void {
   }
 }
 
-// a subagent outlives its turn only when backgrounded, which sr03 never does — so anything
-// still marked running once the turn ends never had its closing event delivered
+// the CLI backgrounds a task and lets the turn end right away — its result lands as a
+// task_notification with no turn open to hear it, so nothing would ever prompt the model to
+// report back. This nudges it the same way typing "continue" does, just without the wait.
+function wakeIfIdle(threadId: string, ambient: boolean): void {
+  if (ambient) return;
+  const session = sessions.get(threadId);
+  if (!session || running.has(threadId)) return;
+  appendMessage(threadId, "system", "Resumed automatically — a background task finished");
+  setStatus(threadId, "running");
+  session.input.push({
+    type: "user",
+    session_id: threadStore.byId(threadId)?.sessionId ?? "",
+    parent_tool_use_id: null,
+    isSynthetic: true,
+    origin: { kind: "auto-continuation" },
+    message: { role: "user", content: "A background task just finished. Continue." },
+  } as SDKUserMessage);
+}
+
+// a backgrounded subagent genuinely outlives the turn — its real task_notification lands later
+// and wakeIfIdle picks that up — but the panel would otherwise show it as running forever if
+// its closing event never arrives (an interrupt, a crash), so the turn ending still settles it
 function settleTasks(threadId: string, interrupted: boolean): void {
   const tasks = tasksByThread.get(threadId);
   if (!tasks) return;
@@ -745,6 +767,7 @@ export function sendTurn(thread: Thread, text: string): void {
     type: "user",
     session_id: thread.sessionId ?? "",
     parent_tool_use_id: null,
+    origin: { kind: "human" },
     message: { role: "user", content: text },
   } as SDKUserMessage);
 }
