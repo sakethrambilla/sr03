@@ -29,14 +29,13 @@ import { readTable, readValues, tableKind, writeCell } from "./table.ts";
 import type { TableFilter, TableQuery } from "./table.ts";
 import { messages, projects, settings, threads } from "./db.ts";
 import {
-  DEFAULT_EFFORT,
-  DEFAULT_MODEL,
-  DEFAULT_PERMISSION_MODE,
   EFFORT_LEVELS,
+  currentDefaults,
   currentModels,
   PERMISSION_MODES,
   isEffort,
   isPermissionMode,
+  setDefaultPermissionMode,
 } from "./models.ts";
 import { publish } from "./bus.ts";
 
@@ -144,11 +143,7 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
       permissionModes: PERMISSION_MODES,
       effortLevels: EFFORT_LEVELS,
       apps: await listApps(),
-      defaults: {
-        model: DEFAULT_MODEL,
-        permissionMode: DEFAULT_PERMISSION_MODE,
-        effort: DEFAULT_EFFORT,
-      },
+      defaults: currentDefaults(),
     }),
   },
   {
@@ -301,13 +296,14 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
       const cwd = typeof body.cwd === "string" && body.cwd.trim() ? path.resolve(body.cwd) : project.path;
       if (!(await isDirectory(cwd))) throw new HttpError(400, "Working directory does not exist");
       const info = await git.repoInfo(cwd);
-      const model = typeof body.model === "string" ? body.model : DEFAULT_MODEL;
+      const defaults = currentDefaults();
+      const model = typeof body.model === "string" ? body.model : defaults.model;
       const permissionMode = isPermissionMode(body.permissionMode)
         ? body.permissionMode
-        : DEFAULT_PERMISSION_MODE;
+        : defaults.permissionMode;
       const thread = threads.create({
         projectId: project.id,
-        effort: isEffort(body.effort) ? body.effort : DEFAULT_EFFORT,
+        effort: isEffort(body.effort) ? body.effort : defaults.effort,
         title: typeof body.title === "string" && body.title.trim() ? body.title.trim() : "New thread",
         cwd,
         branch: info.branch,
@@ -507,6 +503,18 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
       if (typeof body.value !== "string") throw new HttpError(400, "`value` is required");
       settings.set(requireString(body, "key"), body.value);
       return { ok: true };
+    },
+  },
+  {
+    method: "PUT",
+    pattern: /^\/api\/defaults$/,
+    handler: async ({ request }) => {
+      const body = await readBody(request);
+      if (!isPermissionMode(body.permissionMode)) throw new HttpError(400, "Invalid permissionMode");
+      setDefaultPermissionMode(body.permissionMode);
+      const defaults = currentDefaults();
+      publish({ type: "defaults.changed", defaults });
+      return { defaults };
     },
   },
   {

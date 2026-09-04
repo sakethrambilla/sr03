@@ -198,6 +198,7 @@ export type ServerEvent =
   | { type: "resources"; resources: Resources }
   | { type: "thread.updated"; thread: Thread }
   | { type: "models.changed"; models: ModelOption[] }
+  | { type: "defaults.changed"; defaults: { model: string; permissionMode: PermissionMode; effort: Effort } }
   | { type: "pty.data"; threadId: string; terminalId: string; data: string }
   | { type: "pty.snapshot"; threadId: string; terminalId: string; data: string }
   | { type: "pty.terminals"; threadId: string; ids: string[] }

@@ -124,6 +124,12 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ key, value }),
     }),
+  saveDefaults: (patch: { permissionMode: PermissionMode }) =>
+    call<{ defaults: AppState["defaults"] }>("/api/defaults", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    }),
   files: (id: string) => call<{ files: string[] }>(`/api/threads/${id}/files`),
   tree: (id: string, path: string) =>
     call<{ path: string; entries: TreeEntry[] }>(
