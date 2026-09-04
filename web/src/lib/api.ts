@@ -2,6 +2,7 @@
 // response throws with the server's own message, which is what the toast shows.
 import type {
   AppState,
+  ApprovalDecision,
   ChangedFile,
   DirListing,
   Effort,
@@ -75,6 +76,8 @@ export const api = {
   git: (projectId: string) => call<GitSnapshot>(`/api/projects/${projectId}/git`),
   addWorktree: (projectId: string, input: { branch: string; createBranch: boolean; base?: string }) =>
     post<Worktree>(`/api/projects/${projectId}/worktrees`, input),
+  checkout: (projectId: string, input: { branch: string; createBranch: boolean; base?: string }) =>
+    post<{ branch: string }>(`/api/projects/${projectId}/checkout`, input),
   removeWorktree: (projectId: string, path: string, force = false) =>
     call<{ ok: true }>(`/api/projects/${projectId}/worktrees`, {
       method: "DELETE",
@@ -129,6 +132,12 @@ export const api = {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ key, value }),
+    }),
+  saveDefaults: (patch: { permissionMode: PermissionMode }) =>
+    call<{ defaults: AppState["defaults"] }>("/api/defaults", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
     }),
   files: (id: string) => call<{ files: string[] }>(`/api/threads/${id}/files`),
   tree: (id: string, path: string) =>
@@ -187,8 +196,11 @@ export const api = {
   rewind: (id: string, messageId: string) =>
     post<{ text: string }>(`/api/threads/${id}/rewind`, { messageId }),
   interrupt: (id: string) => post<{ ok: true }>(`/api/threads/${id}/interrupt`),
-  respondToApproval: (threadId: string, approvalId: string, decision: "allow" | "always" | "deny") =>
-    post<{ ok: true }>(`/api/threads/${threadId}/approvals/${approvalId}`, { decision }),
+  respondToApproval: (threadId: string, approvalId: string, decision: ApprovalDecision) =>
+    post<{ ok: true }>(
+      `/api/threads/${threadId}/approvals/${approvalId}`,
+      typeof decision === "string" ? { decision } : decision,
+    ),
   respondToQuestion: (
     threadId: string,
     questionId: string,

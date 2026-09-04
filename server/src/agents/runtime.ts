@@ -213,6 +213,9 @@ function handleEvent(session: ManagedSession, event: AgentEvent): void {
       session.questions.set(event.question.id, event.question);
       publish({ type: "thread.question", question: event.question });
       return;
+    case "notice":
+      if (event.text.trim()) appendMessage(threadId, "system", event.text);
+      return;
     case "commands.changed":
       publish({ type: "thread.commands", threadId, commands: event.commands });
       return;
@@ -352,12 +355,10 @@ export async function resolveApproval(
 ): Promise<boolean> {
   const session = sessions.get(threadId);
   const approval = session?.approvals.get(approvalId);
-  if (
-    !session ||
-    !threadStore.owns(threadId) ||
-    !approval ||
-    !approval.decisions.includes(decision)
-  ) {
+  const allowed =
+    approval &&
+    (typeof decision === "object" ? Boolean(approval.questions?.length) : approval.decisions.includes(decision));
+  if (!session || !threadStore.owns(threadId) || !approval || !allowed) {
     return false;
   }
   const handle = session.handle ?? (await session.opening);

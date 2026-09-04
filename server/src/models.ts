@@ -187,6 +187,35 @@ export function updateProviderModels(providerId: ProviderId, models: ModelOption
   return provider;
 }
 
+const DEFAULT_PERMISSION_MODE_KEY = "defaultPermissionMode";
+
+function loadDefaultPermissionMode(): PermissionMode {
+  const stored = settings.all()[DEFAULT_PERMISSION_MODE_KEY];
+  return typeof stored === "string" &&
+    [...CLAUDE_MODES, ...CURSOR_MODES].some((mode) => mode.value === stored)
+    ? (stored as PermissionMode)
+    : DEFAULT_PERMISSION_MODE;
+}
+
+let defaultPermissionMode: PermissionMode = loadDefaultPermissionMode();
+
+export function currentDefaults(
+  providerId: ProviderId = defaultProviderId(),
+): { model: string; permissionMode: PermissionMode; effort: Effort } {
+  const provider = makeCatalog(providerId);
+  return {
+    ...provider.defaults,
+    permissionMode: isPermissionMode(providerId, defaultPermissionMode)
+      ? defaultPermissionMode
+      : provider.defaults.permissionMode,
+  };
+}
+
+export function setDefaultPermissionMode(mode: PermissionMode): void {
+  defaultPermissionMode = mode;
+  settings.set(DEFAULT_PERMISSION_MODE_KEY, mode);
+}
+
 export function isProviderId(value: unknown): value is ProviderId {
   return value === "claude" || value === "cursor";
 }

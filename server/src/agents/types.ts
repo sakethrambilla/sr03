@@ -31,6 +31,7 @@ export type AgentEvent =
   | { type: "tool.completed"; callId: string; result: string; isError: boolean }
   | { type: "approval.requested"; approval: PendingApproval }
   | { type: "question.requested"; question: PendingQuestion }
+  | { type: "notice"; text: string }
   | { type: "commands.changed"; commands: SlashCommand[] }
   | { type: "tasks.changed"; tasks: ThreadTask[] }
   | { type: "usage"; usage: Usage }

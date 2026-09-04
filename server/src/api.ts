@@ -30,6 +30,7 @@ import { readTable, readValues, tableKind, writeCell } from "./table.ts";
 import type { TableFilter, TableQuery } from "./table.ts";
 import { messages, projects, settings, threads } from "./db.ts";
 import {
+  currentDefaults,
   currentProvider,
   currentProviders,
   defaultProviderId,
@@ -37,7 +38,9 @@ import {
   isModel,
   isPermissionMode,
   isProviderId,
+  setDefaultPermissionMode,
 } from "./models.ts";
+import type { Question } from "./types.ts";
 import { publish } from "./bus.ts";
 
 class HttpError extends Error {
@@ -124,6 +127,29 @@ function withThreadOperations<T>(
   return acquire(0);
 }
 
+function readDecision(body: Record<string, unknown>): "allow" | "always" | "deny" {
+  const decision = requireString(body, "decision");
+  if (decision !== "allow" && decision !== "always" && decision !== "deny") {
+    throw new HttpError(400, "Unknown decision");
+  }
+  return decision;
+}
+
+// every question must come back answered — a half-filled map would leave the model guessing
+function readAnswers(body: Record<string, unknown>, questions: Question[]): Record<string, string> {
+  const given = body.answers;
+  if (!given || typeof given !== "object") throw new HttpError(400, "`answers` is required");
+  const answers: Record<string, string> = {};
+  for (const question of questions) {
+    const answer = (given as Record<string, unknown>)[question.question];
+    if (typeof answer !== "string" || answer.trim().length === 0) {
+      throw new HttpError(400, `No answer for "${question.question}"`);
+    }
+    answers[question.question] = answer.trim();
+  }
+  return answers;
+}
+
 // the search and the per-column checklists travel as query params, so one parser reads both
 function tableQuery(url: URL): TableQuery {
   const raw = url.searchParams.get("filters");
@@ -182,6 +208,7 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
       threads: threads.list(),
       providers: currentProviders(),
       defaultProviderId: defaultProviderId(),
+      defaults: currentDefaults(),
       apps: await listApps(),
     }),
   },
@@ -335,6 +362,42 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
     },
   },
   {
+    method: "POST",
+    pattern: /^\/api\/projects\/([^/]+)\/checkout$/,
+    handler: async ({ params, request }) => {
+      const project = requireProject(params[0]!);
+      const body = await readBody(request);
+      const branch = requireString(body, "branch");
+      const createBranch = body.createBranch === true;
+      const info = await git.repoInfo(project.path);
+      if (!info.isGit || !info.root) throw new HttpError(400, "Project is not a git repository");
+      // git refuses both of these itself; pre-checking only buys a message that names the fix
+      if (branch !== info.branch) {
+        // info.root on both sides — git resolves symlinks, and project.path may not be resolved
+        const held = (await git.listWorktrees(info.root)).find(
+          (worktree) => worktree.branch === branch && worktree.path !== info.root,
+        );
+        if (held) throw new HttpError(400, `${branch} is checked out in the worktree at ${held.path}`);
+        // `switch -c` keeps uncommitted work on the new branch; moving to an existing one can drag
+        // it across unrelated commits
+        if (!createBranch && info.dirty > 0) {
+          throw new HttpError(
+            400,
+            `The folder has ${info.dirty} uncommitted change${info.dirty === 1 ? "" : "s"}`,
+          );
+        }
+      }
+      await git.switchBranch({
+        cwd: project.path,
+        branch,
+        createBranch,
+        ...(typeof body.base === "string" && body.base.trim() ? { base: body.base.trim() } : {}),
+      });
+      publish({ type: "projects.changed" });
+      return { branch };
+    },
+  },
+  {
     method: "DELETE",
     pattern: /^\/api\/projects\/([^/]+)\/worktrees$/,
     handler: async ({ params, request }) => {
@@ -395,6 +458,7 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
       }
       const providerId = body.providerId ?? defaultProviderId();
       const provider = currentProvider(providerId);
+      const defaults = currentDefaults(providerId);
       if (body.model !== undefined && !isModel(providerId, body.model)) {
         throw new HttpError(400, "Unknown model");
       }
@@ -410,13 +474,13 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
       const thread = threads.create({
         projectId: project.id,
         providerId,
-        effort: body.effort ?? provider.defaults.effort,
+        effort: body.effort ?? defaults.effort,
         title: typeof body.title === "string" && body.title.trim() ? body.title.trim() : "New thread",
         cwd,
         branch: info.branch,
         isWorktree: path.resolve(cwd) !== path.resolve(project.path),
-        model: body.model ?? provider.defaults.model,
-        permissionMode: body.permissionMode ?? provider.defaults.permissionMode,
+        model: body.model ?? defaults.model,
+        permissionMode: body.permissionMode ?? defaults.permissionMode,
       });
       publish({ type: "thread.updated", thread });
       return thread;
@@ -615,6 +679,23 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
       if (typeof body.value !== "string") throw new HttpError(400, "`value` is required");
       settings.set(requireString(body, "key"), body.value);
       return { ok: true };
+    },
+  },
+  {
+    method: "PUT",
+    pattern: /^\/api\/defaults$/,
+    handler: async ({ request }) => {
+      const body = await readBody(request);
+      if (
+        typeof body.permissionMode !== "string" ||
+        !isPermissionMode(defaultProviderId(), body.permissionMode)
+      ) {
+        throw new HttpError(400, "Invalid permissionMode");
+      }
+      setDefaultPermissionMode(body.permissionMode);
+      const defaults = currentDefaults();
+      publish({ type: "defaults.changed", defaults });
+      return { defaults };
     },
   },
   {
@@ -868,10 +949,16 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
     handler: async ({ params, request }) => {
       const thread = requireThread(params[0]!);
       const body = await readBody(request);
-      const decision = requireString(body, "decision");
-      if (decision !== "allow" && decision !== "always" && decision !== "deny") {
-        throw new HttpError(400, "Unknown decision");
-      }
+      const pending = agents
+        .pendingApprovals()
+        .find((approval) => approval.threadId === thread.id && approval.id === params[1]);
+      if (!pending) throw new HttpError(410, "Approval is no longer pending");
+
+      // a question is answered rather than allowed, but dismissing it is still a plain deny
+      const decision =
+        pending.questions && body.decision !== "deny"
+          ? { answers: readAnswers(body, pending.questions) }
+          : readDecision(body);
       const resolved = await agents.resolveApproval(thread.id, params[1]!, decision);
       if (!resolved) throw new HttpError(410, "Approval is no longer pending");
       return { ok: true };
