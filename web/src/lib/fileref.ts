@@ -13,6 +13,7 @@ export interface LineLink {
 export interface FileIndex {
   resolve: (text: string) => FileRef | null;
   imports: (from: string, line: string) => LineLink[];
+  bindings: (from: string, text: string) => Map<string, string>;
 }
 
 export interface FileLinks extends FileIndex {
@@ -38,6 +39,27 @@ const JS_IMPORT =
   /(?:\bfrom\s*|\brequire\s*\(\s*|\bimport\s*\(\s*|^\s*(?:import|export)\s+)(['"`])([^'"`\n]+)\1/g;
 const CSS_IMPORT = /@import\s+(?:url\(\s*)?(['"])([^'"\n]+)\1/g;
 const PY_IMPORT = /^\s*(?:from|import)\s+(\.*[\w.]*)/;
+
+// the names a file gives what it imports, which a clause can spread over several lines
+const JS_BINDING = /^[ \t]*(?:import|export)[ \t]+([^;'"]*?)[ \t]*from[ \t]*['"]([^'"\n]+)['"]/gm;
+const PY_FROM = /^[ \t]*from[ \t]+(\.*[\w.]*)[ \t]+import[ \t]+(\([\s\S]*?\)|[^\n]*)/gm;
+const PY_PLAIN = /^[ \t]*import[ \t]+([^\n(]*)$/gm;
+const NAME = /^[A-Za-z_$][\w$]*$/;
+
+// `A as B`, `* as NS`, `type A` — whichever of those, the file goes on to call it B, NS or A
+function localName(entry: string): string | null {
+  const cleaned = entry.split("#")[0]!.replace(/\btype\b/g, " ").replace(/[()]/g, " ").trim();
+  const aliased = /\bas\b\s+([A-Za-z_$][\w$]*)$/.exec(cleaned);
+  const name = aliased ? aliased[1]! : cleaned;
+  return NAME.test(name) ? name : null;
+}
+
+function jsNames(clause: string): string[] {
+  const braces = /\{([^}]*)\}/.exec(clause);
+  const outside = braces ? clause.slice(0, braces.index) + clause.slice(braces.index + braces[0].length) : clause;
+  const entries = [...(braces?.[1] ?? "").split(","), ...outside.split(",")];
+  return entries.map(localName).filter((name): name is string => name !== null);
+}
 
 // a specifier names a module, not a file, so try every extension the tree might spell it with
 const EXTENSIONS = [
@@ -187,6 +209,41 @@ export function createFileIndex(files: string[]): FileIndex {
     return found;
   };
 
+  // what each imported name points at, so a click on the name itself lands the same way
+  // a click on the specifier does
+  const bindings = (from: string, text: string): Map<string, string> => {
+    const found = new Map<string, string>();
+    const bind = (name: string | null, specifier: string) => {
+      if (!name || found.has(name)) return;
+      const path = resolveImport(from, specifier);
+      if (path) found.set(name, path);
+    };
+
+    if (PY_FILE.test(from)) {
+      PY_FROM.lastIndex = 0;
+      for (let match = PY_FROM.exec(text); match; match = PY_FROM.exec(text)) {
+        for (const entry of match[2]!.split(",")) bind(localName(entry), match[1]!);
+      }
+      PY_PLAIN.lastIndex = 0;
+      for (let match = PY_PLAIN.exec(text); match; match = PY_PLAIN.exec(text)) {
+        for (const entry of match[1]!.split(",")) {
+          const module = entry.split("#")[0]!.split(/\bas\b/)[0]!.trim();
+          if (!module) continue;
+          // `import a.b` binds only `a`, since that is what the file writes
+          bind(localName(entry) ?? module.split(".")[0]!, module);
+        }
+      }
+      return found;
+    }
+
+    if (!JS_FILE.test(from)) return found;
+    JS_BINDING.lastIndex = 0;
+    for (let match = JS_BINDING.exec(text); match; match = JS_BINDING.exec(text)) {
+      for (const name of jsNames(match[1]!)) bind(name, match[2]!);
+    }
+    return found;
+  };
+
   return {
     resolve: (text) => {
       if (cache.has(text)) return cache.get(text)!;
@@ -195,5 +252,6 @@ export function createFileIndex(files: string[]): FileIndex {
       return found;
     },
     imports,
+    bindings,
   };
 }

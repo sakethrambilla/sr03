@@ -53,6 +53,25 @@ interface Segment {
   tokens: Token[];
 }
 
+const SHADOWED = new Set<Token["kind"]>(["comment", "string", "property"]);
+
+// every mention of an imported name, so clicking the symbol goes where the specifier goes
+function symbols(tokens: Token[], bindings: Map<string, string>): LineLink[] {
+  if (bindings.size === 0) return [];
+  const links: LineLink[] = [];
+  let column = 0;
+  let previous = "";
+  for (const token of tokens) {
+    const path = bindings.get(token.text);
+    // a name quoted, commented out, keyed in an object or reached through a dot is not the import
+    const own = !SHADOWED.has(token.kind) && !previous.trimEnd().endsWith(".");
+    if (path && own) links.push({ start: column, end: column + token.text.length, path });
+    column += token.text.length;
+    previous = token.text;
+  }
+  return links;
+}
+
 // a link can start and end mid-token and can run across several of them, so the line is
 // re-cut along its edges before any of it is rendered
 function segment(tokens: Token[], links: LineLink[]): Segment[] {
@@ -321,9 +340,15 @@ export const FileView = memo(function FileView({
   const grid = SPREADSHEET.test(path) || (delimited && preview);
   const lines = useMemo(() => {
     if (!file || file.binary) return [] as Segment[][];
-    return toLines(tokenize(text, path)).map((tokens) =>
-      segment(tokens, links.imports(path, tokens.map((token) => token.text).join(""))),
-    );
+    const bindings = links.bindings(path, text);
+    return toLines(tokenize(text, path)).map((tokens) => {
+      const found = [
+        ...links.imports(path, tokens.map((token) => token.text).join("")),
+        ...symbols(tokens, bindings),
+      ];
+      // segment walks the line forwards and takes the first link it can reach
+      return segment(tokens, found.sort((a, b) => a.start - b.start));
+    });
   }, [file?.binary, text, path, links]);
   const diff = file?.diff ?? "";
   const { blocks, startsAt, covers } = useMemo(() => {

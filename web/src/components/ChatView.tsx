@@ -370,6 +370,7 @@ export function ChatView({ thread }: { thread: Thread }) {
     () => ({
       resolve: index.resolve,
       imports: index.imports,
+      bindings: index.bindings,
       open: (ref: FileRef) => openFile(ref.path, ref.line),
     }),
     [index, openFile],
