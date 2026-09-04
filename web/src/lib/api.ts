@@ -9,6 +9,7 @@ import type {
   Message,
   PermissionMode,
   Project,
+  ProviderId,
   ProviderStatus,
   SlashCommand,
   TableFilter,
@@ -82,6 +83,7 @@ export const api = {
     }),
   createThread: (input: {
     projectId: string;
+    providerId: ProviderId;
     cwd?: string;
     model?: string;
     permissionMode?: PermissionMode;
@@ -90,8 +92,10 @@ export const api = {
   }) => post<Thread>("/api/threads", input),
   thread: (id: string) =>
     call<{ thread: Thread; messages: Message[]; tasks: ThreadTask[] }>(`/api/threads/${id}`),
-  commands: (cwd: string) =>
-    call<{ commands: SlashCommand[] }>(`/api/commands?cwd=${encodeURIComponent(cwd)}`),
+  commands: (providerId: ProviderId, cwd: string) =>
+    call<{ commands: SlashCommand[] }>(
+      `/api/commands?provider=${encodeURIComponent(providerId)}&cwd=${encodeURIComponent(cwd)}`,
+    ),
   usage: (threadId?: string | null) =>
     call<Usage>(`/api/usage${threadId ? `?thread=${encodeURIComponent(threadId)}` : ""}`),
   threadGit: (id: string) =>
@@ -185,4 +189,9 @@ export const api = {
   interrupt: (id: string) => post<{ ok: true }>(`/api/threads/${id}/interrupt`),
   respondToApproval: (threadId: string, approvalId: string, decision: "allow" | "always" | "deny") =>
     post<{ ok: true }>(`/api/threads/${threadId}/approvals/${approvalId}`, { decision }),
+  respondToQuestion: (
+    threadId: string,
+    questionId: string,
+    answers: Record<string, string[]>,
+  ) => post<{ ok: true }>(`/api/threads/${threadId}/questions/${questionId}`, { answers }),
 };

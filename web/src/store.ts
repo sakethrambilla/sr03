@@ -12,7 +12,10 @@ import type {
   Effort,
   Message,
   PendingApproval,
+  PendingQuestion,
   PermissionMode,
+  ProviderCatalog,
+  ProviderId,
   Resources,
   ServerEvent,
   SlashCommand,
@@ -24,6 +27,7 @@ import type {
 
 export interface Draft {
   projectId: string | null;
+  providerId: ProviderId;
   branch: string | null;
   createBranch: boolean;
   worktreePath: string | null;
@@ -42,6 +46,7 @@ interface Store extends AppState {
   messagesByThread: Record<string, Message[]>;
   streamByThread: Record<string, string>;
   approvalsByThread: Record<string, PendingApproval[]>;
+  questionsByThread: Record<string, PendingQuestion[]>;
   tasksByThread: Record<string, ThreadTask[]>;
   // what a running turn is waiting on, for the label under the transcript
   phaseByThread: Record<string, ThreadPhase | null>;
@@ -51,7 +56,7 @@ interface Store extends AppState {
   // set once a thread's own messages have been read, so "no messages yet" and "not read yet"
   // don't render the same empty state
   loadedThreads: Record<string, true>;
-  // slash commands belong to the folder, not the session — every thread in one shares a list
+  // Slash commands belong to a provider and folder; two harnesses in one cwd may expose different lists.
   commandsByCwd: Record<string, SlashCommand[]>;
   // every file in the folder, so a path a message mentions can be recognised as one
   filesByCwd: Record<string, string[]>;
@@ -79,9 +84,10 @@ interface Store extends AppState {
   interrupt: () => Promise<void>;
   patchActive: (patch: { model?: string; permissionMode?: PermissionMode; effort?: Effort }) => Promise<void>;
   respond: (approvalId: string, decision: "allow" | "always" | "deny") => Promise<void>;
+  answerQuestion: (questionId: string, answers: Record<string, string[]>) => Promise<void>;
   refreshUsage: () => Promise<void>;
   resync: () => Promise<void>;
-  loadCommands: (cwd: string) => Promise<void>;
+  loadCommands: (providerId: ProviderId, cwd: string) => Promise<void>;
   loadFiles: (threadId: string, cwd: string) => Promise<void>;
   setAppearance: (patch: Partial<Appearance>) => void;
   restoreAppearance: () => Promise<void>;
@@ -95,12 +101,40 @@ interface Store extends AppState {
 const EMPTY: AppState = {
   projects: [],
   threads: [],
+  providers: [],
+  defaultProviderId: "claude",
+  apps: [],
+};
+
+export const EMPTY_PROVIDER: ProviderCatalog = {
+  id: "claude",
+  label: "Claude Code",
   models: [],
   permissionModes: [],
   effortLevels: [],
-  apps: [],
-  defaults: { model: "", permissionMode: "default", effort: "high" },
+  defaults: { model: "default", permissionMode: "default", effort: "high" },
+  capabilities: {
+    effort: false,
+    slashCommands: false,
+    usage: false,
+    tasks: false,
+    fork: false,
+    questions: false,
+    liveModelSwitch: false,
+    livePermissionModeSwitch: false,
+  },
 };
+
+export function providerCatalog(
+  providers: ProviderCatalog[],
+  providerId: ProviderId,
+): ProviderCatalog {
+  return providers.find((provider) => provider.id === providerId) ?? EMPTY_PROVIDER;
+}
+
+export function commandKey(providerId: ProviderId, cwd: string): string {
+  return `${providerId}\u0000${cwd}`;
+}
 
 // the finished markers outlive a reload, so a session that ended while the app was
 // closed still asks for attention when you come back
@@ -171,7 +205,11 @@ const FS_SETTLE_MS = 750;
 const fsTimers = new Map<string, number>();
 
 function writes(message: Message): boolean {
-  return message.role === "tool" && WRITE_TOOLS.has(String(message.meta?.toolName ?? ""));
+  return (
+    message.role === "tool" &&
+    (message.meta?.mutatesFiles === true ||
+      WRITE_TOOLS.has(String(message.meta?.toolName ?? "")))
+  );
 }
 
 function bumpFs(threadId: string, set: (partial: (state: Store) => Partial<Store>) => void): void {
@@ -213,6 +251,7 @@ export const useStore = create<Store>((set, get) => ({
   messagesByThread: {},
   streamByThread: {},
   approvalsByThread: {},
+  questionsByThread: {},
   tasksByThread: {},
   phaseByThread: {},
   fsVersionByThread: {},
@@ -309,25 +348,42 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   startDraft: (input) => {
-    const { defaults } = get();
+    const { providers, defaultProviderId } = get();
+    const provider = providerCatalog(providers, defaultProviderId);
     set({
       activeThreadId: null,
       settingsOpen: false,
       draft: {
         projectId: input?.projectId ?? null,
+        providerId: provider.id,
         branch: input?.branch ?? null,
         createBranch: false,
         worktreePath: input?.worktreePath ?? null,
         worktree: Boolean(input?.worktreePath),
-        model: defaults.model,
-        permissionMode: defaults.permissionMode,
-        effort: defaults.effort,
+        model: provider.defaults.model,
+        permissionMode: provider.defaults.permissionMode,
+        effort: provider.defaults.effort,
       },
     });
   },
 
   patchDraft: (patch) =>
-    set((state) => (state.draft ? { draft: { ...state.draft, ...patch } } : {})),
+    set((state) => {
+      if (!state.draft) return {};
+      if (patch.providerId && patch.providerId !== state.draft.providerId) {
+        const provider = providerCatalog(state.providers, patch.providerId);
+        return {
+          draft: {
+            ...state.draft,
+            ...patch,
+            model: provider.defaults.model,
+            permissionMode: provider.defaults.permissionMode,
+            effort: provider.defaults.effort,
+          },
+        };
+      }
+      return { draft: { ...state.draft, ...patch } };
+    }),
 
   // a thread only exists once its first turn is sent, so cwd/branch are fixed for its lifetime
   startFromDraft: async (text) => {
@@ -343,6 +399,7 @@ export const useStore = create<Store>((set, get) => ({
     }
     const thread = await api.createThread({
       projectId: draft.projectId,
+      providerId: draft.providerId,
       ...(cwd ? { cwd } : {}),
       model: draft.model,
       permissionMode: draft.permissionMode,
@@ -437,25 +494,74 @@ export const useStore = create<Store>((set, get) => ({
   respond: async (approvalId, decision) => {
     const id = get().activeThreadId;
     if (!id) return;
+    const approval = get().approvalsByThread[id]?.find((entry) => entry.id === approvalId);
     set((state) => ({
       approvalsByThread: {
         ...state.approvalsByThread,
         [id]: (state.approvalsByThread[id] ?? []).filter((approval) => approval.id !== approvalId),
       },
     }));
-    await api.respondToApproval(id, approvalId, decision).catch((error: Error) =>
-      set({ error: error.message }),
-    );
+    await api.respondToApproval(id, approvalId, decision).catch((error: Error) => {
+      set((state) => ({
+        error: error.message,
+        ...(approval
+          ? {
+              approvalsByThread: {
+                ...state.approvalsByThread,
+                [id]: (state.approvalsByThread[id] ?? []).some(
+                  (entry) => entry.id === approval.id,
+                )
+                  ? state.approvalsByThread[id]!
+                  : [...(state.approvalsByThread[id] ?? []), approval],
+              },
+            }
+          : {}),
+      }));
+    });
   },
 
-  // a cold read spawns a CLI of its own, so a folder is only ever asked once
-  loadCommands: async (cwd) => {
-    if (get().commandsByCwd[cwd]) return;
-    const commands = await api.commands(cwd).then(
+  answerQuestion: async (questionId, answers) => {
+    const id = get().activeThreadId;
+    if (!id) return;
+    const question = get().questionsByThread[id]?.find((entry) => entry.id === questionId);
+    set((state) => ({
+      questionsByThread: {
+        ...state.questionsByThread,
+        [id]: (state.questionsByThread[id] ?? []).filter(
+          (question) => question.id !== questionId,
+        ),
+      },
+    }));
+    await api.respondToQuestion(id, questionId, answers).catch((error: Error) => {
+      set((state) => ({
+        error: error.message,
+        ...(question
+          ? {
+              questionsByThread: {
+                ...state.questionsByThread,
+                [id]: (state.questionsByThread[id] ?? []).some(
+                  (entry) => entry.id === question.id,
+                )
+                  ? state.questionsByThread[id]!
+                  : [...(state.questionsByThread[id] ?? []), question],
+              },
+            }
+          : {}),
+      }));
+    });
+  },
+
+  // A cold read may spawn a CLI, so each provider-folder pair is only asked once.
+  loadCommands: async (providerId, cwd) => {
+    const key = commandKey(providerId, cwd);
+    if (get().commandsByCwd[key]) return;
+    const commands = await api.commands(providerId, cwd).then(
       (body) => body.commands,
       () => null,
     );
-    if (commands) set((state) => ({ commandsByCwd: { ...state.commandsByCwd, [cwd]: commands } }));
+    if (commands) {
+      set((state) => ({ commandsByCwd: { ...state.commandsByCwd, [key]: commands } }));
+    }
   },
 
   restoreAppearance: async () => {
@@ -527,6 +633,7 @@ export const useStore = create<Store>((set, get) => ({
           streamByThread: { ...state.streamByThread, [event.threadId]: "" },
           tasksByThread: { ...state.tasksByThread, [event.threadId]: [] },
           approvalsByThread: { ...state.approvalsByThread, [event.threadId]: [] },
+          questionsByThread: { ...state.questionsByThread, [event.threadId]: [] },
         }));
         return;
       }
@@ -557,7 +664,8 @@ export const useStore = create<Store>((set, get) => ({
               ? {
                   ...thread,
                   status: event.status,
-                  sessionId: event.sessionId ?? thread.sessionId,
+                  sessionId:
+                    event.sessionId !== undefined ? event.sessionId : thread.sessionId,
                   updatedAt: Date.now(),
                 }
               : thread,
@@ -569,8 +677,14 @@ export const useStore = create<Store>((set, get) => ({
         set((state) => ({ threads: upsertThread(state.threads, event.thread) }));
         return;
       }
-      case "models.changed": {
-        set({ models: event.models });
+      case "provider.changed": {
+        set((state) => ({
+          providers: state.providers.some((provider) => provider.id === event.provider.id)
+            ? state.providers.map((provider) =>
+                provider.id === event.provider.id ? event.provider : provider,
+              )
+            : [...state.providers, event.provider],
+        }));
         return;
       }
       case "thread.approval": {
@@ -580,6 +694,18 @@ export const useStore = create<Store>((set, get) => ({
             [event.approval.threadId]: [
               ...(state.approvalsByThread[event.approval.threadId] ?? []),
               event.approval,
+            ],
+          },
+        }));
+        return;
+      }
+      case "thread.question": {
+        set((state) => ({
+          questionsByThread: {
+            ...state.questionsByThread,
+            [event.question.threadId]: [
+              ...(state.questionsByThread[event.question.threadId] ?? []),
+              event.question,
             ],
           },
         }));
@@ -602,9 +728,12 @@ export const useStore = create<Store>((set, get) => ({
       }
       // the CLI re-sends the whole list whenever it changes, so this replaces rather than merges
       case "thread.commands": {
-        const cwd = get().threads.find((thread) => thread.id === event.threadId)?.cwd;
-        if (!cwd) return;
-        set((state) => ({ commandsByCwd: { ...state.commandsByCwd, [cwd]: event.commands } }));
+        const thread = get().threads.find((entry) => entry.id === event.threadId);
+        if (!thread) return;
+        const key = commandKey(thread.providerId, thread.cwd);
+        set((state) => ({
+          commandsByCwd: { ...state.commandsByCwd, [key]: event.commands },
+        }));
         return;
       }
       // the server is authoritative for what is still outstanding, so this replaces rather than merges
@@ -622,6 +751,25 @@ export const useStore = create<Store>((set, get) => ({
             ...state.approvalsByThread,
             [event.threadId]: (state.approvalsByThread[event.threadId] ?? []).filter(
               (approval) => approval.id !== event.approvalId,
+            ),
+          },
+        }));
+        return;
+      }
+      case "thread.questions": {
+        const byThread: Record<string, PendingQuestion[]> = {};
+        for (const question of event.questions) {
+          (byThread[question.threadId] ??= []).push(question);
+        }
+        set({ questionsByThread: byThread });
+        return;
+      }
+      case "thread.question.resolved": {
+        set((state) => ({
+          questionsByThread: {
+            ...state.questionsByThread,
+            [event.threadId]: (state.questionsByThread[event.threadId] ?? []).filter(
+              (question) => question.id !== event.questionId,
             ),
           },
         }));

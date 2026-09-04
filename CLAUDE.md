@@ -1,19 +1,21 @@
 # sr03
 
-A local Claude control plane: thread sidepanel, folder-based projects, model + permission pickers,
-git worktrees. Modelled on [t3code](https://github.com/pingdotgg/t3code)'s shape — the server owns
-everything, the client is a thin view over one WebSocket — but deliberately much smaller.
+A local AI harness control plane: thread sidepanel, folder-based projects, provider + model +
+permission pickers, git worktrees. Modelled on [t3code](https://github.com/pingdotgg/t3code)'s
+shape — the server owns everything, the client is a thin view over one WebSocket — but deliberately
+much smaller.
 
 **Out of scope.** Ask before building any of these: remote control / relay / Tailscale, mobile app,
-providers other than Claude, file checkpointing — snapshotting the worktree so a rewind can put code
-back — MCP servers, PR integration. Rewind and `/clear` are conversation-only: they drop messages
-and the CLI session, and never touch disk. t3code is Effect-based and event-sourced; sr03 is not,
-and shouldn't become so.
+providers other than Claude or Cursor, file checkpointing — snapshotting the worktree so a rewind
+can put code back — MCP servers, PR integration. Rewind and `/clear` are conversation-only: they
+drop messages and the CLI session, and never touch disk. t3code is Effect-based and event-sourced;
+sr03 is not, and shouldn't become so.
 
 ## Commands
 
 ```bash
 pnpm dev         # server :3399 + Vite :5399 (open http://localhost:5399)
+pnpm test        # provider transport tests
 pnpm typecheck   # both packages
 pnpm build       # web → web/dist, which the server then serves itself
 pnpm start       # server only, serving web/dist
@@ -31,7 +33,11 @@ process before it is parked (default ten minutes; the next turn resumes it).
 server/src   plain Node, run through --experimental-strip-types (no build step)
   index.ts   http + ws, static serving
   api.ts     REST routes — regex table, one handler each
-  claude.ts  one long-lived Agent SDK session per thread
+  agents/runtime.ts  provider-neutral sessions, transcript projection, approvals, parking
+  agents/claude.ts   Claude Agent SDK adapter
+  agents/cursor.ts   Cursor ACP adapter
+  agents/acp.ts      newline-delimited JSON-RPC transport
+  agents/registry.ts provider lookup
   git.ts     worktree add/remove/list, branches, dirty + diff stat
   db.ts      node:sqlite — projects, threads, messages
   bus.ts     in-process pub/sub, fanned out to every socket
@@ -95,6 +101,21 @@ REST for commands, WebSocket (`/ws`) for everything the server pushes back. Wire
 - `canUseTool` is only consulted in `default` and `plan` modes; `acceptEdits` and `bypassPermissions`
   auto-approve before the callback runs.
 
+## Cursor session gotchas
+
+- Cursor runs as `cursor-agent acp` over newline-delimited JSON-RPC on stdio. The CLI remains an
+  external prerequisite; unlike Claude's SDK CLI, it is not bundled into the desktop payload.
+- Auto-review and Force are process flags. Agent, Plan and Ask are reapplied with
+  `session/set_mode` after every new or loaded session; changing a permission mode parks the idle
+  process first.
+- Cursor's CLI model aliases are not ACP model IDs. The adapter learns the accepted IDs from the
+  first session setup, caches them for future drafts, and reapplies the selected model after every
+  new or loaded session.
+- `session/load` replays prior updates. The adapter suppresses that replay because sr03 already owns
+  the persisted transcript; replaying it would duplicate every message and tool row.
+- ACP request-permission options are provider supplied. Only decisions present in that request may
+  be returned, and `cursor/ask_question` stays pending until the web client answers it.
+
 ## Desktop shell
 
 - The shell does not host the server in Electron's Node — it spawns the machine's own `node` as a
@@ -108,8 +129,9 @@ REST for commands, WebSocket (`/ws`) for everything the server pushes back. Wire
   `<html>` is what reserves room for the traffic lights). Windows keeps its native frame, since its
   controls sit right where the panes have nothing to spare.
 - The window gets a free port, not 3399, so a packaged app and `pnpm dev` can run side by side.
-  Both share `~/.sr03`. Only one instance runs at a time (`requestSingleInstanceLock`), so a
-  freshly built app exits on launch while an installed one is open.
+ Both share `~/.sr03`; server-instance leases keep a warm or running thread owned by only one of
+ them at a time. Only one desktop instance runs (`requestSingleInstanceLock`), so a freshly built
+ app exits on launch while an installed one is open.
 - Electron 44 ships no postinstall, so its binary never lands from a plain install — `desktop`'s own
   `postinstall` runs `install-electron` to fetch it. electron-builder downloads its own copy anyway,
   so this only matters for `pnpm -C desktop dev`.
@@ -133,20 +155,20 @@ REST for commands, WebSocket (`/ws`) for everything the server pushes back. Wire
   `pnpm install --config.confirmModulesPurge=false`.
 - Windows gets the server's POSIX-only features degraded, not ported. The native folder and file
   pickers and reveal-in-Finder throw, and "open in <editor>" lists nothing; browsing to a project
-  path by hand still works. `findClaude` shells out to `which`, so Settings reports the CLI as not
-  found even when it is installed. The resources meter shells out to `ps` and `lsof`, so while it
-  is open each tick logs `spawn ps ENOENT` and publishes no sample. Turns themselves are unaffected
-  — the Agent SDK finds its own bundled CLI.
+  path by hand still works. Provider executables are resolved from PATH with PATHEXT support. The
+  resources meter shells out to `ps` and `lsof`, so while it is open each tick logs
+  `spawn ps ENOENT` and publishes no sample.
 
 ## Testing changes
 
-There are no automated tests yet. Verify by hand against a scratch repo — never the user's real
-projects, since worktree and edit operations mutate them:
+The ACP transport has protocol tests. Verify provider turns by hand against a scratch repo — never
+the user's real projects, since worktree and edit operations mutate them:
 
 ```bash
 mkdir -p /tmp/sr03-repo && cd /tmp/sr03-repo && git init -q -b main \
   && echo hello > README.md && git add . && git commit -qm init
 ```
 
-Then add `/tmp/sr03-repo` as a project, create a worktree, and run a turn in it. A change to the
-Claude session or worktree code isn't done until a real turn has been through it.
+Then add `/tmp/sr03-repo` as a project, create a worktree, and run a turn with each affected
+provider. A change to provider sessions or worktree code isn't done until a real turn has been
+through it.

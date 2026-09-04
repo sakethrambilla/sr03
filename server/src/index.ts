@@ -10,7 +10,7 @@ import { WebSocketServer } from "ws";
 
 import { PORT } from "./config.ts";
 import { handleApiRequest } from "./api.ts";
-import { pendingApprovals } from "./claude.ts";
+import { pendingApprovals, pendingQuestions } from "./agents/runtime.ts";
 import { subscribe } from "./bus.ts";
 import { threads } from "./db.ts";
 import * as metrics from "./metrics.ts";
@@ -134,6 +134,8 @@ websockets.on("connection", (socket) => {
   // nobody can answer leaves its turn parked forever, so every new socket is told what is open
   const snapshot: ServerEvent = { type: "thread.approvals", approvals: pendingApprovals() };
   socket.send(JSON.stringify(snapshot));
+  const questions: ServerEvent = { type: "thread.questions", questions: pendingQuestions() };
+  socket.send(JSON.stringify(questions));
   socket.on("message", (raw) => {
     try {
       handleClientMessage(connection, raw.toString());
@@ -153,5 +155,5 @@ websockets.on("connection", (socket) => {
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`sr03 server listening on http://127.0.0.1:${PORT}`);
   // asking the CLI for its model list costs seconds, so pay it before the first page load
-  void listModels();
+  void Promise.all([listModels("claude"), listModels("cursor")]);
 });
