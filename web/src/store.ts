@@ -78,6 +78,7 @@ interface Store extends AppState {
   send: (text: string) => Promise<void>;
   interrupt: () => Promise<void>;
   patchActive: (patch: { model?: string; permissionMode?: PermissionMode; effort?: Effort }) => Promise<void>;
+  setDefaultPermissionMode: (mode: PermissionMode) => Promise<void>;
   respond: (approvalId: string, decision: "allow" | "always" | "deny") => Promise<void>;
   refreshUsage: () => Promise<void>;
   resync: () => Promise<void>;
@@ -434,6 +435,19 @@ export const useStore = create<Store>((set, get) => ({
     }
   },
 
+  // machine-wide, not thread-scoped — patchActive above only ever touches the open thread
+  setDefaultPermissionMode: async (mode) => {
+    const previous = get().defaults;
+    set({ defaults: { ...previous, permissionMode: mode } });
+    try {
+      const { defaults } = await api.saveDefaults({ permissionMode: mode });
+      set({ defaults });
+    } catch (error) {
+      set({ error: (error as Error).message });
+      await get().refreshState();
+    }
+  },
+
   respond: async (approvalId, decision) => {
     const id = get().activeThreadId;
     if (!id) return;
@@ -571,6 +585,10 @@ export const useStore = create<Store>((set, get) => ({
       }
       case "models.changed": {
         set({ models: event.models });
+        return;
+      }
+      case "defaults.changed": {
+        set({ defaults: event.defaults });
         return;
       }
       case "thread.approval": {
