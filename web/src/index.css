@@ -1,3 +1,6 @@
+/* The one stylesheet: the shadcn token set carrying sr03's palette, the extra token families
+   the app adds (git decorations, syntax, file icons), the shipped shadcn themes the picker
+   offers, and the few base rules Tailwind utilities can't express. */
 @import "tailwindcss";
 @import "tw-animate-css";
 

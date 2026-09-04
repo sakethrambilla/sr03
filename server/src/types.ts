@@ -1,3 +1,5 @@
+// The wire contract: the rows db.ts stores, and every event that crosses the socket in either
+// direction. Mirrored in web/src/lib/types.ts — change both together.
 export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
 
 export type ThreadStatus = "idle" | "running" | "error";

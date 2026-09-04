@@ -1,3 +1,4 @@
+// The browser entry point: the stylesheet, and the app mounted into index.html's #root.
 import { createRoot } from "react-dom/client";
 
 import "./index.css";

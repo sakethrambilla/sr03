@@ -1,3 +1,5 @@
+// A project's worktrees: which exist, adding one on a new or existing branch, and removing one.
+// A worktree lives under the data dir, not inside the repo.
 import { useEffect, useState } from "react";
 
 import { api } from "../lib/api.ts";

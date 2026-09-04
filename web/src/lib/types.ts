@@ -1,3 +1,5 @@
+// Mirror of server/src/types.ts, plus the shapes the REST endpoints answer with. Change both
+// together — nothing checks that they agree.
 export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 export type ThreadStatus = "idle" | "running" | "error";

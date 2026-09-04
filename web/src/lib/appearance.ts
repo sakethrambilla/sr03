@@ -1,3 +1,5 @@
+// The theme and font choice behind the appearance panel: the lists it offers, a canvas probe for
+// which faces the machine actually has, and applying the pick to the document root.
 export interface Appearance {
   theme: string;
   uiFont: string;

@@ -1,3 +1,5 @@
+// The dev server on :5399, proxying /api and /ws through to the sr03 server, plus the `@/` alias
+// the shadcn generator emits. `pnpm build` writes web/dist, which the server then serves itself.
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 

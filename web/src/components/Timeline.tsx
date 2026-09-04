@@ -1,3 +1,6 @@
+// The transcript: user bubbles, replies, runs of tool calls collapsed into one expandable row,
+// the streaming tail of the turn in flight, and the label for what it is waiting on. Also owns
+// the scroll behaviour — pinned to the bottom until you scroll away, with a jump-to-latest pill.
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 

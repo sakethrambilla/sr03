@@ -1,3 +1,7 @@
+// The reader behind the table view, in four parts: an RFC 4180 csv parser plus a byte-offset
+// index, so a large file can be paged, searched and filtered without rescanning what came
+// before; a single-cell write that rewrites one row and copies the rest through; a minimal
+// zip reader; and an xlsx parser over it. All four are here because no dependency is.
 import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import { Readable } from "node:stream";

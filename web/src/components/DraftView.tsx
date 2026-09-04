@@ -1,3 +1,6 @@
+// The new-session screen: pick a folder, a branch, and whether to run in a worktree. Nothing is
+// created until the first turn is sent — a thread's cwd and branch are fixed for its lifetime,
+// so this is the only chance to choose them.
 import { useEffect, useState } from "react";
 
 import { api } from "../lib/api.ts";

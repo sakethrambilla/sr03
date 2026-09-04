@@ -1,3 +1,6 @@
+// The shells behind the terminal panel: one node-pty process per terminal, several per thread.
+// Each keeps a tail of its output so a reattaching client sees what already scrolled past, and
+// output is coalesced into one frame per few milliseconds rather than one per read.
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
