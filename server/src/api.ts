@@ -281,6 +281,42 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
     },
   },
   {
+    method: "POST",
+    pattern: /^\/api\/projects\/([^/]+)\/checkout$/,
+    handler: async ({ params, request }) => {
+      const project = requireProject(params[0]!);
+      const body = await readBody(request);
+      const branch = requireString(body, "branch");
+      const createBranch = body.createBranch === true;
+      const info = await git.repoInfo(project.path);
+      if (!info.isGit || !info.root) throw new HttpError(400, "Project is not a git repository");
+      // git refuses both of these itself; pre-checking only buys a message that names the fix
+      if (branch !== info.branch) {
+        // info.root on both sides — git resolves symlinks, and project.path may not be resolved
+        const held = (await git.listWorktrees(info.root)).find(
+          (worktree) => worktree.branch === branch && worktree.path !== info.root,
+        );
+        if (held) throw new HttpError(400, `${branch} is checked out in the worktree at ${held.path}`);
+        // `switch -c` keeps uncommitted work on the new branch; moving to an existing one can drag
+        // it across unrelated commits
+        if (!createBranch && info.dirty > 0) {
+          throw new HttpError(
+            400,
+            `The folder has ${info.dirty} uncommitted change${info.dirty === 1 ? "" : "s"}`,
+          );
+        }
+      }
+      await git.switchBranch({
+        cwd: project.path,
+        branch,
+        createBranch,
+        ...(typeof body.base === "string" && body.base.trim() ? { base: body.base.trim() } : {}),
+      });
+      publish({ type: "projects.changed" });
+      return { branch };
+    },
+  },
+  {
     method: "DELETE",
     pattern: /^\/api\/projects\/([^/]+)\/worktrees$/,
     handler: async ({ params, request }) => {

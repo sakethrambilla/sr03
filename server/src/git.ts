@@ -108,6 +108,15 @@ function sanitizeSegment(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "branch";
 }
 
+// sanitizeSegment is lossy — feat/a and feat-a both become feat-a — and a removed worktree can
+// leave its directory behind, so the first free name wins rather than the bare one
+async function freeWorktreePath(dir: string, name: string): Promise<string> {
+  for (let counter = 1; ; counter += 1) {
+    const target = path.join(dir, counter === 1 ? name : `${name}-${counter}`);
+    if (!(await fs.stat(target).then(() => true, () => false))) return target;
+  }
+}
+
 export async function addWorktree(input: {
   root: string;
   branch: string;
@@ -115,8 +124,9 @@ export async function addWorktree(input: {
   base?: string;
 }): Promise<Worktree> {
   const repoName = sanitizeSegment(path.basename(input.root));
-  const target = path.join(WORKTREES_DIR, repoName, sanitizeSegment(input.branch));
-  await fs.mkdir(path.dirname(target), { recursive: true });
+  const parent = path.join(WORKTREES_DIR, repoName);
+  await fs.mkdir(parent, { recursive: true });
+  const target = await freeWorktreePath(parent, sanitizeSegment(input.branch));
   const args = input.createBranch
     ? ["worktree", "add", "-b", input.branch, target, input.base ?? "HEAD"]
     : ["worktree", "add", target, input.branch];
@@ -136,6 +146,18 @@ export async function removeWorktree(input: {
 
 export async function pruneWorktrees(root: string): Promise<void> {
   await git(root, ["worktree", "prune"]);
+}
+
+export async function switchBranch(input: {
+  cwd: string;
+  branch: string;
+  createBranch: boolean;
+  base?: string;
+}): Promise<void> {
+  const args = input.createBranch
+    ? ["switch", "-c", input.branch, input.base ?? "HEAD"]
+    : ["switch", input.branch];
+  await git(input.cwd, args);
 }
 
 export async function diffStat(cwd: string): Promise<{ files: number; insertions: number; deletions: number }> {
