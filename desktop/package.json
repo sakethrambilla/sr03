@@ -8,7 +8,8 @@
     "postinstall": "install-electron",
     "payload": "node payload.mjs",
     "dev": "pnpm payload && electron .",
-    "dmg": "pnpm payload && electron-builder --mac dmg --arm64"
+    "dmg": "pnpm payload darwin-arm64 && electron-builder --mac dmg --arm64 && node report.mjs dmg",
+    "exe": "pnpm payload win32-x64 && electron-builder --win nsis --x64 && node report.mjs exe"
   },
   "packageManager": "pnpm@11.10.0",
   "build": {
@@ -42,6 +43,22 @@
     },
     "dmg": {
       "title": "sr03"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "artifactName": "${productName}-${version}-${arch}-setup.${ext}",
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
     }
   },
   "devDependencies": {
