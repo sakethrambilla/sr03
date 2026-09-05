@@ -624,7 +624,10 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
       const rel = url.searchParams.get("path")?.trim() ?? "";
       if (!rel) throw new HttpError(400, "`path` is required");
       const [file, state] = await Promise.all([
-        readWorkspaceFile(thread.cwd, rel),
+        // a file deleted since a tab was opened is a 404, not a 500: the client closes the tab on it
+        readWorkspaceFile(thread.cwd, rel).catch((error: NodeJS.ErrnoException) => {
+          throw error.code === "ENOENT" ? new HttpError(404, "File not found") : error;
+        }),
         git.fileState(thread.cwd, rel),
       ]);
       return { path: rel, ...file, ...state };
