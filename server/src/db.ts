@@ -59,6 +59,7 @@ db.exec(`
     model TEXT NOT NULL,
     permission_mode TEXT NOT NULL,
     effort TEXT NOT NULL DEFAULT 'high',
+    fast INTEGER NOT NULL DEFAULT 0,
     session_id TEXT,
     status TEXT NOT NULL DEFAULT 'idle',
     owner_id TEXT,
@@ -101,6 +102,9 @@ try {
     .map((row) => (row as Record<string, unknown>).name as string);
   if (!threadColumns.includes("effort")) {
     db.exec("ALTER TABLE threads ADD COLUMN effort TEXT NOT NULL DEFAULT 'high'");
+  }
+  if (!threadColumns.includes("fast")) {
+    db.exec("ALTER TABLE threads ADD COLUMN fast INTEGER NOT NULL DEFAULT 0");
   }
   if (!threadColumns.includes("archived")) {
     db.exec("ALTER TABLE threads ADD COLUMN archived INTEGER NOT NULL DEFAULT 0");
@@ -234,6 +238,7 @@ function toThread(row: Row): Thread {
     model: row.model as string,
     permissionMode: row.permission_mode as PermissionMode,
     effort: row.effort as Effort,
+    fast: Boolean(row.fast),
     sessionId: (row.session_id as string | null) ?? null,
     status: row.status as ThreadStatus,
     archived: Boolean(row.archived),
@@ -275,8 +280,8 @@ const sql = {
   threadsList: db.prepare("SELECT * FROM threads ORDER BY updated_at DESC"),
   threadById: db.prepare("SELECT * FROM threads WHERE id = ?"),
   threadInsert: db.prepare(
-    `INSERT INTO threads (id, project_id, provider_id, title, cwd, branch, is_worktree, model, permission_mode, effort, session_id, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO threads (id, project_id, provider_id, title, cwd, branch, is_worktree, model, permission_mode, effort, fast, session_id, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ),
   threadClaim: db.prepare(
     `UPDATE threads SET status = 'running', owner_id = ?, updated_at = ?
@@ -372,6 +377,7 @@ const THREAD_COLUMNS: Record<string, string> = {
   model: "model",
   permissionMode: "permission_mode",
   effort: "effort",
+  fast: "fast",
   sessionId: "session_id",
   status: "status",
   archived: "archived",
@@ -398,6 +404,7 @@ export const threads = {
     model: string;
     permissionMode: PermissionMode;
     effort: Effort;
+    fast: boolean;
   }): Thread {
     const now = Date.now();
     const thread: Thread = {
@@ -420,6 +427,7 @@ export const threads = {
       thread.model,
       thread.permissionMode,
       thread.effort,
+      thread.fast ? 1 : 0,
       null,
       thread.status,
       thread.createdAt,
@@ -454,7 +462,10 @@ export const threads = {
   update(
     id: string,
     patch: Partial<
-      Pick<Thread, "title" | "model" | "permissionMode" | "effort" | "sessionId" | "status" | "archived">
+      Pick<
+        Thread,
+        "title" | "model" | "permissionMode" | "effort" | "fast" | "sessionId" | "status" | "archived"
+      >
     >,
   ): Thread | null {
     const sets: string[] = [];

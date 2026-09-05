@@ -45,6 +45,7 @@ export interface AgentSettingsPatch {
   model?: string;
   permissionMode?: PermissionMode;
   effort?: Effort;
+  fast?: boolean;
 }
 
 export interface AgentSession {

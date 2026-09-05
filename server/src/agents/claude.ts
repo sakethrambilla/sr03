@@ -10,12 +10,14 @@ import {
   type SDKControlGetUsageResponse,
   type SDKMessage,
   type SDKRateLimitInfo,
+  type EffortLevel,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 
 import { usage as usageStore } from "../db.ts";
 import type {
   ApprovalDecision,
+  Effort,
   PendingApproval,
   Question,
   QuestionOption,
@@ -31,6 +33,13 @@ import type {
   AgentSession,
   AgentSettingsPatch,
 } from "./types.ts";
+
+// `Effort` spans every provider's ladder; the SDK accepts only Claude Code's five rungs
+const CLAUDE_EFFORT_LEVELS = new Set<string>(["low", "medium", "high", "xhigh", "max"]);
+
+function claudeEffort(effort: Effort): EffortLevel | null {
+  return CLAUDE_EFFORT_LEVELS.has(effort) ? (effort as EffortLevel) : null;
+}
 
 interface InputQueue extends AsyncIterable<SDKUserMessage> {
   push(message: SDKUserMessage): void;
@@ -631,13 +640,14 @@ async function open(
     busy: false,
     query: undefined as unknown as Query,
   };
+  const effort = claudeEffort(thread.effort);
   session.query = query({
     prompt: input,
     options: {
       cwd: thread.cwd,
       model: thread.model,
       permissionMode: thread.permissionMode as ClaudePermissionMode,
-      effort: thread.effort,
+      ...(effort ? { effort } : {}),
       includePartialMessages: true,
       abortController: abort,
       systemPrompt: { type: "preset", preset: "claude_code" },
@@ -692,7 +702,8 @@ async function open(
       if (patch.permissionMode) {
         await session.query.setPermissionMode(patch.permissionMode as ClaudePermissionMode);
       }
-      if (patch.effort) await session.query.applyFlagSettings({ effortLevel: patch.effort });
+      const effort = patch.effort ? claudeEffort(patch.effort) : null;
+      if (effort) await session.query.applyFlagSettings({ effortLevel: effort });
       return "applied";
     },
     close() {

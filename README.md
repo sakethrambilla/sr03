@@ -62,8 +62,8 @@ pnpm exe         # desktop/dist/sr03-<version>-x64-setup.exe (Windows x64 NSIS, 
   SDK session; Cursor uses ACP JSON-RPC over stdio. Idle sessions are stopped after ten minutes and
   resumed cold on the next turn.
 - **Capabilities are provider-scoped.** Claude exposes effort, slash commands, usage, subagent
-  progress and session forks. Cursor exposes its model and runtime modes plus ACP permission and
-  question prompts; controls that ACP does not provide are hidden.
+  progress and session forks. Cursor exposes its model and runtime modes, per-model effort and fast
+  switches, plus ACP permission and question prompts; controls that ACP does not provide are hidden.
 - **The server is authoritative.** The client keeps no state the server can't replace: a reconnect
   after any real gap re-reads the thread list and the open thread instead of trusting the socket.
 - **The wire types are duplicated on purpose.** `server/src/types.ts` and `web/src/lib/types.ts`
@@ -98,7 +98,7 @@ Every source file carries a header comment saying what it holds. In short:
 | `table.ts` | The csv/xlsx reader: a byte-offset index for paging and filtering large files, single-cell writes, and a minimal zip + xlsx parser |
 | `fsbrowse.ts` | Filesystem work that isn't git — folder picker, uploads, the session folder's tree, open-in apps |
 | `metrics.ts` | The resource meter's sampler: `ps` on a tick, attributed per thread |
-| `models.ts` | Provider catalogs: discovered models, modes, effort levels, defaults and capabilities |
+| `models.ts` | Provider catalogs: discovered models, modes, effort levels (per-model where the provider scopes them), defaults and capabilities |
 | `providers.ts` | Install, account and auth status for Claude Code and Cursor CLI |
 | `bus.ts` | In-process pub/sub — the whole of the push side |
 | `config.ts` | Paths and tunables from the environment, resolved once |
