@@ -8,7 +8,7 @@ import { api } from "../lib/api.ts";
 import { createFileIndex } from "../lib/fileref.ts";
 import type { FileRef } from "../lib/fileref.ts";
 import type { Message, Thread, ThreadTask } from "../lib/types.ts";
-import { useStore } from "../store.ts";
+import { EMPTY_PROVIDER, useStore } from "../store.ts";
 import { AgentsPanel } from "./AgentsPanel.tsx";
 import { ThreadComposer } from "./Composer.tsx";
 import { FileTree } from "./FileTree.tsx";
@@ -258,6 +258,9 @@ function EditorTabs({
 
 export function ChatView({ thread }: { thread: Thread }) {
   const setError = useStore((state) => state.setError);
+  const provider = useStore(
+    (state) => state.providers.find((entry) => entry.id === thread.providerId) ?? EMPTY_PROVIDER,
+  );
   const tasks = useStore((state) => state.tasksByThread[thread.id] ?? NO_TASKS);
   const workspace = useStore((state) => state.filesByCwd[thread.cwd] ?? NO_FILES);
   const loadFiles = useStore((state) => state.loadFiles);
@@ -387,9 +390,9 @@ export function ChatView({ thread }: { thread: Thread }) {
   const wasWorking = useRef(0);
 
   useEffect(() => {
-    if (working > 0 && wasWorking.current === 0) setAgentsOpen(true);
+    if (provider.capabilities.tasks && working > 0 && wasWorking.current === 0) setAgentsOpen(true);
     wasWorking.current = working;
-  }, [working]);
+  }, [provider.capabilities.tasks, working]);
 
   const chord = useRef<number | null>(null);
 
@@ -420,7 +423,7 @@ export function ChatView({ thread }: { thread: Thread }) {
         setTreeOpen(!treeOpen);
         return;
       }
-      if (key === "a" && event.shiftKey) {
+      if (key === "a" && event.shiftKey && provider.capabilities.tasks) {
         event.preventDefault();
         setAgentsOpen(!agentsOpen);
         return;
@@ -449,7 +452,7 @@ export function ChatView({ thread }: { thread: Thread }) {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [active, treeOpen, terminalOpen, agentsOpen, openFiles, dirty]);
+  }, [active, treeOpen, terminalOpen, agentsOpen, openFiles, dirty, provider.capabilities.tasks]);
 
   const renamed = (from: string, to: string) => {
     const moved = (path: string) =>
@@ -474,13 +477,18 @@ export function ChatView({ thread }: { thread: Thread }) {
           <h1 className="min-w-0 truncate text-[13.5px] font-medium" title={thread.cwd}>
             {thread.title}
           </h1>
+          <span className="rounded-md border border-border/70 px-1.5 py-0.5 text-[10.5px] text-faint">
+            {provider.label}
+          </span>
           <div className="flex-1" />
           {/* the toggles are icon buttons with padding of their own, so they sit tighter than the header gap */}
           <div className="flex items-center gap-1">
             <OpenMenu thread={thread} />
-            <PanelToggle pressed={agentsOpen} onPressedChange={setAgentsOpen} label="Agents">
-              <AgentIcon className="size-4" />
-            </PanelToggle>
+            {provider.capabilities.tasks ? (
+              <PanelToggle pressed={agentsOpen} onPressedChange={setAgentsOpen} label="Agents">
+                <AgentIcon className="size-4" />
+              </PanelToggle>
+            ) : null}
             <PanelToggle pressed={terminalOpen} onPressedChange={setTerminalOpen} label="Terminal">
               <TerminalIcon className="size-4" />
             </PanelToggle>
@@ -540,7 +548,9 @@ export function ChatView({ thread }: { thread: Thread }) {
           </Suspense>
         ) : null}
       </main>
-      {agentsOpen ? <AgentsPanel thread={thread} onClose={() => setAgentsOpen(false)} /> : null}
+      {agentsOpen && provider.capabilities.tasks ? (
+        <AgentsPanel thread={thread} onClose={() => setAgentsOpen(false)} />
+      ) : null}
       {treeOpen ? (
         <FileTree
           thread={thread}
@@ -580,8 +590,8 @@ export function ChatView({ thread }: { thread: Thread }) {
         >
           <p className="text-[13px] text-muted-foreground">
             This message and everything after it are deleted, and its text goes back in the
-            composer. Files on disk are left alone, and the next turn starts Claude with an empty
-            context.
+            composer. Files on disk are left alone, and the next turn starts {provider.label} with
+            an empty context.
           </p>
         </Dialog>
       ) : null}

@@ -1,8 +1,8 @@
 # sr03
 
-A local control plane for Claude Code. It runs on your machine, drives the Claude Agent SDK, and
-gives you a thread sidepanel over folder-based projects — with model, permission and effort
-pickers, git worktrees, a file tree and editor, a terminal, and a usage meter.
+A local control plane for Claude Code and Cursor CLI. It runs on your machine and gives you a
+thread sidepanel over folder-based projects — with provider, model and permission pickers, git
+worktrees, a file tree and editor, a terminal, and provider-specific controls.
 
 Modelled on [t3code](https://github.com/pingdotgg/t3code)'s shape — the server owns everything,
 the client is a thin view over one WebSocket — but deliberately much smaller: no frameworks on the
@@ -12,8 +12,11 @@ server, no ORM, no event sourcing.
 
 - Node 22.16 or newer (`node:sqlite` and type stripping are both used unbuilt)
 - pnpm 11
-- [Claude Code](https://claude.com/claude-code) installed and signed in — sr03 runs through the
-  Agent SDK, which reuses the CLI's own login and its `~/.claude` settings
+- At least one local harness:
+  - [Claude Code](https://claude.com/claude-code), installed and signed in. sr03 uses the Agent SDK,
+    which reuses the CLI's login and `~/.claude` settings.
+  - [Cursor CLI](https://cursor.com/cli), installed as `cursor-agent` (or `agent`) and signed in.
+    sr03 talks to `cursor-agent acp` over stdio and reuses Cursor's login.
 - macOS or Windows. The core works on both, but the native folder and file pickers, "reveal in
   Finder", the open-in app list and the resource meter are macOS-only, and both installers are
   built from macOS
@@ -33,6 +36,7 @@ to disk outside that folder and `~/.sr03`.
 
 ```bash
 pnpm dev         # server :3399 + Vite :5399 (open http://localhost:5399)
+pnpm test        # provider transport tests
 pnpm typecheck   # both packages
 pnpm build       # web → web/dist, which the server then serves itself
 pnpm start       # server only, serving web/dist
@@ -53,10 +57,13 @@ pnpm exe         # desktop/dist/sr03-<version>-x64-setup.exe (Windows x64 NSIS, 
 - **One server, one socket.** REST for commands (`server/src/api.ts`), and a WebSocket at `/ws` for
   everything the server pushes back. Anything that changes publishes one event on an in-process bus,
   which is fanned out to every connected client.
-- **One Claude session per thread.** `server/src/claude.ts` holds a streaming-input Agent SDK
-  session per thread, which is what makes `interrupt()`, `setModel()` and `setPermissionMode()`
-  possible mid-session. Continuation is `resume: <session_id>`. An idle session is stopped after ten
-  minutes and resumed cold on the next turn, since a live CLI holds ~250 MB.
+- **One provider session per thread.** `server/src/agents/runtime.ts` owns the common lifecycle and
+  routes each persisted `providerId` through the provider registry. Claude uses a streaming Agent
+  SDK session; Cursor uses ACP JSON-RPC over stdio. Idle sessions are stopped after ten minutes and
+  resumed cold on the next turn.
+- **Capabilities are provider-scoped.** Claude exposes effort, slash commands, usage, subagent
+  progress and session forks. Cursor exposes its model and runtime modes plus ACP permission and
+  question prompts; controls that ACP does not provide are hidden.
 - **The server is authoritative.** The client keeps no state the server can't replace: a reconnect
   after any real gap re-reads the thread list and the open thread instead of trusting the socket.
 - **The wire types are duplicated on purpose.** `server/src/types.ts` and `web/src/lib/types.ts`
@@ -80,15 +87,19 @@ Every source file carries a header comment saying what it holds. In short:
 | --- | --- |
 | `index.ts` | Process entry point: http + static serving + the `/ws` socket and the client messages it accepts |
 | `api.ts` | Every REST route, as one flat table of method + regex + handler |
-| `claude.ts` | One Agent SDK session per thread, and everything folded out of its message stream — transcript, streamed text, tool approvals, subagents, usage |
+| `agents/runtime.ts` | Provider-neutral session lifecycle, persistence, streaming, approvals, questions, interrupts and parking |
+| `agents/registry.ts` | Routes each thread to its provider adapter |
+| `agents/claude.ts` | Claude Agent SDK adapter, including slash commands, usage and subagent progress |
+| `agents/cursor.ts` | Cursor ACP adapter: process flags, sessions, updates, permissions and questions |
+| `agents/acp.ts` | Small newline-delimited JSON-RPC client over a child process's stdio |
 | `db.ts` | The whole persistence layer on `node:sqlite`: schema, migrations, and one accessor per table |
 | `git.ts` | Everything sr03 asks git — repo info, worktrees, changed files, diffs, ignore checks |
 | `pty.ts` | The terminal panel's shells: one `node-pty` process per terminal, with scrollback |
 | `table.ts` | The csv/xlsx reader: a byte-offset index for paging and filtering large files, single-cell writes, and a minimal zip + xlsx parser |
 | `fsbrowse.ts` | Filesystem work that isn't git — folder picker, uploads, the session folder's tree, open-in apps |
 | `metrics.ts` | The resource meter's sampler: `ps` on a tick, attributed per thread |
-| `models.ts` | The model catalog read off the CLI, plus the permission-mode and effort tables |
-| `providers.ts` | What the settings page shows about the Claude CLI: install, account, logout |
+| `models.ts` | Provider catalogs: discovered models, modes, effort levels, defaults and capabilities |
+| `providers.ts` | Install, account and auth status for Claude Code and Cursor CLI |
 | `bus.ts` | In-process pub/sub — the whole of the push side |
 | `config.ts` | Paths and tunables from the environment, resolved once |
 | `types.ts` | The wire contract: db rows and every socket event |
@@ -154,26 +165,25 @@ browser tab the browser claims some first (`⌘⇧N`, `⌘W`, `⌘N`) — test t
 - `~/.sr03/sr03.db` — projects, threads, messages, settings, the last usage read
 - `~/.sr03/worktrees/` — worktrees sr03 created, one directory per repo and branch
 - `~/.sr03/uploads/` — files you dropped or pasted into the composer
-- `~/.claude*` — the CLI's own; sr03 reads the signed-in profile and honours the machine's existing
-  permission rules, and never reads credentials, which live in the system keychain
+- `~/.claude*` and Cursor's own configuration — owned by their CLIs. sr03 reads profile/status
+  metadata but never stores provider credentials.
 
 ## Out of scope
 
 Ask before building any of these: remote control / relay / Tailscale, a mobile app, providers other
-than Claude, file checkpointing, MCP servers, PR integration.
+than Claude or Cursor, file checkpointing, MCP servers, PR integration.
 
 ## Contributing
 
-There are no automated tests. Verify by hand against a scratch repo — never a real project, since
-worktree and edit operations mutate them:
+The ACP transport has protocol tests. Provider turns still need hand verification against a scratch
+repo — never a real project, since worktree and edit operations mutate it:
 
 ```bash
 mkdir -p /tmp/sr03-repo && cd /tmp/sr03-repo && git init -q -b main \
   && echo hello > README.md && git add . && git commit -qm init
 ```
 
-Add `/tmp/sr03-repo` as a project, create a worktree, and run a turn in it. A change to the Claude
-session or the worktree code isn't done until a real turn has been through it.
+Add `/tmp/sr03-repo` as a project, create a worktree, and run a turn with each affected provider.
 
 The conventions the code follows — server dependency budget, shadcn-only UI, the colour tokens, the
 zustand selector rule, the type-stripping constraints — are in [CLAUDE.md](CLAUDE.md).

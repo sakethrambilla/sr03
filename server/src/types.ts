@@ -1,6 +1,14 @@
 // The wire contract: the rows db.ts stores, and every event that crosses the socket in either
 // direction. Mirrored in web/src/lib/types.ts — change both together.
-export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
+export type ProviderId = "claude" | "cursor";
+
+export type PermissionMode =
+  | "default"
+  | "acceptEdits"
+  | "autoReview"
+  | "plan"
+  | "ask"
+  | "bypassPermissions";
 
 export type ThreadStatus = "idle" | "running" | "error";
 
@@ -17,6 +25,7 @@ export interface Project {
 export interface Thread {
   id: string;
   projectId: string;
+  providerId: ProviderId;
   title: string;
   cwd: string;
   branch: string | null;
@@ -46,12 +55,43 @@ export interface Message {
 // what the CLI is busy with between visible output, for the turn's waiting label
 export type ThreadPhase = { kind: "starting" } | { kind: "thinking" } | { kind: "tool"; name: string };
 
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+// one AskUserQuestion question; `question` is also the key the SDK looks its answer up by
+export interface Question {
+  question: string;
+  header: string;
+  options: QuestionOption[];
+  multiSelect: boolean;
+}
+
 export interface PendingApproval {
   id: string;
   threadId: string;
   toolName: string;
   input: unknown;
+  decisions: Array<"allow" | "always" | "deny">;
+  // set only for AskUserQuestion, which is answered rather than allowed or denied
+  questions?: Question[];
 }
+
+export interface PendingQuestion {
+  id: string;
+  threadId: string;
+  title: string | null;
+  questions: Array<{
+    id: string;
+    prompt: string;
+    options: Array<{ id: string; label: string }>;
+    allowMultiple: boolean;
+  }>;
+}
+
+// answers are keyed by question text, which is what the CLI looks them up by
+export type ApprovalDecision = "allow" | "always" | "deny" | { answers: Record<string, string> };
 
 // a subagent the turn spawned, folded from the SDK's task_started/progress/updated stream
 export interface ThreadTask {
@@ -73,6 +113,64 @@ export interface SlashCommand {
   name: string;
   description: string;
   argumentHint: string;
+}
+
+export interface ModelOption {
+  slug: string;
+  label: string;
+  hint: string;
+  resolved?: string;
+}
+
+export interface PermissionModeOption {
+  value: PermissionMode;
+  label: string;
+  hint: string;
+}
+
+export interface EffortOption {
+  value: Effort;
+  label: string;
+  hint: string;
+}
+
+export interface ProviderCapabilities {
+  effort: boolean;
+  slashCommands: boolean;
+  usage: boolean;
+  tasks: boolean;
+  fork: boolean;
+  questions: boolean;
+  liveModelSwitch: boolean;
+  livePermissionModeSwitch: boolean;
+}
+
+export interface ProviderCatalog {
+  id: ProviderId;
+  label: string;
+  models: ModelOption[];
+  permissionModes: PermissionModeOption[];
+  effortLevels: EffortOption[];
+  defaults: { model: string; permissionMode: PermissionMode; effort: Effort };
+  capabilities: ProviderCapabilities;
+}
+
+export interface ProviderAccount {
+  email: string | null;
+  organization: string | null;
+  plan: string | null;
+}
+
+export interface ProviderStatus extends ProviderCatalog {
+  state: "ready" | "signed-out" | "missing";
+  detail: string;
+  version: string | null;
+  binary: string | null;
+  account: ProviderAccount | null;
+  settingSources: string[];
+  signInHint: string;
+  signInCommand: string;
+  logoutCommand: string;
 }
 
 // one plan rate-limit window, as the /usage control request reports it
@@ -122,12 +220,16 @@ export type ServerEvent =
   | { type: "thread.approval"; approval: PendingApproval }
   | { type: "thread.approval.resolved"; threadId: string; approvalId: string }
   | { type: "thread.approvals"; approvals: PendingApproval[] }
+  | { type: "thread.question"; question: PendingQuestion }
+  | { type: "thread.question.resolved"; threadId: string; questionId: string }
+  | { type: "thread.questions"; questions: PendingQuestion[] }
   | { type: "thread.tasks"; threadId: string; tasks: ThreadTask[] }
   | { type: "thread.commands"; threadId: string; commands: SlashCommand[] }
   | { type: "usage"; threadId: string | null; usage: Usage }
   | { type: "resources"; resources: Resources }
   | { type: "thread.updated"; thread: Thread }
-  | { type: "models.changed"; models: Array<{ slug: string; label: string; hint: string; resolved?: string }> }
+  | { type: "provider.changed"; provider: ProviderCatalog }
+  | { type: "defaults.changed"; defaults: { model: string; permissionMode: PermissionMode; effort: Effort } }
   | { type: "pty.data"; threadId: string; terminalId: string; data: string }
   | { type: "pty.snapshot"; threadId: string; terminalId: string; data: string }
   | { type: "pty.terminals"; threadId: string; ids: string[] }

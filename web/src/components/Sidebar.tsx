@@ -78,6 +78,11 @@ function ThreadRow({ thread }: { thread: Thread }) {
   const renameThread = useStore((state) => state.renameThread);
   const forkThread = useStore((state) => state.forkThread);
   const setArchived = useStore((state) => state.setArchived);
+  const canFork = useStore(
+    (state) =>
+      state.providers.find((provider) => provider.id === thread.providerId)?.capabilities.fork ??
+      false,
+  );
   const done = useStore((state) => Boolean(state.finished[thread.id]));
   const [menuOpen, setMenuOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -88,14 +93,16 @@ function ThreadRow({ thread }: { thread: Thread }) {
   const actions = useMemo(
     () => [
       { key: "r", label: "Rename", run: () => setRenaming(true) },
-      { key: "f", label: "Fork", run: () => void forkThread(thread.id) },
+      ...(canFork
+        ? [{ key: "f", label: "Fork", run: () => void forkThread(thread.id) }]
+        : []),
       {
         key: "a",
         label: thread.archived ? "Unarchive" : "Archive",
         run: () => void setArchived(thread.id, !thread.archived),
       },
     ],
-    [thread.id, thread.archived, forkThread, setArchived],
+    [thread.id, thread.archived, canFork, forkThread, setArchived],
   );
 
   return (

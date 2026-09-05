@@ -1,6 +1,13 @@
 // Mirror of server/src/types.ts, plus the shapes the REST endpoints answer with. Change both
 // together — nothing checks that they agree.
-export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
+export type ProviderId = "claude" | "cursor";
+export type PermissionMode =
+  | "default"
+  | "acceptEdits"
+  | "autoReview"
+  | "plan"
+  | "ask"
+  | "bypassPermissions";
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 export type ThreadStatus = "idle" | "running" | "error";
 export type MessageRole = "user" | "assistant" | "tool" | "system" | "error";
@@ -16,6 +23,7 @@ export interface Project {
 export interface Thread {
   id: string;
   projectId: string;
+  providerId: ProviderId;
   title: string;
   cwd: string;
   branch: string | null;
@@ -43,12 +51,43 @@ export interface Message {
 // what the CLI is busy with between visible output, for the turn's waiting label
 export type ThreadPhase = { kind: "starting" } | { kind: "thinking" } | { kind: "tool"; name: string };
 
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+// one AskUserQuestion question; `question` is also the key its answer is sent back under
+export interface Question {
+  question: string;
+  header: string;
+  options: QuestionOption[];
+  multiSelect: boolean;
+}
+
 export interface PendingApproval {
   id: string;
   threadId: string;
   toolName: string;
   input: unknown;
+  decisions: Array<"allow" | "always" | "deny">;
+  // set only for AskUserQuestion, which is answered rather than allowed or denied
+  questions?: Question[];
 }
+
+export interface PendingQuestion {
+  id: string;
+  threadId: string;
+  title: string | null;
+  questions: Array<{
+    id: string;
+    prompt: string;
+    options: Array<{ id: string; label: string }>;
+    allowMultiple: boolean;
+  }>;
+}
+
+// answers are keyed by question text, which is what the CLI looks them up by
+export type ApprovalDecision = "allow" | "always" | "deny" | { answers: Record<string, string> };
 
 export interface ThreadTask {
   id: string;
@@ -88,14 +127,34 @@ export interface EffortOption {
   hint: string;
 }
 
-export interface AppState {
-  projects: Project[];
-  threads: Thread[];
+export interface ProviderCapabilities {
+  effort: boolean;
+  slashCommands: boolean;
+  usage: boolean;
+  tasks: boolean;
+  fork: boolean;
+  questions: boolean;
+  liveModelSwitch: boolean;
+  livePermissionModeSwitch: boolean;
+}
+
+export interface ProviderCatalog {
+  id: ProviderId;
+  label: string;
   models: ModelOption[];
   permissionModes: PermissionModeOption[];
   effortLevels: EffortOption[];
-  apps: ExternalApp[];
   defaults: { model: string; permissionMode: PermissionMode; effort: Effort };
+  capabilities: ProviderCapabilities;
+}
+
+export interface AppState {
+  projects: Project[];
+  threads: Thread[];
+  providers: ProviderCatalog[];
+  defaultProviderId: ProviderId;
+  defaults: { model: string; permissionMode: PermissionMode; effort: Effort };
+  apps: ExternalApp[];
 }
 
 // one row of the CLI's slash-command list: built-ins, skills, and the folder's own commands
@@ -194,12 +253,16 @@ export type ServerEvent =
   | { type: "thread.approval"; approval: PendingApproval }
   | { type: "thread.approval.resolved"; threadId: string; approvalId: string }
   | { type: "thread.approvals"; approvals: PendingApproval[] }
+  | { type: "thread.question"; question: PendingQuestion }
+  | { type: "thread.question.resolved"; threadId: string; questionId: string }
+  | { type: "thread.questions"; questions: PendingQuestion[] }
   | { type: "thread.tasks"; threadId: string; tasks: ThreadTask[] }
   | { type: "thread.commands"; threadId: string; commands: SlashCommand[] }
   | { type: "usage"; threadId: string | null; usage: Usage }
   | { type: "resources"; resources: Resources }
   | { type: "thread.updated"; thread: Thread }
-  | { type: "models.changed"; models: ModelOption[] }
+  | { type: "provider.changed"; provider: ProviderCatalog }
+  | { type: "defaults.changed"; defaults: { model: string; permissionMode: PermissionMode; effort: Effort } }
   | { type: "pty.data"; threadId: string; terminalId: string; data: string }
   | { type: "pty.snapshot"; threadId: string; terminalId: string; data: string }
   | { type: "pty.terminals"; threadId: string; ids: string[] }
@@ -263,16 +326,14 @@ export interface ProviderAccount {
   plan: string | null;
 }
 
-export interface ProviderStatus {
-  id: string;
-  label: string;
+export interface ProviderStatus extends ProviderCatalog {
   state: "ready" | "signed-out" | "missing";
   detail: string;
   version: string | null;
   binary: string | null;
   account: ProviderAccount | null;
   settingSources: string[];
-  models: ModelOption[];
-  defaults: { model: string; permissionMode: string; effort: string };
   signInHint: string;
+  signInCommand: string;
+  logoutCommand: string;
 }

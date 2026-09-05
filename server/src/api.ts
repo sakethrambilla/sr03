@@ -4,9 +4,7 @@
 import path from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { forkSession } from "@anthropic-ai/claude-agent-sdk";
-
-import * as claude from "./claude.ts";
+import * as agents from "./agents/runtime.ts";
 import * as git from "./git.ts";
 import * as pty from "./pty.ts";
 import { listProviders, logoutProvider } from "./providers.ts";
@@ -33,15 +31,17 @@ import { readTable, readValues, tableKind, writeCell } from "./table.ts";
 import type { TableFilter, TableQuery } from "./table.ts";
 import { messages, projects, settings, threads } from "./db.ts";
 import {
-  DEFAULT_EFFORT,
-  DEFAULT_MODEL,
-  DEFAULT_PERMISSION_MODE,
-  EFFORT_LEVELS,
-  currentModels,
-  PERMISSION_MODES,
+  currentDefaults,
+  currentProvider,
+  currentProviders,
+  defaultProviderId,
   isEffort,
+  isModel,
   isPermissionMode,
+  isProviderId,
+  setDefaultPermissionMode,
 } from "./models.ts";
+import type { Question } from "./types.ts";
 import { publish } from "./bus.ts";
 
 class HttpError extends Error {
@@ -66,7 +66,16 @@ async function readBody(request: IncomingMessage): Promise<Record<string, unknow
   const chunks: Buffer[] = [];
   for await (const chunk of request) chunks.push(chunk as Buffer);
   if (chunks.length === 0) return {};
-  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+  } catch {
+    throw new HttpError(400, "Request body is not valid JSON");
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new HttpError(400, "Request body must be a JSON object");
+  }
+  return parsed as Record<string, unknown>;
 }
 
 async function readRaw(request: IncomingMessage, limit: number): Promise<Buffer> {
@@ -86,6 +95,60 @@ function requireString(body: Record<string, unknown>, key: string): string {
     throw new HttpError(400, `\`${key}\` is required`);
   }
   return value.trim();
+}
+
+const threadOperationTails = new Map<string, Promise<void>>();
+
+async function withThreadOperation<T>(threadId: string, operation: () => Promise<T> | T): Promise<T> {
+  const previous = threadOperationTails.get(threadId) ?? Promise.resolve();
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.then(() => gate);
+  threadOperationTails.set(threadId, tail);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (threadOperationTails.get(threadId) === tail) threadOperationTails.delete(threadId);
+  }
+}
+
+function withThreadOperations<T>(
+  threadIds: string[],
+  operation: () => Promise<T> | T,
+): Promise<T> {
+  const ids = [...new Set(threadIds)].sort();
+  const acquire = (index: number): Promise<T> =>
+    index === ids.length
+      ? Promise.resolve(operation())
+      : withThreadOperation(ids[index]!, () => acquire(index + 1));
+  return acquire(0);
+}
+
+function readDecision(body: Record<string, unknown>): "allow" | "always" | "deny" {
+  const decision = requireString(body, "decision");
+  if (decision !== "allow" && decision !== "always" && decision !== "deny") {
+    throw new HttpError(400, "Unknown decision");
+  }
+  return decision;
+}
+
+// every question must come back answered — a half-filled map would leave the model guessing
+function readAnswers(body: Record<string, unknown>, questions: Question[]): Record<string, string> {
+  const given = body.answers;
+  if (!given || typeof given !== "object") throw new HttpError(400, "`answers` is required");
+  const answers: Record<string, string> = {};
+  for (const question of questions) {
+    const answer = (given as Record<string, unknown>)[question.question];
+    if (typeof answer !== "string" || answer.trim().length === 0) {
+      throw new HttpError(400, `No answer for "${question.question}"`);
+    }
+    answers[question.question] = answer.trim();
+  }
+  return answers;
 }
 
 // the search and the per-column checklists travel as query params, so one parser reads both
@@ -148,21 +211,20 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
     handler: async () => ({
       projects: projects.list(),
       threads: threads.list(),
-      models: currentModels(),
-      permissionModes: PERMISSION_MODES,
-      effortLevels: EFFORT_LEVELS,
+      providers: currentProviders(),
+      defaultProviderId: defaultProviderId(),
+      defaults: currentDefaults(),
       apps: await listApps(),
-      defaults: {
-        model: DEFAULT_MODEL,
-        permissionMode: DEFAULT_PERMISSION_MODE,
-        effort: DEFAULT_EFFORT,
-      },
     }),
   },
   {
     method: "POST",
     pattern: /^\/api\/providers\/([^/]+)\/logout$/,
-    handler: ({ params }) => logoutProvider(params[0]!),
+    handler: ({ params }) => {
+      const providerId = params[0]!;
+      if (!isProviderId(providerId)) throw new HttpError(404, "Provider not found");
+      return logoutProvider(providerId);
+    },
   },
   {
     method: "GET",
@@ -242,14 +304,33 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
   {
     method: "DELETE",
     pattern: /^\/api\/projects\/([^/]+)$/,
-    handler: ({ params }) => {
+    handler: async ({ params }) => {
       const project = requireProject(params[0]!);
-      for (const thread of threads.list().filter((item) => item.projectId === project.id)) {
-        claude.closeSession(thread.id);
-      }
-      projects.remove(project.id);
-      publish({ type: "projects.changed" });
-      return { ok: true };
+      const ids = threads
+        .list()
+        .filter((thread) => thread.projectId === project.id)
+        .map((thread) => thread.id);
+      return withThreadOperations(ids, () => {
+        const affected = threads.list().filter((thread) => thread.projectId === project.id);
+        if (affected.some((thread) => !agents.canOperate(thread.id))) {
+          throw new HttpError(409, "A project session is active in another sr03 instance");
+        }
+        const reserved: Array<{ id: string; status: (typeof affected)[number]["status"] }> = [];
+        try {
+          for (const thread of affected) {
+            if (!agents.reserveThread(thread.id)) throw new HttpError(409, "A project session is busy");
+            reserved.push({ id: thread.id, status: thread.status });
+          }
+          for (const thread of affected) agents.closeSession(thread.id);
+          projects.remove(project.id);
+          publish({ type: "projects.changed" });
+          return { ok: true };
+        } finally {
+          for (const thread of reserved) {
+            agents.releaseThreadReservation(thread.id, thread.status);
+          }
+        }
+      });
     },
   },
   {
@@ -286,18 +367,86 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
     },
   },
   {
+    method: "POST",
+    pattern: /^\/api\/projects\/([^/]+)\/checkout$/,
+    handler: async ({ params, request }) => {
+      const project = requireProject(params[0]!);
+      const body = await readBody(request);
+      const branch = requireString(body, "branch");
+      const createBranch = body.createBranch === true;
+      const info = await git.repoInfo(project.path);
+      if (!info.isGit || !info.root) throw new HttpError(400, "Project is not a git repository");
+      // git refuses both of these itself; pre-checking only buys a message that names the fix
+      if (branch !== info.branch) {
+        // info.root on both sides — git resolves symlinks, and project.path may not be resolved
+        const held = (await git.listWorktrees(info.root)).find(
+          (worktree) => worktree.branch === branch && worktree.path !== info.root,
+        );
+        if (held) throw new HttpError(400, `${branch} is checked out in the worktree at ${held.path}`);
+        // `switch -c` keeps uncommitted work on the new branch; moving to an existing one can drag
+        // it across unrelated commits
+        if (!createBranch && info.dirty > 0) {
+          throw new HttpError(
+            400,
+            `The folder has ${info.dirty} uncommitted change${info.dirty === 1 ? "" : "s"}`,
+          );
+        }
+      }
+      await git.switchBranch({
+        cwd: project.path,
+        branch,
+        createBranch,
+        ...(typeof body.base === "string" && body.base.trim() ? { base: body.base.trim() } : {}),
+      });
+      publish({ type: "projects.changed" });
+      return { branch };
+    },
+  },
+  {
     method: "DELETE",
     pattern: /^\/api\/projects\/([^/]+)\/worktrees$/,
     handler: async ({ params, request }) => {
       const project = requireProject(params[0]!);
       const body = await readBody(request);
-      const target = requireString(body, "path");
-      const info = await git.repoInfo(project.path);
-      if (!info.isGit || !info.root) throw new HttpError(400, "Project is not a git repository");
-      await git.removeWorktree({ root: info.root, path: target, force: body.force === true });
-      await git.pruneWorktrees(info.root);
-      publish({ type: "projects.changed" });
-      return { ok: true };
+      const target = path.resolve(requireString(body, "path"));
+      const usesTarget = (cwd: string) =>
+        path.resolve(cwd) === target || path.resolve(cwd).startsWith(`${target}${path.sep}`);
+      const ids = threads
+        .list()
+        .filter((thread) => thread.projectId === project.id && usesTarget(thread.cwd))
+        .map((thread) => thread.id);
+      return withThreadOperations(ids, async () => {
+        const affected = threads
+          .list()
+          .filter((thread) => thread.projectId === project.id && usesTarget(thread.cwd));
+        if (
+          affected.some(
+            (thread) => thread.status === "running" || !agents.canOperate(thread.id),
+          )
+        ) {
+          throw new HttpError(409, "The worktree is in use by an active session");
+        }
+        const reserved: Array<{ id: string; status: (typeof affected)[number]["status"] }> = [];
+        try {
+          for (const thread of affected) {
+            if (!agents.reserveThread(thread.id)) throw new HttpError(409, "A worktree session is busy");
+            reserved.push({ id: thread.id, status: thread.status });
+            agents.closeSession(thread.id);
+          }
+          const info = await git.repoInfo(project.path);
+          if (!info.isGit || !info.root) {
+            throw new HttpError(400, "Project is not a git repository");
+          }
+          await git.removeWorktree({ root: info.root, path: target, force: body.force === true });
+          await git.pruneWorktrees(info.root);
+          publish({ type: "projects.changed" });
+          return { ok: true };
+        } finally {
+          for (const thread of reserved) {
+            agents.releaseThreadReservation(thread.id, thread.status);
+          }
+        }
+      });
     },
   },
   {
@@ -309,19 +458,34 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
       const cwd = typeof body.cwd === "string" && body.cwd.trim() ? path.resolve(body.cwd) : project.path;
       if (!(await isDirectory(cwd))) throw new HttpError(400, "Working directory does not exist");
       const info = await git.repoInfo(cwd);
-      const model = typeof body.model === "string" ? body.model : DEFAULT_MODEL;
-      const permissionMode = isPermissionMode(body.permissionMode)
-        ? body.permissionMode
-        : DEFAULT_PERMISSION_MODE;
+      if (body.providerId !== undefined && !isProviderId(body.providerId)) {
+        throw new HttpError(400, "Unknown provider");
+      }
+      const providerId = body.providerId ?? defaultProviderId();
+      const provider = currentProvider(providerId);
+      const defaults = currentDefaults(providerId);
+      if (body.model !== undefined && !isModel(providerId, body.model)) {
+        throw new HttpError(400, "Unknown model");
+      }
+      if (
+        body.permissionMode !== undefined &&
+        !isPermissionMode(providerId, body.permissionMode)
+      ) {
+        throw new HttpError(400, "Unknown permission mode");
+      }
+      if (body.effort !== undefined && !isEffort(providerId, body.effort)) {
+        throw new HttpError(400, "Unknown effort level");
+      }
       const thread = threads.create({
         projectId: project.id,
-        effort: isEffort(body.effort) ? body.effort : DEFAULT_EFFORT,
+        providerId,
+        effort: body.effort ?? defaults.effort,
         title: typeof body.title === "string" && body.title.trim() ? body.title.trim() : "New thread",
         cwd,
         branch: info.branch,
         isWorktree: path.resolve(cwd) !== path.resolve(project.path),
-        model,
-        permissionMode,
+        model: body.model ?? defaults.model,
+        permissionMode: body.permissionMode ?? defaults.permissionMode,
       });
       publish({ type: "thread.updated", thread });
       return thread;
@@ -332,7 +496,7 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
     pattern: /^\/api\/threads\/([^/]+)$/,
     handler: ({ params }) => {
       const thread = requireThread(params[0]!);
-      return { thread, messages: messages.list(thread.id), tasks: claude.threadTasks(thread.id) };
+      return { thread, messages: messages.list(thread.id), tasks: agents.threadTasks(thread.id) };
     },
   },
   {
@@ -341,7 +505,12 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
     handler: ({ url }) => {
       const cwd = url.searchParams.get("cwd");
       if (!cwd) throw new HttpError(400, "A cwd is required");
-      return claude.listCommands(cwd).then((commands) => ({ commands }));
+      const rawProvider = url.searchParams.get("provider");
+      if (rawProvider !== null && !isProviderId(rawProvider)) {
+        throw new HttpError(400, "Unknown provider");
+      }
+      const providerId = rawProvider ?? defaultProviderId();
+      return agents.listCommands(providerId, cwd).then((commands) => ({ commands }));
     },
   },
   {
@@ -349,7 +518,7 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
     pattern: /^\/api\/usage$/,
     handler: ({ url }) => {
       const threadId = url.searchParams.get("thread");
-      return claude.readUsage(threadId && threads.byId(threadId) ? threadId : null);
+      return agents.readUsage(threadId && threads.byId(threadId) ? threadId : null);
     },
   },
   {
@@ -518,6 +687,23 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
     },
   },
   {
+    method: "PUT",
+    pattern: /^\/api\/defaults$/,
+    handler: async ({ request }) => {
+      const body = await readBody(request);
+      if (
+        typeof body.permissionMode !== "string" ||
+        !isPermissionMode(defaultProviderId(), body.permissionMode)
+      ) {
+        throw new HttpError(400, "Invalid permissionMode");
+      }
+      setDefaultPermissionMode(body.permissionMode);
+      const defaults = currentDefaults();
+      publish({ type: "defaults.changed", defaults });
+      return { defaults };
+    },
+  },
+  {
     method: "GET",
     pattern: /^\/api\/threads\/([^/]+)\/files$/,
     handler: async ({ params }) => {
@@ -575,103 +761,193 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
     method: "PATCH",
     pattern: /^\/api\/threads\/([^/]+)$/,
     handler: async ({ params, request }) => {
-      const thread = requireThread(params[0]!);
       const body = await readBody(request);
-      const patch: {
-        title?: string;
-        model?: string;
-        permissionMode?: typeof thread.permissionMode;
-        effort?: typeof thread.effort;
-        archived?: boolean;
-      } = {};
-      if (typeof body.title === "string" && body.title.trim()) patch.title = body.title.trim();
-      if (typeof body.model === "string") patch.model = body.model;
-      if (isPermissionMode(body.permissionMode)) patch.permissionMode = body.permissionMode;
-      if (isEffort(body.effort)) patch.effort = body.effort;
-      if (typeof body.archived === "boolean") patch.archived = body.archived;
-      const updated = threads.update(thread.id, patch);
-      if (!updated) throw new HttpError(404, "Thread not found");
-      await claude.applyThreadSettings(updated, patch);
-      publish({ type: "thread.updated", thread: updated });
-      return updated;
+      return withThreadOperation(params[0]!, async () => {
+        const thread = requireThread(params[0]!);
+        const patch: {
+          title?: string;
+          model?: string;
+          permissionMode?: typeof thread.permissionMode;
+          effort?: typeof thread.effort;
+          archived?: boolean;
+        } = {};
+        if (body.title !== undefined) {
+          if (typeof body.title !== "string" || !body.title.trim()) {
+            throw new HttpError(400, "`title` must be a non-empty string");
+          }
+          patch.title = body.title.trim();
+        }
+        if (body.model !== undefined) {
+          if (!isModel(thread.providerId, body.model)) throw new HttpError(400, "Unknown model");
+          patch.model = body.model;
+        }
+        if (body.permissionMode !== undefined) {
+          if (!isPermissionMode(thread.providerId, body.permissionMode)) {
+            throw new HttpError(400, "Unknown permission mode");
+          }
+          patch.permissionMode = body.permissionMode;
+        }
+        if (body.effort !== undefined) {
+          if (!isEffort(thread.providerId, body.effort)) {
+            throw new HttpError(400, "Unknown effort level");
+          }
+          patch.effort = body.effort;
+        }
+        if (body.archived !== undefined) {
+          if (typeof body.archived !== "boolean") {
+            throw new HttpError(400, "`archived` must be a boolean");
+          }
+          patch.archived = body.archived;
+        }
+        const capabilities = currentProvider(thread.providerId).capabilities;
+        if (
+          thread.status === "running" &&
+          ((patch.model !== undefined &&
+            patch.model !== thread.model &&
+            !capabilities.liveModelSwitch) ||
+            (patch.permissionMode !== undefined &&
+              patch.permissionMode !== thread.permissionMode &&
+              !capabilities.livePermissionModeSwitch))
+        ) {
+          throw new HttpError(409, "That setting can only change after the current turn finishes");
+        }
+        const changesAgentSettings =
+          patch.model !== undefined ||
+          patch.permissionMode !== undefined ||
+          patch.effort !== undefined;
+        if (changesAgentSettings && !agents.canOperate(thread.id)) {
+          throw new HttpError(409, "This thread is active in another sr03 instance");
+        }
+        const reserved = changesAgentSettings && thread.status !== "running";
+        if (reserved && !agents.reserveThread(thread.id)) throw new HttpError(409, "Thread is busy");
+        try {
+          await agents.applyThreadSettings(thread, patch);
+          const updated = threads.update(thread.id, patch);
+          if (!updated) throw new HttpError(404, "Thread not found");
+          publish({ type: "thread.updated", thread: updated });
+          return updated;
+        } finally {
+          if (reserved) agents.releaseThreadReservation(thread.id, thread.status);
+        }
+      });
     },
   },
   {
     method: "POST",
     pattern: /^\/api\/threads\/([^/]+)\/fork$/,
     handler: async ({ params }) => {
-      const source = requireThread(params[0]!);
-      // the fork gets a session file of its own, so both threads can run without interleaving
-      const forked = source.sessionId
-        ? await forkSession(source.sessionId, { dir: source.cwd }).catch((error: Error) => {
-            throw new HttpError(500, `Could not fork session: ${error.message}`);
-          })
-        : null;
-      const created = threads.create({
-        projectId: source.projectId,
-        title: `${source.title} (fork)`,
-        cwd: source.cwd,
-        branch: source.branch,
-        isWorktree: source.isWorktree,
-        model: source.model,
-        permissionMode: source.permissionMode,
-        effort: source.effort,
+      return withThreadOperation(params[0]!, async () => {
+        const source = requireThread(params[0]!);
+        if (source.status === "running") throw new HttpError(409, "Turn already running");
+        if (!currentProvider(source.providerId).capabilities.fork) {
+          throw new HttpError(
+            400,
+            `${currentProvider(source.providerId).label} cannot fork sessions`,
+          );
+        }
+        if (!agents.reserveThread(source.id)) throw new HttpError(409, "Thread is busy");
+        try {
+          const transcript = messages.list(source.id);
+          // the fork gets a session file of its own, so both threads can run without interleaving
+          const forked = source.sessionId
+            ? await agents.forkSession(source).catch((error: Error) => {
+                throw new HttpError(500, `Could not fork session: ${error.message}`);
+              })
+            : null;
+          const created = threads.create({
+            projectId: source.projectId,
+            providerId: source.providerId,
+            title: `${source.title} (fork)`,
+            cwd: source.cwd,
+            branch: source.branch,
+            isWorktree: source.isWorktree,
+            model: source.model,
+            permissionMode: source.permissionMode,
+            effort: source.effort,
+          });
+          for (const message of transcript) {
+            messages.append({
+              threadId: created.id,
+              role: message.role,
+              text: message.text,
+              meta: message.meta,
+            });
+          }
+          const thread = threads.update(created.id, { sessionId: forked }) ?? created;
+          publish({ type: "thread.updated", thread });
+          return thread;
+        } finally {
+          agents.releaseThreadReservation(source.id, source.status);
+        }
       });
-      for (const message of messages.list(source.id)) {
-        messages.append({
-          threadId: created.id,
-          role: message.role,
-          text: message.text,
-          meta: message.meta,
-        });
-      }
-      const thread = threads.update(created.id, { sessionId: forked?.sessionId ?? null }) ?? created;
-      publish({ type: "thread.updated", thread });
-      return thread;
     },
   },
   {
     method: "DELETE",
     pattern: /^\/api\/threads\/([^/]+)$/,
-    handler: ({ params }) => {
-      const thread = requireThread(params[0]!);
-      claude.closeSession(thread.id);
-      pty.closeThread(thread.id);
-      threads.remove(thread.id);
-      publish({ type: "projects.changed" });
-      return { ok: true };
-    },
+    handler: ({ params }) =>
+      withThreadOperation(params[0]!, () => {
+        const thread = requireThread(params[0]!);
+        if (!agents.canOperate(thread.id)) {
+          throw new HttpError(409, "This thread is active in another sr03 instance");
+        }
+        if (thread.status === "running" && !agents.hasSession(thread.id)) {
+          throw new HttpError(409, "This server does not own the running session");
+        }
+        if (!agents.reserveThread(thread.id)) throw new HttpError(409, "Thread is busy");
+        try {
+          agents.closeSession(thread.id);
+          pty.closeThread(thread.id);
+          threads.remove(thread.id);
+          publish({ type: "projects.changed" });
+          return { ok: true };
+        } finally {
+          agents.releaseThreadReservation(thread.id, thread.status);
+        }
+      }),
   },
   {
     method: "POST",
     pattern: /^\/api\/threads\/([^/]+)\/turns$/,
     handler: async ({ params, request }) => {
-      const thread = requireThread(params[0]!);
-      if (thread.status === "running") throw new HttpError(409, "Turn already running");
       const body = await readBody(request);
       const text = requireString(body, "text");
-      // /clear leaves no turn behind, so it would only name the thread after itself
-      if (thread.title === "New thread" && !claude.isClear(text)) {
-        const title = text.split("\n")[0]!.slice(0, 60);
-        const renamed = threads.update(thread.id, { title });
-        if (renamed) publish({ type: "thread.updated", thread: renamed });
-      }
-      claude.sendTurn(requireThread(thread.id), text);
-      return { ok: true };
+      return withThreadOperation(params[0]!, () => {
+        const thread = requireThread(params[0]!);
+        if (thread.status === "running") throw new HttpError(409, "Turn already running");
+        if (!agents.sendTurn(thread, text)) {
+          throw new HttpError(
+            409,
+            agents.canOperate(thread.id)
+              ? "Turn already running"
+              : "This thread is active in another sr03 instance",
+          );
+        }
+        // /clear leaves no turn behind, so it would only name the thread after itself
+        if (thread.title === "New thread" && !agents.isClear(text)) {
+          const title = text.split("\n")[0]!.slice(0, 60);
+          const renamed = threads.update(thread.id, { title });
+          if (renamed) publish({ type: "thread.updated", thread: renamed });
+        }
+        return { ok: true };
+      });
     },
   },
   {
     method: "POST",
     pattern: /^\/api\/threads\/([^/]+)\/rewind$/,
     handler: async ({ params, request }) => {
-      const thread = requireThread(params[0]!);
-      if (thread.status === "running") throw new HttpError(409, "Turn already running");
       const body = await readBody(request);
-      const message = messages.byId(requireString(body, "messageId"));
-      if (!message || message.threadId !== thread.id) throw new HttpError(404, "No such message");
-      claude.truncateThread(thread, message.seq);
-      // the caller puts this back in the composer, which is the whole point of rewinding to it
-      return { text: message.text };
+      const messageId = requireString(body, "messageId");
+      return withThreadOperation(params[0]!, () => {
+        const thread = requireThread(params[0]!);
+        if (thread.status === "running") throw new HttpError(409, "Turn already running");
+        const message = messages.byId(messageId);
+        if (!message || message.threadId !== thread.id) throw new HttpError(404, "No such message");
+        if (!agents.truncateThread(thread, message.seq)) throw new HttpError(409, "Thread is busy");
+        // the caller puts this back in the composer, which is the whole point of rewinding to it
+        return { text: message.text };
+      });
     },
   },
   {
@@ -679,7 +955,9 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
     pattern: /^\/api\/threads\/([^/]+)\/interrupt$/,
     handler: async ({ params }) => {
       const thread = requireThread(params[0]!);
-      await claude.interrupt(thread.id);
+      if (!(await agents.interrupt(thread.id))) {
+        throw new HttpError(409, "This server does not own the running session");
+      }
       return { ok: true };
     },
   },
@@ -689,12 +967,60 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
     handler: async ({ params, request }) => {
       const thread = requireThread(params[0]!);
       const body = await readBody(request);
-      const decision = requireString(body, "decision");
-      if (decision !== "allow" && decision !== "always" && decision !== "deny") {
-        throw new HttpError(400, "Unknown decision");
-      }
-      const resolved = claude.resolveApproval(thread.id, params[1]!, decision);
+      const pending = agents
+        .pendingApprovals()
+        .find((approval) => approval.threadId === thread.id && approval.id === params[1]);
+      if (!pending) throw new HttpError(410, "Approval is no longer pending");
+
+      // a question is answered rather than allowed, but dismissing it is still a plain deny
+      const decision =
+        pending.questions && body.decision !== "deny"
+          ? { answers: readAnswers(body, pending.questions) }
+          : readDecision(body);
+      const resolved = await agents.resolveApproval(thread.id, params[1]!, decision);
       if (!resolved) throw new HttpError(410, "Approval is no longer pending");
+      return { ok: true };
+    },
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/threads\/([^/]+)\/questions\/([^/]+)$/,
+    handler: async ({ params, request }) => {
+      const thread = requireThread(params[0]!);
+      const body = await readBody(request);
+      if (!body.answers || typeof body.answers !== "object" || Array.isArray(body.answers)) {
+        throw new HttpError(400, "`answers` is required");
+      }
+      const entries = Object.entries(body.answers as Record<string, unknown>);
+      if (
+        entries.some(
+          ([, value]) =>
+            !Array.isArray(value) || !value.every((item) => typeof item === "string"),
+        )
+      ) {
+        throw new HttpError(400, "Every answer must be an array of strings");
+      }
+      const answers = Object.fromEntries(entries) as Record<string, string[]>;
+      const pending = agents.pendingQuestion(thread.id, params[1]!);
+      if (!pending) throw new HttpError(410, "Question is no longer pending");
+      const expectedIds = new Set(pending.questions.map((question) => question.id));
+      if (entries.length !== expectedIds.size || entries.some(([id]) => !expectedIds.has(id))) {
+        throw new HttpError(400, "Answers must cover exactly the pending questions");
+      }
+      for (const question of pending.questions) {
+        const selected = answers[question.id] ?? [];
+        const offered = new Set(question.options.map((option) => option.id));
+        if (
+          selected.length === 0 ||
+          (!question.allowMultiple && selected.length !== 1) ||
+          new Set(selected).size !== selected.length ||
+          selected.some((optionId) => !offered.has(optionId))
+        ) {
+          throw new HttpError(400, `Invalid answer for question "${question.id}"`);
+        }
+      }
+      const resolved = await agents.resolveQuestion(thread.id, params[1]!, answers);
+      if (!resolved) throw new HttpError(410, "Question is no longer pending");
       return { ok: true };
     },
   },
