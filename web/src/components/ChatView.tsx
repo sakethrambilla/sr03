@@ -9,11 +9,14 @@ import { createFileIndex } from "../lib/fileref.ts";
 import type { FileRef } from "../lib/fileref.ts";
 import type { EditorLayout, EditorTab, Message, Thread, ThreadTask } from "../lib/types.ts";
 import {
+  MAX_GROUPS,
   activeTab,
   allTabs,
   closeTab,
+  moveTab,
   normalize,
   openTab,
+  resize as resizeGroups,
   sameTab,
   selectTab as selectInGroup,
   tabKey,
@@ -364,6 +367,24 @@ export function ChatView({ thread }: { thread: Thread }) {
   const focusedTab = activeTab(focusedGroup);
   const active = focusedTab.kind === "file" ? focusedTab.path : null;
 
+  // the first split settles the axis; afterwards a split can only extend the same row or column
+  const splitFocused = () => {
+    const current = layoutRef.current;
+    if (current.groups.length >= MAX_GROUPS) return;
+    const group = current.groups[focusedRef.current] ?? current.groups[0]!;
+    if (group.tabs.length < 2 && current.groups.length > 1) return;
+    const zone = current.groups.length > 1 && current.axis === "vertical" ? "down" : "right";
+    const next = moveTab(current, activeTab(group), { group: focusedRef.current, zone });
+    if (next === current) return;
+    commit(next);
+    setFocused(Math.min(focusedRef.current + 1, next.groups.length - 1));
+  };
+
+  const moveFocus = (step: number) =>
+    setFocused((current) =>
+      Math.min(Math.max(current + step, 0), layoutRef.current.groups.length - 1),
+    );
+
   // a turn that wrote to disk may have added or renamed files, so the index follows it
   useEffect(() => {
     void loadFiles(thread.id, thread.cwd);
@@ -439,6 +460,11 @@ export function ChatView({ thread }: { thread: Thread }) {
           closeAll();
           return;
         }
+        if (key === "arrowleft" || key === "arrowright") {
+          event.preventDefault();
+          moveFocus(key === "arrowleft" ? -1 : 1);
+          return;
+        }
       }
       if (!meta) return;
 
@@ -473,7 +499,12 @@ export function ChatView({ thread }: { thread: Thread }) {
         setPalette("text");
         return;
       }
-      // the chat tab is pinned, so cmd+w only ever closes a file
+      if (key === "\\" && !event.shiftKey) {
+        event.preventDefault();
+        splitFocused();
+        return;
+      }
+      // the chat tab is pinned, so cmd+w only ever closes a file — and only in the focused group
       if (key === "w" && !event.shiftKey) {
         event.preventDefault();
         if (active) requestClose(active);
@@ -481,7 +512,7 @@ export function ChatView({ thread }: { thread: Thread }) {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [active, treeOpen, terminalOpen, agentsOpen, openFiles, dirty, provider.capabilities.tasks]);
+  }, [active, treeOpen, terminalOpen, agentsOpen, openFiles, dirty, layout, focused, provider.capabilities.tasks]);
 
   const renamed = (from: string, to: string) => {
     const moved = (path: string) =>
@@ -549,6 +580,15 @@ export function ChatView({ thread }: { thread: Thread }) {
             layout={layout}
             focused={focusedRef.current}
             onFocusGroup={setFocused}
+            onResize={(sashIndex, fractions) =>
+              commit(resizeGroups(layoutRef.current, sashIndex, fractions))
+            }
+            onEqualise={() =>
+              commit({
+                ...layoutRef.current,
+                sizes: layoutRef.current.sizes.map(() => 1),
+              })
+            }
             strip={(group, index) => (
               <EditorTabs
                 group={group}
@@ -574,6 +614,8 @@ export function ChatView({ thread }: { thread: Thread }) {
                   <div
                     key={tabKey(tab)}
                     style={cell}
+                    // clicking into an editor is how a group is focused, not just clicking its tab
+                    onPointerDownCapture={() => setFocused(index)}
                     className={cn("flex min-h-0 min-w-0 flex-col", showing ? "" : "hidden")}
                   >
                     {tab.kind === "chat" ? (
@@ -591,7 +633,9 @@ export function ChatView({ thread }: { thread: Thread }) {
                       <FileView
                         thread={thread}
                         path={tab.path}
-                        active={showing}
+                        // FileView's cmd+S / cmd+shift+V / Esc handlers sit on window, so without
+                        // the focus test two groups would both answer every one of those keys
+                        active={showing && index === focusedRef.current}
                         onClose={closeFileTab}
                         onMissing={closeFileTab}
                         onDirtyChange={markDirty}

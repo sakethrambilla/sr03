@@ -24,8 +24,10 @@ Active while a session is open.
 | `⌘B` | Show / hide the file tree | `web/src/components/ChatView.tsx` |
 | `⌘J` | Show / hide the terminal | `web/src/components/ChatView.tsx` |
 | `⌘⇧A` | Show / hide the agents panel, when the provider reports subagent tasks | `web/src/components/ChatView.tsx` |
-| `⌘W` | Close the active file tab — the chat tab is pinned | `web/src/components/ChatView.tsx` |
-| `⌘K` then `W` | Close every file tab | `web/src/components/ChatView.tsx` |
+| `⌘\` | Split the focused group's active tab into a new group, along the session's axis | `web/src/components/ChatView.tsx` |
+| `⌘K` then `←` / `→` | Move focus to the previous / next editor group | `web/src/components/ChatView.tsx` |
+| `⌘W` | Close the focused group's active file tab — the chat tab is pinned | `web/src/components/ChatView.tsx` |
+| `⌘K` then `W` | Close every file tab, in every group | `web/src/components/ChatView.tsx` |
 
 ## Quick open
 
@@ -49,7 +51,8 @@ Active while the turn rail — the ticks in the transcript's left gutter — has
 
 ## File editor
 
-Active while a file tab is selected.
+Active while a file tab is selected in the focused group. With the editor split, these act on that
+group only — the other groups' files ignore them.
 
 | Shortcut | Action | Code |
 | --- | --- | --- |

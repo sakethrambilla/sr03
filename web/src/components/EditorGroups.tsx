@@ -2,7 +2,8 @@
 // grid, and which group something belongs to is expressed only as a track style — never as a
 // wrapper element. That is what lets a tab move between groups without React re-parenting the view:
 // FileView keeps its edited text in an uncontrolled textarea, so a remount would discard it.
-import type { ReactNode } from "react";
+import { useRef } from "react";
+import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 
 import type { EditorGroup, EditorLayout, EditorTab } from "../lib/types.ts";
 import { activeTab, sameTab, tabKey, trackOf, trackTemplate } from "../lib/layout.ts";
@@ -102,23 +103,74 @@ export function EditorTabs({
   );
 }
 
+// a group narrower than this loses its tab strip; the model keeps the same floor as a fraction
+const MIN_GROUP_PX = 160;
+
 export function EditorGroups({
   layout,
   onFocusGroup,
+  onResize,
+  onEqualise,
   strip,
   children,
 }: {
   layout: EditorLayout;
   focused: number;
   onFocusGroup: (index: number) => void;
+  onResize: (sashIndex: number, fractions: [number, number]) => void;
+  onEqualise: () => void;
   strip: (group: EditorGroup, index: number) => ReactNode;
   children: ReactNode;
 }) {
   const horizontal = layout.axis === "horizontal";
   const template = trackTemplate(layout.sizes, layout.axis);
+  const grid = useRef<HTMLDivElement>(null);
+
+  // the fractions are written straight to the grid during the drag; letting React own them would
+  // re-render every mounted view on each pointer move
+  const startResize = (sashIndex: number) => (event: ReactPointerEvent<HTMLDivElement>) => {
+    const container = grid.current;
+    if (!container) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+
+    const box = container.getBoundingClientRect();
+    const span = horizontal ? box.width : box.height;
+    const origin = horizontal ? event.clientX : event.clientY;
+    const pair = layout.sizes[sashIndex]! + layout.sizes[sashIndex + 1]!;
+    const total = layout.sizes.reduce((sum, size) => sum + size, 0);
+    // the pair's own slice of the container is all the drag can redistribute
+    const pairPx = (pair / total) * span;
+    const floor = Math.min(MIN_GROUP_PX, pairPx / 2);
+    let settled: [number, number] = [layout.sizes[sashIndex]!, layout.sizes[sashIndex + 1]!];
+
+    const move = (moved: PointerEvent) => {
+      const delta = (horizontal ? moved.clientX : moved.clientY) - origin;
+      const first = Math.min(Math.max((settled[0] / pair) * pairPx + delta, floor), pairPx - floor);
+      const shares: [number, number] = [first / pairPx, (pairPx - first) / pairPx];
+      const sizes = layout.sizes.slice();
+      sizes[sashIndex] = shares[0] * pair;
+      sizes[sashIndex + 1] = shares[1] * pair;
+      settled = [sizes[sashIndex]!, sizes[sashIndex + 1]!];
+      const next = trackTemplate(sizes, layout.axis);
+      if (horizontal) container.style.gridTemplateColumns = next;
+      else container.style.gridTemplateRows = next;
+    };
+    const done = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", done);
+      window.removeEventListener("pointercancel", done);
+      onResize(sashIndex, settled);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", done);
+    // a cancelled pointer would otherwise leave the move listener resizing forever
+    window.addEventListener("pointercancel", done);
+  };
 
   return (
     <div
+      ref={grid}
       data-editor-grid
       className="grid min-h-0 min-w-0 flex-1"
       style={
@@ -127,6 +179,33 @@ export function EditorGroups({
           : { gridTemplateColumns: "minmax(0, 1fr)", gridTemplateRows: template }
       }
     >
+      {layout.groups.slice(0, -1).map((group, index) => (
+        <div
+          key={`sash-${group.id}`}
+          style={
+            horizontal
+              ? { gridColumn: trackOf(index, layout.axis, "view") + 1, gridRow: "1 / -1" }
+              : { gridColumn: 1, gridRow: trackOf(index, layout.axis, "view") + 1 }
+          }
+          className="relative z-20 bg-border/60"
+        >
+          {/* the track itself is 1px, which is far too thin to grab, so the handle overflows it
+              on both sides without taking any layout space of its own */}
+          <div
+            role="separator"
+            aria-orientation={horizontal ? "vertical" : "horizontal"}
+            aria-label="Resize editor group"
+            onPointerDown={startResize(index)}
+            onDoubleClick={onEqualise}
+            className={cn(
+              "absolute transition-colors delay-150 hover:bg-primary/70",
+              horizontal
+                ? "inset-y-0 -left-1 -right-1 cursor-ew-resize"
+                : "inset-x-0 -top-1 -bottom-1 cursor-ns-resize",
+            )}
+          />
+        </div>
+      ))}
       {layout.groups.map((group, index) => (
         <div
           key={group.id}

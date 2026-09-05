@@ -46,6 +46,8 @@ import {
   Settings,
   Square,
   SquareStack,
+  SquareSplitHorizontal,
+  SquareSplitVertical,
   SquareTerminal,
   Trash2,
   Undo2,
@@ -226,6 +228,8 @@ const ICONS = {
   SidebarIcon: PanelLeft,
   SendIcon: ArrowUp,
   TerminalIcon: SquareTerminal,
+  SplitIcon: SquareSplitHorizontal,
+  SplitDownIcon: SquareSplitVertical,
   ChangesIcon: FileDiff,
   CodeIcon: Code,
   EyeIcon: Eye,
@@ -286,6 +290,8 @@ export const WorktreeIcon = icon(ICONS.WorktreeIcon);
 export const SparkleIcon = icon(ICONS.SparkleIcon);
 export const PlusIcon = icon(ICONS.PlusIcon);
 export const MessageIcon = icon(ICONS.MessageIcon);
+export const SplitIcon = icon(ICONS.SplitIcon);
+export const SplitDownIcon = icon(ICONS.SplitDownIcon);
 export const SettingsIcon = icon(ICONS.SettingsIcon);
 export const NewFileIcon = icon(ICONS.NewFileIcon);
 export const NewFolderIcon = icon(ICONS.NewFolderIcon);
