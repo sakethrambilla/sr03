@@ -312,6 +312,24 @@ test("normalizes Cursor ACP setup and interactive events", async (context) => {
   });
 });
 
+const FAILING_AGENT = `#!/usr/bin/env node
+const readline = require("node:readline");
+const lines = readline.createInterface({ input: process.stdin });
+const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+(async () => {
+for await (const line of lines) {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") {
+    send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: 1, agentCapabilities: {} } });
+  } else if (message.method === "authenticate") {
+    send({ jsonrpc: "2.0", id: message.id, result: {} });
+  } else if (message.id) {
+    send({ jsonrpc: "2.0", id: message.id, error: { code: -32603, message: "no session for you" } });
+  }
+}
+})();
+`;
+
 test("discovers Cursor models without opening a thread", async (context) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "sr03-cursor-models-"));
   const binary = path.join(directory, "cursor-agent");
@@ -501,4 +519,61 @@ test("asserts fast even when it is off", async (context) => {
 
   // Cursor defaults this model to fast, and persists that globally — off must be written, not skipped
   assert.deepEqual(configCalls, ["fast=false"]);
+});
+
+test("reads Cursor commands without opening a thread", async (context) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "sr03-cursor-commands-"));
+  const binary = path.join(directory, "cursor-agent");
+  const logPath = path.join(directory, "messages.ndjson");
+  await fs.writeFile(binary, MOCK_AGENT, { mode: 0o755 });
+
+  const previousPath = process.env.PATH;
+  const previousData = process.env.SR03_DATA_DIR;
+  const previousLog = process.env.MOCK_CURSOR_LOG;
+  process.env.PATH = `${directory}${path.delimiter}${previousPath ?? ""}`;
+  process.env.SR03_DATA_DIR = path.join(directory, "data");
+  process.env.MOCK_CURSOR_LOG = logPath;
+  context.after(async () => {
+    process.env.PATH = previousPath;
+    if (previousData === undefined) delete process.env.SR03_DATA_DIR;
+    else process.env.SR03_DATA_DIR = previousData;
+    if (previousLog === undefined) delete process.env.MOCK_CURSOR_LOG;
+    else process.env.MOCK_CURSOR_LOG = previousLog;
+    await fs.rm(directory, { recursive: true, force: true });
+  });
+
+  const { cursorProvider } = await import("./cursor.ts");
+  const commands = await cursorProvider.listCommands(directory);
+  assert.deepEqual(
+    commands.map(({ name, argumentHint }) => ({ name, argumentHint })),
+    [
+      { name: "alias", argumentHint: "" },
+      { name: "worktree", argumentHint: "" },
+    ],
+  );
+});
+
+test("falls back to no commands when Cursor errors", async (context) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "sr03-cursor-commands-fail-"));
+  const binary = path.join(directory, "cursor-agent");
+  const logPath = path.join(directory, "messages.ndjson");
+  await fs.writeFile(binary, FAILING_AGENT, { mode: 0o755 });
+
+  const previousPath = process.env.PATH;
+  const previousData = process.env.SR03_DATA_DIR;
+  const previousLog = process.env.MOCK_CURSOR_LOG;
+  process.env.PATH = `${directory}${path.delimiter}${previousPath ?? ""}`;
+  process.env.SR03_DATA_DIR = path.join(directory, "data");
+  process.env.MOCK_CURSOR_LOG = logPath;
+  context.after(async () => {
+    process.env.PATH = previousPath;
+    if (previousData === undefined) delete process.env.SR03_DATA_DIR;
+    else process.env.SR03_DATA_DIR = previousData;
+    if (previousLog === undefined) delete process.env.MOCK_CURSOR_LOG;
+    else process.env.MOCK_CURSOR_LOG = previousLog;
+    await fs.rm(directory, { recursive: true, force: true });
+  });
+
+  const { cursorProvider } = await import("./cursor.ts");
+  assert.deepEqual(await cursorProvider.listCommands(directory), []);
 });
