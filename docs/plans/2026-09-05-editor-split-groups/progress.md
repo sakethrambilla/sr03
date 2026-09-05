@@ -2,7 +2,7 @@
 
 **Plan:** ./plan.md
 **Status:** in progress
-**Current:** Task 2
+**Current:** Task 3
 
 ## Log
 - 2026-09-05 Branch `feat/editor-split-groups` created off main.
@@ -11,6 +11,13 @@
   layout round-tripped; invalid axis and four groups both 400; `{"layout":null}` cleared it;
   the layout survived a full server restart; and the patched thread kept its position in the
   `threads` array, confirming the `updated_at` avoidance.
+
+- 2026-09-05 Task 2 — done, commit 2f5f6f9. `pnpm test` 68 pass (28 server + 40 web),
+  `pnpm typecheck` clean. Two real bugs were caught by the tests before any UI existed:
+  `rebuild` sliced the tail of `sizes` instead of dropping the removed group's own entry, so
+  closing a middle group shifted every survivor onto its neighbour's share; and clamping a group
+  to `MIN_FRACTION` changed the total, leaving the clamped group still below its share — it now
+  rescales the others into what is left.
 
 ## Deviations
 - Task 1 steps 2/6 contradicted each other — step 2 implemented `parseLayout` while step 5
@@ -57,6 +64,18 @@ Non-blocking but real:
 - D21 criterion 12 has no verification step anywhere.
 - D22 task 4 gives the editor a permanent tab strip; intended but unstated.
 - D23 `crypto.randomUUID()` needs a secure context.
+
+### Task 2
+- The plan's `trackTemplate(sizes, axis)` was specified but implemented axis-blind at first, which
+  was wrong: `trackOf` puts vertical groups at rows 1, 2, 4, 5, so the vertical template needs five
+  tracks (`auto 1fr 1px auto 1fr`), not three. The plan's test list only covered the horizontal
+  template. Added a test asserting every track `trackOf` claims exists in its own axis's template,
+  for all three group counts, so the two can never drift apart again.
+- One planned assertion was invalid rather than failing: `normalize(null)` deep-equalled against
+  `singleGroup()`, comparing two freshly generated UUIDs. Rewritten to compare everything but the
+  id. This is the one place a test was changed rather than the code.
+- `fit` now returns shares summing to 1 rather than arbitrary fractions. Nothing depended on the
+  old scale, and CSS takes fractional `fr` values.
 
 ## Decisions taken during execution
 - Tabs are tagged objects (`{kind:"chat"} | {kind:"file",path}`), not bare strings — the user
