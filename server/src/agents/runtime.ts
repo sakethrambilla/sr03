@@ -29,6 +29,7 @@ interface ManagedSession {
   interrupted: boolean;
   partial: string;
   toolMessages: Map<string, string>;
+  taskPartials: Map<string, string>;
   approvals: Map<string, PendingApproval>;
   questions: Map<string, PendingQuestion>;
 }
@@ -84,6 +85,15 @@ function keepPartial(session: ManagedSession): void {
   const partial = session.partial.trim();
   session.partial = "";
   if (partial) appendMessage(session.threadId, "assistant", partial, { partial: true });
+}
+
+function endTaskStreams(session: ManagedSession): void {
+  for (const [taskId, text] of session.taskPartials) {
+    const partial = text.trim();
+    if (partial) appendMessage(session.threadId, "assistant", partial, { taskId, partial: true });
+    publish({ type: "thread.task.delta.end", threadId: session.threadId, taskId });
+  }
+  session.taskPartials.clear();
 }
 
 function cancelPark(threadId: string): void {
@@ -177,13 +187,28 @@ function handleEvent(session: ManagedSession, event: AgentEvent): void {
       if (!running.has(threadId)) setStatus(threadId, "running");
       return;
     case "phase":
+      if (event.taskId) return;
       setPhase(threadId, event.phase);
       return;
     case "assistant.delta":
+      if (event.taskId) {
+        session.taskPartials.set(
+          event.taskId,
+          (session.taskPartials.get(event.taskId) ?? "") + event.text,
+        );
+        publish({ type: "thread.task.delta", threadId, taskId: event.taskId, text: event.text });
+        return;
+      }
       session.partial += event.text;
       publish({ type: "thread.delta", threadId, text: event.text });
       return;
     case "assistant.complete":
+      if (event.taskId) {
+        publish({ type: "thread.task.delta.end", threadId, taskId: event.taskId });
+        session.taskPartials.delete(event.taskId);
+        if (event.text.trim()) appendMessage(threadId, "assistant", event.text, { taskId: event.taskId });
+        return;
+      }
       publish({ type: "thread.delta.end", threadId });
       session.partial = "";
       if (event.text.trim()) appendMessage(threadId, "assistant", event.text);
@@ -194,6 +219,7 @@ function handleEvent(session: ManagedSession, event: AgentEvent): void {
         toolUseId: event.callId,
         input: event.input,
         ...(event.mutatesFiles === undefined ? {} : { mutatesFiles: event.mutatesFiles }),
+        ...(event.taskId ? { taskId: event.taskId } : {}),
       });
       session.toolMessages.set(event.callId, saved.id);
       return;
@@ -241,6 +267,7 @@ function handleEvent(session: ManagedSession, event: AgentEvent): void {
           ...(event.errorCode ? { error: event.errorCode } : {}),
         });
       }
+      endTaskStreams(session);
       session.partial = "";
       publish({ type: "thread.delta.end", threadId });
       setPhase(threadId, null);
@@ -265,6 +292,7 @@ function startSession(thread: Thread): ManagedSession {
     interrupted: false,
     partial: "",
     toolMessages: new Map<string, string>(),
+    taskPartials: new Map<string, string>(),
     approvals: new Map<string, PendingApproval>(),
     questions: new Map<string, PendingQuestion>(),
   };

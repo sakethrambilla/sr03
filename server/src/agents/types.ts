@@ -18,17 +18,18 @@ import type {
 export type AgentEvent =
   | { type: "session.started"; sessionId: string }
   | { type: "turn.active" }
-  | { type: "phase"; phase: ThreadPhase | null }
-  | { type: "assistant.delta"; text: string }
-  | { type: "assistant.complete"; text: string }
+  | { type: "phase"; phase: ThreadPhase | null; taskId?: string }
+  | { type: "assistant.delta"; text: string; taskId?: string }
+  | { type: "assistant.complete"; text: string; taskId?: string }
   | {
       type: "tool.started";
       callId: string;
       name: string;
       input: unknown;
       mutatesFiles?: boolean;
+      taskId?: string;
     }
-  | { type: "tool.completed"; callId: string; result: string; isError: boolean }
+  | { type: "tool.completed"; callId: string; result: string; isError: boolean; taskId?: string }
   | { type: "approval.requested"; approval: PendingApproval }
   | { type: "question.requested"; question: PendingQuestion }
   | { type: "notice"; text: string }

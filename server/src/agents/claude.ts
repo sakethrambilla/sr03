@@ -64,6 +64,7 @@ interface ClaudeSession {
   interrupted: boolean;
   stopped: boolean;
   busy: boolean;
+  subagentTasks: Map<string, string>;
 }
 
 function createInputQueue(): InputQueue {
@@ -123,6 +124,9 @@ function trackTask(session: ClaudeSession, message: SystemMessage): void {
   switch (message.subtype) {
     case "task_started":
       if (message.ambient || (!message.subagent_type && message.task_type !== "local_agent")) return;
+      if (typeof message.tool_use_id === "string") {
+        session.subagentTasks.set(message.tool_use_id, message.task_id);
+      }
       saveTask(session, {
         id: message.task_id,
         description: message.description,
@@ -182,6 +186,13 @@ function trackTask(session: ClaudeSession, message: SystemMessage): void {
     default:
       return;
   }
+}
+
+function taskOf(
+  session: ClaudeSession,
+  parentToolUseId: string | null | undefined,
+): string | undefined {
+  return parentToolUseId ? session.subagentTasks.get(parentToolUseId) : undefined;
 }
 
 // the CLI backgrounds a task and lets the turn end right away — its result lands as a
@@ -515,7 +526,10 @@ function toolResultText(content: unknown): string {
 }
 
 function handleMessage(session: ClaudeSession, message: SDKMessage): void {
-  if (message.type === "stream_event" || message.type === "assistant") {
+  if (
+    (message.type === "stream_event" || message.type === "assistant") &&
+    !("parent_tool_use_id" in message && message.parent_tool_use_id)
+  ) {
     session.emit({ type: "turn.active" });
   }
   switch (message.type) {
@@ -533,34 +547,43 @@ function handleMessage(session: ClaudeSession, message: SDKMessage): void {
       }
       return;
     case "stream_event": {
+      const taskId = taskOf(session, message.parent_tool_use_id);
+      const scoped = taskId ? { taskId } : {};
       const event = message.event;
       if (event.type === "content_block_start") {
         const block = event.content_block;
-        if (block.type === "thinking") session.emit({ type: "phase", phase: { kind: "thinking" } });
+        if (block.type === "thinking")
+          session.emit({ type: "phase", phase: { kind: "thinking" }, ...scoped });
         else if (block.type === "tool_use")
-          session.emit({ type: "phase", phase: { kind: "tool", name: block.name } });
-        else if (block.type === "text") session.emit({ type: "phase", phase: null });
+          session.emit({ type: "phase", phase: { kind: "tool", name: block.name }, ...scoped });
+        else if (block.type === "text") session.emit({ type: "phase", phase: null, ...scoped });
       } else if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-        session.emit({ type: "assistant.delta", text: event.delta.text });
+        session.emit({ type: "assistant.delta", text: event.delta.text, ...scoped });
       }
       return;
     }
-    case "assistant":
+    case "assistant": {
+      const taskId = taskOf(session, message.parent_tool_use_id);
+      const scoped = taskId ? { taskId } : {};
       for (const block of message.message.content) {
         if (block.type === "text" && block.text.trim()) {
-          session.emit({ type: "assistant.complete", text: block.text });
+          session.emit({ type: "assistant.complete", text: block.text, ...scoped });
         } else if (block.type === "tool_use") {
           session.emit({
             type: "tool.started",
             callId: block.id,
             name: block.name,
             input: block.input,
+            ...scoped,
           });
         }
       }
       return;
-    case "user":
+    }
+    case "user": {
       if (typeof message.message.content === "string") return;
+      const taskId = taskOf(session, message.parent_tool_use_id);
+      const scoped = taskId ? { taskId } : {};
       for (const block of message.message.content) {
         if (block.type !== "tool_result") continue;
         session.emit({
@@ -568,9 +591,11 @@ function handleMessage(session: ClaudeSession, message: SDKMessage): void {
           callId: block.tool_use_id,
           result: toolResultText(block.content),
           isError: block.is_error === true,
+          ...scoped,
         });
       }
       return;
+    }
     case "rate_limit_event":
       foldRateLimit(session, message.rate_limit_info);
       return;
@@ -640,6 +665,7 @@ async function open(
     interrupted: false,
     stopped: false,
     busy: false,
+    subagentTasks: new Map(),
     query: undefined as unknown as Query,
   };
   const effort = claudeEffort(thread.effort);
@@ -651,6 +677,7 @@ async function open(
       permissionMode: thread.permissionMode as ClaudePermissionMode,
       ...(effort ? { effort } : {}),
       includePartialMessages: true,
+      forwardSubagentText: true,
       abortController: abort,
       systemPrompt: { type: "preset", preset: "claude_code" },
       settingSources: ["user", "project", "local"],

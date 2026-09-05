@@ -290,6 +290,8 @@ export type ServerEvent =
   | { type: "thread.truncated"; threadId: string; seq: number }
   | { type: "thread.delta"; threadId: string; text: string }
   | { type: "thread.delta.end"; threadId: string }
+  | { type: "thread.task.delta"; threadId: string; taskId: string; text: string }
+  | { type: "thread.task.delta.end"; threadId: string; taskId: string }
   | { type: "thread.approval"; approval: PendingApproval }
   | { type: "thread.approval.resolved"; threadId: string; approvalId: string }
   | { type: "thread.approvals"; approvals: PendingApproval[] }
