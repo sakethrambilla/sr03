@@ -1,8 +1,10 @@
+// The settings page — a view beside the sessions rather than a layer over them. Two sections:
+// local provider status/catalogs and the appearance panel.
 import { useEffect, useMemo, useState } from "react";
 
 import { api } from "../lib/api.ts";
 import { THEMES, availableFonts } from "../lib/appearance.ts";
-import type { ProviderStatus } from "../lib/types.ts";
+import type { PermissionMode, ProviderStatus } from "../lib/types.ts";
 import { useStore } from "../store.ts";
 import { SidebarToggle } from "./Sidebar.tsx";
 import {
@@ -16,6 +18,7 @@ import {
 } from "./ui.tsx";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -48,6 +51,7 @@ function ProviderCard({
 }) {
   const style = STATE_STYLE[provider.state];
   const [confirming, setConfirming] = useState(false);
+  const [showAllModels, setShowAllModels] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -83,7 +87,9 @@ function ProviderCard({
         {provider.state !== "ready" ? (
           <div className="rounded-md border border-border/70 bg-background px-3 py-2.5">
             <p className="text-[12px] text-muted-foreground">{provider.signInHint}</p>
-            <p className="mt-1.5 font-mono text-[12px] text-code-string">claude auth login</p>
+            <p className="mt-1.5 font-mono text-[12px] text-code-string">
+              {provider.signInCommand}
+            </p>
           </div>
         ) : null}
 
@@ -109,7 +115,7 @@ function ProviderCard({
         <div className="flex flex-col gap-1.5">
           <span className="text-[12px] text-muted-foreground">Models</span>
           <ul className="flex flex-col gap-1">
-            {provider.models.map((model) => (
+            {(showAllModels ? provider.models : provider.models.slice(0, 12)).map((model) => (
               <li key={model.slug} className="flex items-center gap-2 text-[13px]">
                 <span className="text-foreground">{model.label}</span>
                 <span className="font-mono text-[11px] text-faint">{model.slug}</span>
@@ -121,6 +127,15 @@ function ProviderCard({
               </li>
             ))}
           </ul>
+          {provider.models.length > 12 ? (
+            <Button
+              variant="ghost"
+              onClick={() => setShowAllModels((current) => !current)}
+              className="mt-1 self-start px-1.5 text-faint"
+            >
+              {showAllModels ? "Show fewer" : `Show all ${provider.models.length}`}
+            </Button>
+          ) : null}
         </div>
 
         <Separator />
@@ -128,7 +143,7 @@ function ProviderCard({
         <div className="flex items-center gap-3">
           <p className="min-w-0 flex-1 text-[11px] text-faint">
             Project and local settings resolve inside each session folder. Credentials stay in the
-            system keychain — sr03 reuses the CLI's own login and never stores them itself.
+            provider's own credential store — sr03 reuses the CLI login and never stores it itself.
           </p>
           {provider.state === "ready" ? (
             <Button
@@ -158,9 +173,10 @@ function ProviderCard({
           }
         >
           <p className="text-[13px] text-muted-foreground">
-            This runs <span className="font-mono text-foreground">claude auth logout</span>, which
-            signs out the Claude Code CLI on this machine — not just sr03. Running sessions will
-            stop working until you sign in again.
+            This runs{" "}
+            <span className="font-mono text-foreground">{provider.logoutCommand}</span>, which
+            signs out {provider.label} on this machine — not just sr03. Running sessions may stop
+            working until you sign in again.
           </p>
         </Dialog>
       ) : null}
@@ -226,6 +242,72 @@ function FontPicker({ label, hint, value, options, onPick }: {
         </SelectContent>
       </Select>
     </div>
+  );
+}
+
+function GeneralPanel() {
+  const providers = useStore((state) => state.providers);
+  const defaultProviderId = useStore((state) => state.defaultProviderId);
+  const permissionModes =
+    providers.find((provider) => provider.id === defaultProviderId)?.permissionModes ?? [];
+  const defaultPermissionMode = useStore((state) => state.defaults.permissionMode);
+  const setDefaultPermissionMode = useStore((state) => state.setDefaultPermissionMode);
+
+  return (
+    <section className="rounded-lg border border-border/70 bg-card/40">
+      <header className="border-b border-border/60 px-4 py-3">
+        <h2 className="text-[14px] font-medium">Session defaults</h2>
+        <p className="mt-0.5 text-[12px] text-muted-foreground">
+          Applied to every new session started on this machine from now on. Sessions already
+          open keep whatever mode they were started with.
+        </p>
+      </header>
+      <div className="flex items-center gap-4 px-4 py-4">
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] text-foreground">Permission mode</p>
+          <p className="text-[11.5px] text-faint">How much a new session can do without asking</p>
+        </div>
+        <Select
+          value={defaultPermissionMode}
+          onValueChange={(next) => void setDefaultPermissionMode(next as PermissionMode)}
+        >
+          <SelectTrigger className="w-56 shrink-0">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {permissionModes.map((mode) => (
+              <SelectItem key={mode.value} value={mode.value}>
+                {mode.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    </section>
+  );
+}
+
+function EditorPanel() {
+  const [autoPreview, setAutoPreview] = usePersistedState<boolean>("auto-preview", true);
+
+  return (
+    <section className="rounded-lg border border-border/70 bg-card/40">
+      <header className="border-b border-border/60 px-4 py-3">
+        <h2 className="text-[14px] font-medium">Editor</h2>
+        <p className="mt-0.5 text-[12px] text-muted-foreground">
+          Applies to files opened from now on. Files already open keep their current view.
+        </p>
+      </header>
+      <div className="flex items-center gap-4 px-4 py-4">
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] text-foreground">Open diagrams in preview</p>
+          <p className="text-[11.5px] text-faint">
+            A .mmd or .excalidraw file opens rendered, not as its raw source
+          </p>
+        </div>
+        <Switch checked={autoPreview} onCheckedChange={setAutoPreview} />
+      </div>
+    </section>
   );
 }
 
@@ -296,6 +378,7 @@ function AppearancePanel() {
 }
 
 const SECTIONS = [
+  { id: "general", label: "General" },
   { id: "providers", label: "Providers" },
   { id: "appearance", label: "Appearance" },
 ] as const;
@@ -304,7 +387,10 @@ type Section = (typeof SECTIONS)[number]["id"];
 
 export function SettingsView() {
   const setSettingsOpen = useStore((state) => state.setSettingsOpen);
-  const [section, setSection] = usePersistedState<Section>("settings-section", "providers");
+  const catalogs = useStore((state) => state.providers);
+  const defaultProviderId = useStore((state) => state.defaultProviderId);
+  const refreshState = useStore((state) => state.refreshState);
+  const [section, setSection] = usePersistedState<Section>("settings-section", "general");
   const [providers, setProviders] = useState<ProviderStatus[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -381,9 +467,45 @@ export function SettingsView() {
 
         <div className="min-h-0 flex-1 overflow-auto">
           <div className="mx-auto flex max-w-2xl flex-col gap-4 px-6 py-6">
+            {section === "general" ? (
+              <>
+                <GeneralPanel />
+                <EditorPanel />
+              </>
+            ) : null}
             {section === "appearance" ? <AppearancePanel /> : null}
             {section === "providers" ? (
               <>
+                <section className="rounded-lg border border-border/70 bg-card/40 px-4 py-3">
+                  <div className="flex items-center gap-4">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[13px] text-foreground">Default provider</p>
+                      <p className="text-[11.5px] text-faint">
+                        Used for each new session; existing sessions keep their provider.
+                      </p>
+                    </div>
+                    <Select
+                      value={defaultProviderId}
+                      onValueChange={(value) => {
+                        void api
+                          .saveSetting("defaultProviderId", value)
+                          .then(() => refreshState())
+                          .catch((cause: Error) => setError(cause.message));
+                      }}
+                    >
+                      <SelectTrigger className="w-44 shrink-0">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {catalogs.map((provider) => (
+                          <SelectItem key={provider.id} value={provider.id}>
+                            {provider.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </section>
                 {error ? <p className="text-[12px] text-destructive">{error}</p> : null}
                 {providers === null && !error ? (
                   <p className="text-[12px] text-faint">Checking…</p>

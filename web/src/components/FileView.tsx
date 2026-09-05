@@ -1,10 +1,15 @@
+// One open file tab: the highlighted listing with its diff markers in the gutter, an editable
+// textarea over it, cmd-click navigation to whatever an import or a symbol resolves to, and a
+// preview for markdown, mermaid and excalidraw. A csv, tsv or xlsx hands off to TableView instead.
 import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api.ts";
 import type { FileLinks, LineLink } from "../lib/fileref.ts";
 import type { ChangedFile, Thread } from "../lib/types.ts";
 import { useStore } from "../store.ts";
+import { ExcalidrawView } from "./ExcalidrawView.tsx";
 import { Markdown } from "./Markdown.tsx";
+import { Mermaid } from "./Mermaid.tsx";
 import { TableView } from "./TableView.tsx";
 import { EyeIcon, cn, usePersistedState } from "./ui.tsx";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -30,6 +35,8 @@ const MARKDOWN = /\.(md|markdown|mdx)$/i;
 const DELIMITED = /\.(csv|tsv)$/i;
 // binary, so there is no raw mode worth flipping back to — these open straight into the grid
 const SPREADSHEET = /\.(xlsx|xlsm)$/i;
+const MERMAID = /\.(mmd|mermaid)$/i;
+const EXCALIDRAW = /\.excalidraw(\.json)?$/i;
 
 // the marker strip plus the number column, which the textarea starts after
 const GUTTER = 58;
@@ -220,7 +227,11 @@ export const FileView = memo(function FileView({
   const [dirty, setDirty] = useState(false);
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
-  const [preview, setPreview] = useState(false);
+  // diagrams open straight into their rendering; every other kind keeps opening as source
+  const [autoPreview] = usePersistedState<boolean>("auto-preview", true);
+  const [preview, setPreview] = useState(
+    () => autoPreview && (MERMAID.test(path) || EXCALIDRAW.test(path)),
+  );
   const [wrap, setWrap] = usePersistedState<boolean>("wrap", false);
   const rows = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
@@ -230,6 +241,31 @@ export const FileView = memo(function FileView({
   // deliberately uncontrolled: a React-controlled value resets the browser's own
   // undo stack on every keystroke, which kills cmd+z
   const editor = useRef<HTMLTextAreaElement>(null);
+  // what save() actually writes — the textarea keeps this current on every keystroke, and
+  // ExcalidrawView (which has no textarea to read from) keeps it current through its own onChange
+  const source = useRef("");
+  // ExcalidrawView's own onChange is debounced, so this is the only way to force a pending one
+  // through on demand — registered by ExcalidrawView itself while it's mounted
+  const flushDrawing = useRef<(() => boolean) | null>(null);
+
+  const slash = path.lastIndexOf("/");
+  const markdown = MARKDOWN.test(path);
+  const delimited = DELIMITED.test(path);
+  const diagram = MERMAID.test(path);
+  const excalidraw = EXCALIDRAW.test(path);
+  // markdown or mermaid previewing renders prose/a diagram instead of the textarea — no surface
+  // to save from. excalidraw previewing is the opposite: it's the editor, and stays savable
+  const sourceHidden = (markdown || diagram) && preview;
+  const drawing = excalidraw && preview;
+  const grid = SPREADSHEET.test(path) || (delimited && preview);
+  const previewable = markdown || delimited || diagram || excalidraw;
+  const previewLabel = delimited
+    ? "Preview as a table"
+    : excalidraw
+      ? "Edit as a drawing"
+      : diagram
+        ? "Preview diagram"
+        : "Preview markdown";
 
   useEffect(() => {
     let cancelled = false;
@@ -243,7 +279,10 @@ export const FileView = memo(function FileView({
         if (!dirty && editor.current && editor.current.value !== next.text) {
           editor.current.value = next.text;
         }
-        if (!dirty) setText(next.text);
+        if (!dirty) {
+          setText(next.text);
+          source.current = next.text;
+        }
       })
       .catch((cause: Error) => {
         if (!cancelled) setError(cause.message);
@@ -284,15 +323,44 @@ export const FileView = memo(function FileView({
     return () => window.clearTimeout(timer);
   }, [file, reveal]);
 
+  // true exactly when a whole-file save has something to write: not still loading, not binary,
+  // and not a view — the grid or a rendered markdown/mermaid preview — with no editing surface
+  const canSave = file !== null && !file.binary && !grid && !sourceHidden;
+
+  // forces a debounced-but-not-yet-reported canvas edit through before something reads
+  // text/source/dirty — those flow through the ordinary onChange prop below when it does, so
+  // this just needs to say whether that happened. setDirty's own update isn't visible until the
+  // next render, so a caller acting in this same tick has to use the return value, not `dirty`
+  const syncDrawing = (): boolean => {
+    if (!drawing || !flushDrawing.current) return dirty;
+    return flushDrawing.current() || dirty;
+  };
+
+  // switching away from the canvas needs the sync above; switching into it on invalid JSON
+  // would otherwise silently show (and then overwrite) a blank scene in place of the raw edit
+  const togglePreview = (next: boolean) => {
+    if (excalidraw && next) {
+      try {
+        JSON.parse(source.current || "{}");
+      } catch {
+        setError("Fix the JSON before switching to the drawing view.");
+        return;
+      }
+    }
+    if (drawing && !next) syncDrawing();
+    setPreview(next);
+  };
+
   const save = async (): Promise<boolean> => {
-    const text = editor.current?.value;
-    if (text === undefined || saving) return false;
+    syncDrawing();
+    if (!canSave || saving) return false;
+    const value = source.current;
     setSaving(true);
     try {
-      await api.saveFile(thread.id, path, text);
+      await api.saveFile(thread.id, path, value);
       const next = await api.file(thread.id, path);
       setFile(next);
-      setDirty(editor.current?.value !== next.text);
+      setDirty(source.current !== next.text);
       setError(null);
       onSaved();
       return true;
@@ -321,23 +389,18 @@ export const FileView = memo(function FileView({
         return;
       }
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "v") {
-        if (!MARKDOWN.test(path) && !DELIMITED.test(path)) return;
+        if (!previewable) return;
         event.preventDefault();
-        setPreview((current) => !current);
+        togglePreview(!preview);
         return;
       }
       // undo and redo belong to the textarea, so only Escape is handled here
-      if (event.key === "Escape" && !dirty) onClose(path);
+      if (event.key === "Escape" && !syncDrawing()) onClose(path);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [active, onClose, dirty, saving, path, thread.id]);
+  }, [active, onClose, dirty, saving, path, thread.id, previewable, preview, drawing, excalidraw]);
 
-  const slash = path.lastIndexOf("/");
-  const markdown = MARKDOWN.test(path);
-  const delimited = DELIMITED.test(path);
-  const reading = markdown && preview;
-  const grid = SPREADSHEET.test(path) || (delimited && preview);
   const lines = useMemo(() => {
     if (!file || file.binary) return [] as Segment[][];
     const bindings = links.bindings(path, text);
@@ -376,13 +439,13 @@ export const FileView = memo(function FileView({
           <span className="shrink-0 font-mono text-[10.5px] text-git-modified">truncated</span>
         ) : null}
         <div className="flex-1" />
-        {markdown || delimited ? (
+        {previewable ? (
           <Toggle
             size="sm"
             pressed={preview}
-            onPressedChange={setPreview}
-            aria-label={delimited ? "Preview as a table" : "Preview markdown"}
-            title={delimited ? "Preview as a table ⇧⌘V" : "Preview markdown ⇧⌘V"}
+            onPressedChange={togglePreview}
+            aria-label={previewLabel}
+            title={`${previewLabel} ⇧⌘V`}
             className="size-6 shrink-0 text-faint data-[state=on]:text-foreground"
           >
             <EyeIcon className="size-3.5" />
@@ -397,6 +460,24 @@ export const FileView = memo(function FileView({
 
       {grid ? (
         <TableView thread={thread} path={path} />
+      ) : drawing ? (
+        <div className="flex min-h-0 flex-1 flex-col">
+          {error ? <p className="px-4 py-4 text-[12px] text-destructive">{error}</p> : null}
+          {file && !file.binary ? (
+            <ExcalidrawView
+              text={text}
+              dirty={dirty}
+              onFlush={(flush) => {
+                flushDrawing.current = flush;
+              }}
+              onChange={(value) => {
+                source.current = value;
+                setText(value);
+                setDirty(value !== file.text);
+              }}
+            />
+          ) : null}
+        </div>
       ) : (
         <div ref={scroller} className="min-h-0 flex-1 overflow-auto">
           {error ? <p className="px-4 py-4 text-[12px] text-destructive">{error}</p> : null}
@@ -404,13 +485,19 @@ export const FileView = memo(function FileView({
             <p className="px-4 py-6 text-[12px] text-faint">This is a binary file.</p>
           ) : null}
 
-          {file && !file.binary && reading ? (
+          {file && !file.binary && markdown && preview ? (
             <div className="mx-auto max-w-3xl px-6 py-6">
               <Markdown text={text} className="text-[14px] leading-[1.7] text-foreground" />
             </div>
           ) : null}
 
-          {file && !file.binary && !reading ? (
+          {file && !file.binary && diagram && preview ? (
+            <div className="px-6 py-6">
+              <Mermaid source={text} />
+            </div>
+          ) : null}
+
+          {file && !file.binary && !sourceHidden ? (
             <ContextMenu>
               <ContextMenuTrigger asChild>
                 <div
@@ -496,9 +583,13 @@ export const FileView = memo(function FileView({
                       the text lands at exactly the offset the rows above it use */}
                   <textarea
                     ref={editor}
-                    defaultValue={file.text}
+                    // the live buffer, not file.text — toggling a kind's preview off remounts
+                    // this textarea, and it must pick up edits made while it was unmounted
+                    // (excalidraw's canvas, most notably) rather than reverting to the on-disk copy
+                    defaultValue={text}
                     onInput={(event) => {
                       const value = event.currentTarget.value;
+                      source.current = value;
                       setText(value);
                       setDirty(value !== file.text);
                     }}

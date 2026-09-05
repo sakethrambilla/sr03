@@ -1,3 +1,7 @@
+// The app's own layer over shadcn: small compositions every view reuses (Pill, Dialog, StatusDot,
+// Chip, CopyButton, Menu), the lucide icon aliases — imported by role, so a glyph changes in one
+// place — usePersistedState for per-view preferences, and the file-type icon map. Restyling
+// belongs here rather than in components/ui/*, which is generated.
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import {
@@ -35,6 +39,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Shapes,
   Sparkles,
   Settings,
   Square,
@@ -42,6 +47,7 @@ import {
   SquareTerminal,
   Trash2,
   Undo2,
+  Workflow,
   X,
   Zap,
   type LucideIcon,
@@ -299,6 +305,7 @@ export function Menu({
   items,
   onPick,
   align = "start",
+  disabled = false,
 }: {
   trigger: string;
   title?: string;
@@ -306,19 +313,21 @@ export function Menu({
   items: MenuItem[];
   onPick: (id: string) => void;
   align?: "start" | "end";
+  disabled?: boolean;
 }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         title={title}
-        className="flex h-7 shrink-0 items-center rounded-md px-1.5 text-[12.5px] text-muted-foreground transition outline-none hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground"
+        disabled={disabled}
+        className="flex h-7 max-w-44 shrink-0 items-center rounded-md px-1.5 text-[12.5px] text-muted-foreground transition outline-none hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 data-[state=open]:bg-accent data-[state=open]:text-foreground"
       >
-        {trigger}
+        <span className="truncate">{trigger}</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align={align}
         side="top"
-        className="min-w-56"
+        className="max-h-80 min-w-56 overflow-y-auto"
         onKeyDown={(event) => {
           const item = items[Number(event.key) - 1];
           if (!item || event.metaKey || event.ctrlKey || event.altKey) return;
@@ -340,7 +349,11 @@ export function Menu({
               ) : null}
             </span>
             {item.selected ? <CheckIcon className="text-primary" /> : null}
-            <DropdownMenuShortcut className="ml-0 tracking-normal">{index + 1}</DropdownMenuShortcut>
+            {index < 9 ? (
+              <DropdownMenuShortcut className="ml-0 tracking-normal">
+                {index + 1}
+              </DropdownMenuShortcut>
+            ) : null}
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>
@@ -374,6 +387,9 @@ const FILE_KINDS: Array<{ match: RegExp; Source: LucideIcon; tone: string }> = [
   { match: /\.(sh|bash|zsh|fish|ps1|bat|cmd)$/i, Source: SquareTerminal, tone: "text-file-shell" },
   { match: /(^\.env|^\.?[\w.-]*rc$|\.(toml|ini|conf|config)$)/i, Source: FileCog, tone: "text-file-data" },
   { match: /\.(csv|tsv|xlsx?|xlsm)$/i, Source: FileSpreadsheet, tone: "text-file-data" },
+  { match: /\.(mmd|mermaid)$/i, Source: Workflow, tone: "text-file-data" },
+  // ahead of the json row below, since *.excalidraw.json would otherwise match that first
+  { match: /\.excalidraw(\.json)?$/i, Source: Shapes, tone: "text-file-style" },
   { match: /\.(json|jsonc|ya?ml|lock|xml)$/i, Source: FileJson2, tone: "text-file-data" },
   { match: /\.(m?d|mdx|txt|pdf|log)$/i, Source: FileText, tone: "text-file-doc" },
   {

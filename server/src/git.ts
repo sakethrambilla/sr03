@@ -1,3 +1,7 @@
+// Everything sr03 asks git: repo and branch info, worktree add/remove/list, the changed-file list
+// behind a session's file tree, per-file diffs, which paths are ignored, and the text search behind
+// the quick-open palette. Every call shells out to the git binary — there is no cache and no
+// library.
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
@@ -105,6 +109,15 @@ function sanitizeSegment(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "branch";
 }
 
+// sanitizeSegment is lossy — feat/a and feat-a both become feat-a — and a removed worktree can
+// leave its directory behind, so the first free name wins rather than the bare one
+async function freeWorktreePath(dir: string, name: string): Promise<string> {
+  for (let counter = 1; ; counter += 1) {
+    const target = path.join(dir, counter === 1 ? name : `${name}-${counter}`);
+    if (!(await fs.stat(target).then(() => true, () => false))) return target;
+  }
+}
+
 export async function addWorktree(input: {
   root: string;
   branch: string;
@@ -112,8 +125,9 @@ export async function addWorktree(input: {
   base?: string;
 }): Promise<Worktree> {
   const repoName = sanitizeSegment(path.basename(input.root));
-  const target = path.join(WORKTREES_DIR, repoName, sanitizeSegment(input.branch));
-  await fs.mkdir(path.dirname(target), { recursive: true });
+  const parent = path.join(WORKTREES_DIR, repoName);
+  await fs.mkdir(parent, { recursive: true });
+  const target = await freeWorktreePath(parent, sanitizeSegment(input.branch));
   const args = input.createBranch
     ? ["worktree", "add", "-b", input.branch, target, input.base ?? "HEAD"]
     : ["worktree", "add", target, input.branch];
@@ -133,6 +147,18 @@ export async function removeWorktree(input: {
 
 export async function pruneWorktrees(root: string): Promise<void> {
   await git(root, ["worktree", "prune"]);
+}
+
+export async function switchBranch(input: {
+  cwd: string;
+  branch: string;
+  createBranch: boolean;
+  base?: string;
+}): Promise<void> {
+  const args = input.createBranch
+    ? ["switch", "-c", input.branch, input.base ?? "HEAD"]
+    : ["switch", input.branch];
+  await git(input.cwd, args);
 }
 
 export async function diffStat(cwd: string): Promise<{ files: number; insertions: number; deletions: number }> {
@@ -366,4 +392,107 @@ export async function listedFiles(cwd: string): Promise<string[] | null> {
   } catch {
     return null;
   }
+}
+
+export interface TextMatch {
+  path: string;
+  line: number;
+  text: string;
+}
+
+// a match on a minified line is worth having; the other 200 KB of that line is not
+export const MATCH_TEXT_LIMIT = 400;
+const RECORD_LIMIT = 1024 * 1024;
+
+// `-z -n` writes one record per hit as path\0line\0text, so a path containing a colon can't be
+// mistaken for a field separator. There is no --column here on purpose: git counts that in bytes,
+// which would land in the wrong place on any line holding multibyte text.
+function parseMatch(record: string): TextMatch | null {
+  const first = record.indexOf("\0");
+  const second = record.indexOf("\0", first + 1);
+  if (first === -1 || second === -1) return null;
+  const line = Number(record.slice(first + 1, second));
+  if (!Number.isInteger(line)) return null;
+  return {
+    path: record.slice(0, first),
+    line,
+    text: record.slice(second + 1, second + 1 + MATCH_TEXT_LIMIT),
+  };
+}
+
+// Every text match in the folder, or null when it isn't a repo and the caller has to scan
+// itself. `--untracked` covers the same files listedFiles does — tracked plus untracked, minus
+// ignored — and `-I` leaves binaries alone. grep has no global cap of its own, only a per-file
+// one, so this reads records until `limit` and then kills the child.
+export function searchText(cwd: string, query: string, limit: number): Promise<TextMatch[] | null> {
+  // smart case, the way ripgrep and VS Code do it: an all-lowercase query ignores case
+  const smartCase = query === query.toLowerCase() ? ["-i"] : [];
+  const args = [
+    "-c",
+    "core.quotepath=false",
+    "grep",
+    "--no-color",
+    "-n",
+    "-I",
+    "-z",
+    "--untracked",
+    ...smartCase,
+    "-F",
+    "-e",
+    query,
+    "--",
+    ".",
+  ];
+
+  return new Promise((resolve, reject) => {
+    const child = spawn("git", args, { cwd });
+    const matches: TextMatch[] = [];
+    let buffer = "";
+    let skipping = false;
+    let err = "";
+    let settled = false;
+
+    const done = (value: TextMatch[] | null) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      buffer += chunk;
+      for (;;) {
+        const newline = buffer.indexOf("\n");
+        if (newline === -1) break;
+        const record = buffer.slice(0, newline);
+        buffer = buffer.slice(newline + 1);
+        if (skipping) {
+          skipping = false;
+          continue;
+        }
+        const match = parseMatch(record);
+        if (match) matches.push(match);
+        if (matches.length >= limit) {
+          child.kill();
+          done(matches);
+          return;
+        }
+      }
+      // a minified file is one enormous line, and buffering it whole costs more than its match
+      if (buffer.length > RECORD_LIMIT) {
+        buffer = "";
+        skipping = true;
+      }
+    });
+    child.stderr.on("data", (chunk) => (err += chunk));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      // 1 is "nothing matched", which is an answer; outside a repo grep can't run at all
+      if (code === 0 || code === 1) return done(matches);
+      if (/not a git repository/i.test(err)) return done(null);
+      if (settled) return;
+      settled = true;
+      reject(new GitError(err.trim() || `git exited ${code}`));
+    });
+  });
 }

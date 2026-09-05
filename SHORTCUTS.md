@@ -19,11 +19,33 @@ Active while a session is open.
 | Shortcut | Action | Code |
 | --- | --- | --- |
 | `⌘O` | Open the session's folder in the preferred app (the one marked in the **Open** menu) | `web/src/components/ChatView.tsx` |
+| `⌘P` | Quick open — files by name, `%` for text across the folder | `web/src/components/ChatView.tsx` |
+| `⌘⇧F` | Quick open, already switched to text | `web/src/components/ChatView.tsx` |
 | `⌘B` | Show / hide the file tree | `web/src/components/ChatView.tsx` |
 | `⌘J` | Show / hide the terminal | `web/src/components/ChatView.tsx` |
-| `⌘⇧A` | Show / hide the agents panel | `web/src/components/ChatView.tsx` |
+| `⌘⇧A` | Show / hide the agents panel, when the provider reports subagent tasks | `web/src/components/ChatView.tsx` |
 | `⌘W` | Close the active file tab — the chat tab is pinned | `web/src/components/ChatView.tsx` |
 | `⌘K` then `W` | Close every file tab | `web/src/components/ChatView.tsx` |
+
+## Quick open
+
+Active while the palette is open.
+
+| Shortcut | Action | Code |
+| --- | --- | --- |
+| `↑` / `↓` | Move the highlight | `web/src/components/SearchPalette.tsx` |
+| `⏎` | Open the highlighted file, on its line | `web/src/components/SearchPalette.tsx` |
+| `Esc` | Close the palette | `web/src/components/SearchPalette.tsx` |
+
+## Transcript
+
+Active while the turn rail — the ticks in the transcript's left gutter — has focus.
+
+| Shortcut | Action | Code |
+| --- | --- | --- |
+| `↑` / `↓` | Move to the previous / next turn | `web/src/components/Timeline.tsx` |
+| `Home` / `End` | Move to the first / last turn | `web/src/components/Timeline.tsx` |
+| `⏎` / `Space` | Scroll the transcript to that turn | `web/src/components/Timeline.tsx` |
 
 ## File editor
 
@@ -32,7 +54,7 @@ Active while a file tab is selected.
 | Shortcut | Action | Code |
 | --- | --- | --- |
 | `⌘S` | Save | `web/src/components/FileView.tsx` |
-| `⌘⇧V` | Toggle preview — Markdown, CSV and TSV only | `web/src/components/FileView.tsx` |
+| `⌘⇧V` | Toggle preview — Markdown, Mermaid, Excalidraw, CSV and TSV only | `web/src/components/FileView.tsx` |
 | `Esc` | Close the file, only when it has no unsaved changes | `web/src/components/FileView.tsx` |
 | `⌘`-click an import | Open that file | `web/src/components/FileView.tsx` |
 
@@ -45,7 +67,10 @@ Active while a file tab is selected.
 | `↑` / `↓` | Slash-command menu: move the highlight | `web/src/components/Composer.tsx` |
 | `⏎` or `Tab` | Slash-command menu: pick the highlighted command | `web/src/components/Composer.tsx` |
 | `Esc` | Slash-command menu: dismiss; image preview: close | `web/src/components/Composer.tsx` |
-| `1`–`9` | Model or permission-mode menu open: pick the nth item | `web/src/components/ui.tsx` |
+| `1`–`9` | Provider or permission-mode menu open: pick the nth item | `web/src/components/ui.tsx` |
+| `1`–`9` | Question panel open: pick the nth option | `web/src/components/Composer.tsx` |
+| `⏎` | Question panel, **Other…** open: submit the typed answer | `web/src/components/Composer.tsx` |
+| `Esc` | Question panel, **Other…** open: discard it and go back to the options | `web/src/components/Composer.tsx` |
 | `←` / `→` | Effort slider focused: step the level | `web/src/components/Composer.tsx` |
 
 ## Sidebar

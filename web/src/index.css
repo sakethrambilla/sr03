@@ -1,3 +1,6 @@
+/* The one stylesheet: the shadcn token set carrying sr03's palette, the extra token families
+   the app adds (git decorations, syntax, file icons), the shipped shadcn themes the picker
+   offers, and the few base rules Tailwind utilities can't express. */
 @import "tailwindcss";
 @import "tw-animate-css";
 
@@ -423,8 +426,9 @@ select option {
   background: transparent;
 }
 
-/* the desktop shell hides the native title bar, so the app's own headers stand in for one:
-   these are what the window is dragged and double-clicked (to zoom) by */
+/* the macOS shell hides the native title bar, so the app's own headers stand in for one: these
+   are what the window is dragged and double-clicked (to zoom) by. harmless under the Windows
+   frame, which is dragged by its own title bar */
 .electron [data-titlebar] {
   -webkit-app-region: drag;
 }
@@ -434,6 +438,6 @@ select option {
 
 /* the traffic lights run to roughly 78px in from the window's left corner, so whichever pane is
    leftmost keeps its header clear of them — the sidebar, or the main pane once it is hidden */
-.electron :is(aside, main):first-child > [data-titlebar] {
+.electron.mac :is(aside, main):first-child > [data-titlebar] {
   padding-left: 108px;
 }

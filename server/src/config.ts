@@ -1,3 +1,5 @@
+// Every path and tunable the server takes from the environment, resolved once at import —
+// and the data directories created, so nothing downstream has to check.
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";

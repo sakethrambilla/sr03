@@ -1,5 +1,8 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+// The transcript: user bubbles, replies, runs of tool calls collapsed into one expandable row,
+// the streaming tail of the turn in flight, and the label for what it is waiting on. Also owns
+// the scroll behaviour — pinned to the bottom until you scroll away, with a jump-to-latest pill.
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 
 import type { FileLinks } from "../lib/fileref.ts";
 import type { Message, ThreadPhase } from "../lib/types.ts";
@@ -7,6 +10,7 @@ import { useStore } from "../store.ts";
 import { Markdown } from "./Markdown.tsx";
 import { ChevronIcon, CopyButton, RewindIcon, cn } from "./ui.tsx";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 
 // a run of calls should read as one sentence instead of a stack of tool names
 const TOOL_PHRASES: Record<string, { verb: string; noun: string }> = {
@@ -24,6 +28,7 @@ const TOOL_PHRASES: Record<string, { verb: string; noun: string }> = {
   Task: { verb: "Launched", noun: "agents" },
   TodoWrite: { verb: "Updated", noun: "todos" },
   ExitPlanMode: { verb: "Presented", noun: "plans" },
+  AskUserQuestion: { verb: "Asked", noun: "questions" },
 };
 
 const ANY_TOOL = { verb: "Used", noun: "tools" };
@@ -230,8 +235,9 @@ const Bubble = memo(function Bubble({
 
   if (message.role === "user") {
     return (
-      <div className="group flex flex-col items-end">
-        <div className="max-w-[85%] rounded-lg bg-accent px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap text-foreground">
+      // the turn rail scrolls to this node and watches it for the in-view tick
+      <div data-message-id={message.id} className="group flex flex-col items-end">
+        <div className="max-w-[85%] rounded-lg bg-accent px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap break-words text-foreground">
           {message.text}
         </div>
         <MessageActions>
@@ -321,6 +327,214 @@ function finalReplies(messages: Message[]): Set<string> {
   return ids;
 }
 
+type RailItem = { id: string; prompt: string; reply: string | null };
+
+// a prompt written over several lines has to read as one line in the preview
+function oneLine(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+// one tick per user turn, previewed by the prompt and that turn's last word — an error is left
+// out of the preview, but the turn still gets its tick so it stays reachable
+function toRailItems(messages: Message[]): RailItem[] {
+  const items: RailItem[] = [];
+  for (const message of messages) {
+    if (message.role === "user") {
+      items.push({ id: message.id, prompt: oneLine(message.text), reply: null });
+      continue;
+    }
+    const turn = items[items.length - 1];
+    if (turn && message.role === "assistant") turn.reply = oneLine(message.text) || null;
+  }
+  return items;
+}
+
+const RAIL_CONTENT_WIDTH = 768; // max-w-3xl, the transcript's content column
+const RAIL_PERSISTENT_GUTTER = 48;
+const RAIL_STRIP_LEFT = 12;
+const RAIL_STRIP_MAX_WIDTH = 40;
+const RAIL_TICK_SPACING = 8;
+const RAIL_MIN_TICKS = 3;
+
+function railGutter(width: number): number {
+  return Math.max(0, (width - Math.min(width, RAIL_CONTENT_WIDTH)) / 2);
+}
+
+// the rail overlays the scroller's left edge while the content column stays centered, so a
+// fixed-width hit strip would sit on top of the message text and swallow its clicks — cap it to
+// the gutter, where 0 leaves the rail inert
+function railStripWidth(width: number): number {
+  return Math.max(
+    0,
+    Math.min(RAIL_STRIP_MAX_WIDTH, Math.floor(railGutter(width)) - RAIL_STRIP_LEFT),
+  );
+}
+
+// ticks are evenly spaced rather than proportional: it is a table of contents, not a scrollbar,
+// so a turn that wrote a 400-line diff doesn't swallow the rail
+function railTickTop(index: number, count: number): number {
+  return count <= 1 ? 0 : (index / (count - 1)) * 100;
+}
+
+// capped against the transcript pane, not the viewport: the header, the composer and an open
+// terminal all sit outside it, and a rail taller than the pane would overhang onto them
+function railHeight(count: number): string {
+  return `min(${Math.max(1, (count - 1) * RAIL_TICK_SPACING)}px, calc(100% - 4rem))`;
+}
+
+function railIndexAt(top: number, height: number, pointerY: number, count: number): number | null {
+  if (count <= 0 || height <= 0) return null;
+  if (count === 1) return 0;
+  const progress = Math.min(1, Math.max(0, (pointerY - top) / height));
+  return Math.round(progress * (count - 1));
+}
+
+// The turn rail: a tick per user message in the transcript's left gutter, hover for the turn and
+// click to jump to it. One button covers the whole rail — a 2px tick is impossible to hover on
+// its own — and pointer Y picks the nearest tick.
+function TurnRail({
+  items,
+  stripWidth,
+  persistent,
+  onSelect,
+  registerTick,
+}: {
+  items: RailItem[];
+  stripWidth: number;
+  persistent: boolean;
+  onSelect: (id: string) => void;
+  registerTick: (id: string, node: HTMLElement | null) => void;
+}) {
+  const strip = useRef<HTMLButtonElement>(null);
+  // the offset rides along with the index so the preview can be pinned to its tick without
+  // re-measuring; the rail's height is a CSS min(), which only the layout knows
+  const [active, setActive] = useState<{ index: number; offset: number } | null>(null);
+
+  const at = active !== null && active.index < items.length ? active : null;
+  const item = at === null ? null : items[at.index];
+
+  const resolve = (index: number | null) => {
+    const rect = strip.current?.getBoundingClientRect();
+    if (rect === undefined || index === null) return null;
+    const clamped = Math.min(items.length - 1, Math.max(0, index));
+    return { index: clamped, offset: (railTickTop(clamped, items.length) / 100) * rect.height };
+  };
+
+  const fromPointer = (pointerY: number) => {
+    const rect = strip.current?.getBoundingClientRect();
+    if (!rect) return null;
+    return resolve(railIndexAt(rect.top, rect.height, pointerY, items.length));
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    const step =
+      event.key === "ArrowDown"
+        ? (at?.index ?? -1) + 1
+        : event.key === "ArrowUp"
+          ? (at?.index ?? items.length) - 1
+          : event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? items.length - 1
+              : null;
+    if (step !== null) {
+      event.preventDefault();
+      setActive(resolve(step));
+      return;
+    }
+    // Enter would otherwise fire a click with no pointer position to read
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      if (item) onSelect(item.id);
+    }
+  };
+
+  if (items.length < RAIL_MIN_TICKS) return null;
+
+  return (
+    <div
+      className={cn(
+        "pointer-events-none absolute inset-y-0 left-0 z-20 hidden w-18 [@media(pointer:fine)]:block",
+        persistent
+          ? "opacity-100"
+          : "opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100",
+      )}
+    >
+      <Popover open={item !== null}>
+        <PopoverAnchor asChild>
+          <button
+            ref={strip}
+            type="button"
+            aria-label={item ? `Jump to message: ${item.prompt}` : "Jump to a message"}
+            style={{ height: railHeight(items.length), width: stripWidth }}
+            // every pixel of travel would otherwise reposition the preview
+            onMouseMove={(event) => {
+              const next = fromPointer(event.clientY);
+              setActive((current) => (current?.index === next?.index ? current : next));
+            }}
+            onMouseLeave={() => setActive(null)}
+            onFocus={() => setActive((current) => current ?? resolve(0))}
+            onBlur={() => setActive(null)}
+            onKeyDown={onKeyDown}
+            onClick={(event) => {
+              // an activation with no pointer behind it has no clientY to read, and would
+              // otherwise clamp to the first turn rather than the one being announced
+              const next = event.detail === 0 ? at : fromPointer(event.clientY);
+              if (next) onSelect(items[next.index].id);
+              event.currentTarget.blur();
+            }}
+            className={cn(
+              "absolute top-1/2 left-3 -translate-y-1/2 focus-visible:ring-2 focus-visible:ring-ring/70 focus-visible:outline-none",
+              stripWidth > 0 ? "pointer-events-auto" : "pointer-events-none",
+            )}
+          >
+            <span aria-hidden className="absolute top-0 left-3 h-full w-px bg-border/15" />
+            {items.map((tick, index) => {
+              const distance = at === null ? null : Math.abs(index - at.index);
+              return (
+                <span
+                  key={tick.id}
+                  aria-hidden
+                  ref={(node) => registerTick(tick.id, node)}
+                  data-in-view="false"
+                  style={{ top: `${railTickTop(index, items.length)}%` }}
+                  className={cn(
+                    "absolute left-0 h-0.5 -translate-y-1/2 rounded-full bg-muted-foreground/35 transition-[background-color,width] duration-150 data-[in-view=true]:bg-foreground/90",
+                    distance === 0
+                      ? "w-6 bg-muted-foreground/75"
+                      : distance === 1
+                        ? "w-4"
+                        : distance === 2
+                          ? "w-2.5"
+                          : "w-2",
+                  )}
+                />
+              );
+            })}
+          </button>
+        </PopoverAnchor>
+        {/* aligned to the rail's top rather than the tick, since a moving anchor doesn't
+            reposition an open popover — alignOffset does */}
+        <PopoverContent
+          side="right"
+          align="start"
+          alignOffset={at?.offset ?? 0}
+          sideOffset={12}
+          onOpenAutoFocus={(event) => event.preventDefault()}
+          className="pointer-events-none w-80 rounded-lg p-3"
+        >
+          <p className="truncate text-[13px] font-medium">{item?.prompt || "User message"}</p>
+          {item?.reply ? (
+            <p className="mt-1 line-clamp-3 text-[12.5px] leading-5 text-muted-foreground">
+              {item.reply}
+            </p>
+          ) : null}
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
+}
+
 type Row = { id: string; message: Message } | { id: string; tools: Message[] };
 
 // consecutive tool calls collapse into one row, the way the Claude Code transcript folds them
@@ -393,7 +607,12 @@ export function Timeline({
   const opened = useRef<string | null>(null);
   const rows = useMemo(() => toRows(messages), [messages]);
   const copyable = useMemo(() => finalReplies(messages), [messages]);
+  const railItems = useMemo(() => toRailItems(messages), [messages]);
   const [pinned, setPinned] = useState(true);
+  const [rail, setRail] = useState({ stripWidth: 0, persistent: false });
+  const ticks = useRef(new Map<string, HTMLElement>());
+  const jumping = useRef<number | null>(null);
+  const empty = messages.length === 0 && !streaming;
 
   useEffect(() => {
     const el = scroller.current;
@@ -402,6 +621,9 @@ export function Timeline({
     // something stays put instead of being yanked back down on every token
     const fresh = opened.current !== threadId;
     opened.current = threadId;
+    // a rail jump animates, so a token landing mid-flight would read a position that is still
+    // near the bottom and yank us off the message we just jumped to
+    if (!fresh && jumping.current !== null) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 120;
     if (!fresh && !atBottom) {
       setPinned(false);
@@ -425,11 +647,69 @@ export function Timeline({
     setPinned(true);
   };
 
+  const registerTick = useCallback((id: string, node: HTMLElement | null) => {
+    if (node) ticks.current.set(id, node);
+    else ticks.current.delete(id);
+  }, []);
+
+  const jumpToMessage = useCallback((id: string) => {
+    const el = scroller.current;
+    const node = el?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`);
+    if (!el || !node) return;
+    const top = node.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
+    setPinned(false);
+    // scrollend would be exact, but Safari only grew it recently, so the animation is timed out
+    if (jumping.current !== null) window.clearTimeout(jumping.current);
+    jumping.current = window.setTimeout(() => (jumping.current = null), 700);
+    // the content column's own top padding, so the bubble doesn't land against the edge
+    el.scrollTo({ top: Math.max(0, top - 24), behavior: "smooth" });
+  }, []);
+
+  // scrolling must not re-render the transcript, so the highlight is written onto the tick nodes
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el || railItems.length === 0) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const id = (entry.target as HTMLElement).dataset.messageId;
+          const tick = id === undefined ? undefined : ticks.current.get(id);
+          if (tick) tick.dataset.inView = entry.isIntersecting ? "true" : "false";
+        }
+      },
+      { root: el },
+    );
+    for (const node of el.querySelectorAll("[data-message-id]")) observer.observe(node);
+    return () => observer.disconnect();
+  }, [railItems]);
+
+  // the sidebar, the file tree and the agents panel all change how much gutter is left
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const measure = () => {
+      const width = el.getBoundingClientRect().width;
+      const next = {
+        stripWidth: railStripWidth(width),
+        persistent: railGutter(width) >= RAIL_PERSISTENT_GUTTER,
+      };
+      setRail((current) =>
+        current.stripWidth === next.stripWidth && current.persistent === next.persistent
+          ? current
+          : next,
+      );
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [loaded, empty]);
+
   // "not read yet" and "genuinely empty" would otherwise show the same copy, so a thread
   // that has messages coming just renders nothing until they land instead of claiming it's new
   if (!loaded) return null;
 
-  if (messages.length === 0 && !streaming) {
+  if (empty) {
     return (
       <div className="flex flex-1 items-center justify-center">
         <p className="text-[13px] text-faint">Send a message to start this thread.</p>
@@ -438,38 +718,49 @@ export function Timeline({
   }
 
   return (
-    <div ref={scroller} onScroll={onScroll} className="relative min-h-0 flex-1 overflow-y-auto">
-      {!pinned && (streaming || running || messages.length > 0) ? (
-        <button
-          type="button"
-          onClick={jumpToLatest}
-          className="sticky top-3 left-1/2 z-10 -ml-14 flex w-28 -translate-x-0 items-center gap-1.5 rounded-full border border-border/70 bg-card/95 px-3 py-1 text-[11.5px] text-muted-foreground shadow-md shadow-black/20 backdrop-blur transition hover:text-foreground"
-        >
-          <ChevronIcon className="size-3 rotate-180" />
-          Jump to latest
-        </button>
-      ) : null}
-      <div className="mx-auto flex max-w-3xl flex-col gap-4 px-5 py-6">
-        {rows.map((row) =>
-          "tools" in row ? (
-            <ToolGroup key={row.id} messages={row.tools} />
-          ) : (
-            <Bubble
-              key={row.id}
-              message={row.message}
-              copyable={row.message.role === "user" || copyable.has(row.message.id)}
-              files={files}
-              onRun={onRun}
-              onRewind={onRewind}
-            />
-          ),
-        )}
-        {streaming ? (
-          <StreamingReply text={streaming} files={files} onRun={onRun} />
-        ) : running ? (
-          <Activity phase={phase} />
+    // the rail sits outside the scroller, which is the only way it can stay put while the
+    // transcript scrolls under it
+    <div className="relative flex min-h-0 flex-1">
+      <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
+        {!pinned && (streaming || running || messages.length > 0) ? (
+          <button
+            type="button"
+            onClick={jumpToLatest}
+            className="sticky top-3 left-1/2 z-10 -ml-14 flex w-28 -translate-x-0 items-center gap-1.5 rounded-full border border-border/70 bg-card/95 px-3 py-1 text-[11.5px] text-muted-foreground shadow-md shadow-black/20 backdrop-blur transition hover:text-foreground"
+          >
+            <ChevronIcon className="size-3 rotate-180" />
+            Jump to latest
+          </button>
         ) : null}
+        <div className="mx-auto flex max-w-3xl flex-col gap-4 px-5 py-6">
+          {rows.map((row) =>
+            "tools" in row ? (
+              <ToolGroup key={row.id} messages={row.tools} />
+            ) : (
+              <Bubble
+                key={row.id}
+                message={row.message}
+                copyable={row.message.role === "user" || copyable.has(row.message.id)}
+                files={files}
+                onRun={onRun}
+                onRewind={onRewind}
+              />
+            ),
+          )}
+          {streaming ? (
+            <StreamingReply text={streaming} files={files} onRun={onRun} />
+          ) : running ? (
+            <Activity phase={phase} />
+          ) : null}
+        </div>
       </div>
+      <TurnRail
+        items={railItems}
+        stripWidth={rail.stripWidth}
+        persistent={rail.persistent}
+        onSelect={jumpToMessage}
+        registerTick={registerTick}
+      />
     </div>
   );
 }

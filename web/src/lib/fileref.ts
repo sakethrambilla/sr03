@@ -1,3 +1,7 @@
+// Turning text into file links, against the session's own file list. Three questions: does this
+// run of text name a file in the tree (a path a reply mentions), which import specifiers on this
+// line resolve to one, and what does each imported name point at — the last two being what makes
+// cmd-clicking an import or a symbol in the file view work.
 export interface FileRef {
   path: string;
   line?: number;

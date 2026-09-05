@@ -1,3 +1,5 @@
+// The subagents the current turn spawned, one row each with its tool count, tokens and elapsed
+// time. Server-side these live only in memory, so the panel is empty after a restart.
 import { useEffect, useState } from "react";
 
 import type { Thread, ThreadTask } from "../lib/types.ts";

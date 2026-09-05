@@ -1,3 +1,6 @@
+// The shells behind the terminal panel: one node-pty process per terminal, several per thread.
+// Each keeps a tail of its output so a reattaching client sees what already scrolled past, and
+// output is coalesced into one frame per few milliseconds rather than one per read.
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -81,8 +84,10 @@ export function createSession(threadId: string, cwd: string, cols: number, rows:
   }
 
   const terminalId = randomUUID();
-  const shell = process.env.SHELL ?? "/bin/sh";
-  const term = spawn(shell, ["-l"], {
+  const windows = process.platform === "win32";
+  const shell = windows ? "powershell.exe" : (process.env.SHELL ?? "/bin/sh");
+  // -l makes a POSIX shell read the user's rc files; powershell has no equivalent flag
+  const term = spawn(shell, windows ? [] : ["-l"], {
     cwd,
     cols: Math.max(cols, 2),
     rows: Math.max(rows, 1),

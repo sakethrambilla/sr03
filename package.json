@@ -7,6 +7,8 @@
     "build": "pnpm -C web build",
     "start": "pnpm -C server start",
     "dmg": "pnpm -C desktop install && pnpm -C desktop dmg",
+    "exe": "pnpm -C desktop install && pnpm -C desktop exe",
+    "test": "pnpm -C server test",
     "typecheck": "pnpm -C server typecheck && pnpm -C web typecheck"
   },
   "devDependencies": {

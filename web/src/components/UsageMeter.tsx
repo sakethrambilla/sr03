@@ -1,3 +1,6 @@
+// The composer's usage button and the popover behind it: the session's context ring and cost,
+// the account's plan rate-limit windows, and the process resource sample — which the server only
+// takes while this is open.
 import { useEffect, useState } from "react";
 
 import { sendClientMessage } from "../lib/ws.ts";
@@ -146,19 +149,19 @@ function Resources() {
   );
 }
 
-export function UsageMeter() {
+export function UsageMeter({ showProviderUsage }: { showProviderUsage: boolean }) {
   const usage = useStore((state) => state.usage);
   const refreshUsage = useStore((state) => state.refreshUsage);
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
     if (!open) return;
-    void refreshUsage();
+    if (showProviderUsage) void refreshUsage();
     // sampling the process tree costs a `ps` every couple of seconds, so it runs only while
     // someone is watching it
     sendClientMessage({ type: "resources.watch", on: true });
     return () => sendClientMessage({ type: "resources.watch", on: false });
-  }, [open, refreshUsage]);
+  }, [open, refreshUsage, showProviderUsage]);
 
   const context = usage?.context ?? null;
   const windows = usage?.windows ?? [];
@@ -174,75 +177,83 @@ export function UsageMeter() {
             <Button
               variant="ghost"
               size="icon"
-              aria-label="Context and usage limits"
+              aria-label={showProviderUsage ? "Context and usage limits" : "Resources"}
               className="size-7"
             >
-              <Ring percentage={context?.percentage ?? 0} />
+              <Ring percentage={showProviderUsage ? (context?.percentage ?? 0) : 0} />
             </Button>
           </PopoverTrigger>
         </TooltipTrigger>
         <TooltipContent>
-          {context ? `Context ${context.percentage}% used` : "Context and usage limits"}
+          {showProviderUsage
+            ? context
+              ? `Context ${context.percentage}% used`
+              : "Context and usage limits"
+            : "Resources"}
         </TooltipContent>
       </Tooltip>
       <PopoverContent align="end" side="top" className="w-80">
-        {!context && !windows.length ? (
-          <p className="text-[12px] text-faint">No usage read yet — send a turn.</p>
-        ) : (
-          <>
-            {context ? (
-              <Meter
-                label="Context window"
-                detail={`${tokens(context.used)} / ${tokens(context.max)}`}
-                percentage={context.percentage}
-              />
-            ) : (
-              // an unread context is not an empty one, so it gets no bar to sit at zero
-              <Row label="Context window" value="Not read yet" />
-            )}
-            {windows.length ? (
-              <>
-                <Separator className="my-3" />
-                <div className="mb-2 flex items-baseline justify-between gap-3 text-[11px] text-faint">
-                  <span className="truncate">
-                    Your usage limits
-                    {usage?.plan ? ` · ${usage.plan[0]!.toUpperCase()}${usage.plan.slice(1)}` : ""}
-                  </span>
-                  {read ? <span className="shrink-0">{read}</span> : null}
-                </div>
-                <div className="space-y-2.5">
-                  {windows.map((window) => (
-                    <Meter
-                      key={window.id}
-                      label={window.label}
-                      detail={resets(window.resetsAt)}
-                      percentage={window.utilization}
-                    />
-                  ))}
-                </div>
-              </>
-            ) : null}
-            {credits || cost ? (
-              <>
-                <Separator className="my-3" />
-                <div className="space-y-1.5">
-                  {credits ? (
-                    <Row
-                      label="Usage credits"
-                      value={
-                        credits.limit
-                          ? `${money(credits.spent ?? 0, credits.currency)} / ${money(credits.limit, credits.currency)}`
-                          : `${money(credits.spent ?? 0, credits.currency)} spent`
-                      }
-                    />
-                  ) : null}
-                  {cost ? <Row label="This thread" value={money(cost)} /> : null}
-                </div>
-              </>
-            ) : null}
-          </>
-        )}
-        <Separator className="my-3" />
+        {showProviderUsage ? (
+          !context && !windows.length ? (
+            <p className="text-[12px] text-faint">No usage read yet — send a turn.</p>
+          ) : (
+            <>
+              {context ? (
+                <Meter
+                  label="Context window"
+                  detail={`${tokens(context.used)} / ${tokens(context.max)}`}
+                  percentage={context.percentage}
+                />
+              ) : (
+                // an unread context is not an empty one, so it gets no bar to sit at zero
+                <Row label="Context window" value="Not read yet" />
+              )}
+              {windows.length ? (
+                <>
+                  <Separator className="my-3" />
+                  <div className="mb-2 flex items-baseline justify-between gap-3 text-[11px] text-faint">
+                    <span className="truncate">
+                      Your usage limits
+                      {usage?.plan
+                        ? ` · ${usage.plan[0]!.toUpperCase()}${usage.plan.slice(1)}`
+                        : ""}
+                    </span>
+                    {read ? <span className="shrink-0">{read}</span> : null}
+                  </div>
+                  <div className="space-y-2.5">
+                    {windows.map((window) => (
+                      <Meter
+                        key={window.id}
+                        label={window.label}
+                        detail={resets(window.resetsAt)}
+                        percentage={window.utilization}
+                      />
+                    ))}
+                  </div>
+                </>
+              ) : null}
+              {credits || cost ? (
+                <>
+                  <Separator className="my-3" />
+                  <div className="space-y-1.5">
+                    {credits ? (
+                      <Row
+                        label="Usage credits"
+                        value={
+                          credits.limit
+                            ? `${money(credits.spent ?? 0, credits.currency)} / ${money(credits.limit, credits.currency)}`
+                            : `${money(credits.spent ?? 0, credits.currency)} spent`
+                        }
+                      />
+                    ) : null}
+                    {cost ? <Row label="This thread" value={money(cost)} /> : null}
+                  </div>
+                </>
+              ) : null}
+            </>
+          )
+        ) : null}
+        {showProviderUsage ? <Separator className="my-3" /> : null}
         <div className="mb-2 text-[11px] text-faint">Resources</div>
         <Resources />
       </PopoverContent>

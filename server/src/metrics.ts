@@ -1,9 +1,12 @@
+// The resource meter's sampler: `ps` on a tick, differenced against the previous reading for cpu,
+// and each process in the tree attributed to the thread that owns it — its agent, its terminals,
+// or the leftovers the server spawned for itself. Runs only while a client is watching.
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import { promisify } from "node:util";
 
 import { publish } from "./bus.ts";
-import { liveThreads } from "./claude.ts";
+import { liveThreads } from "./agents/runtime.ts";
 import { threads as threadStore } from "./db.ts";
 import { sessionPids } from "./pty.ts";
 import type { ResourceGroup, Resources } from "./types.ts";

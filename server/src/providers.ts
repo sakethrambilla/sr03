@@ -1,61 +1,34 @@
+// What the settings page shows about each local harness: installation, account, model catalog,
+// and auth commands. Credentials remain owned by the CLIs and are never read or stored here.
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
-import {
-  DEFAULT_EFFORT,
-  DEFAULT_MODEL,
-  DEFAULT_PERMISSION_MODE,
-  EFFORT_LEVELS,
-  listModels,
-  PERMISSION_MODES,
-} from "./models.ts";
-import type { ModelOption } from "./models.ts";
+import { findExecutable } from "./executables.ts";
+import { currentProvider, listModels } from "./models.ts";
+import type { ProviderAccount, ProviderId, ProviderStatus } from "./types.ts";
 
 const exec = promisify(execFile);
+const CLAUDE_SETTING_SOURCES = ["user", "project", "local"];
+const CURSOR_SETTING_SOURCES = ["user", "project"];
 
-// what claude.ts hands the SDK; project and local resolve inside each session folder
-const SETTING_SOURCES = ["user", "project", "local"];
-
-export interface ProviderAccount {
-  email: string | null;
-  organization: string | null;
-  plan: string | null;
-}
-
-export interface ProviderStatus {
-  id: string;
-  label: string;
-  state: "ready" | "signed-out" | "missing";
-  detail: string;
-  version: string | null;
-  binary: string | null;
-  account: ProviderAccount | null;
-  settingSources: string[];
-  models: ModelOption[];
-  defaults: { model: string; permissionMode: string; effort: string };
-  signInHint: string;
-}
-
-// a GUI-launched app inherits a thin PATH, so fall back to where installers actually put it
-const FALLBACK_BINS = [
+const CLAUDE_FALLBACKS = [
   path.join(os.homedir(), ".local/bin/claude"),
   "/opt/homebrew/bin/claude",
   "/usr/local/bin/claude",
 ];
 
-async function findClaude(): Promise<string | null> {
-  const found = await exec("which", ["claude"])
-    .then(({ stdout }) => stdout.trim())
-    .catch(() => "");
-  if (found) return found;
-  for (const candidate of FALLBACK_BINS) {
-    if (await fs.stat(candidate).then(() => true).catch(() => false)) return candidate;
-  }
-  return null;
-}
+const CURSOR_FALLBACKS = [
+  path.join(os.homedir(), ".local/bin/cursor-agent"),
+  path.join(os.homedir(), ".local/bin/agent"),
+  "/opt/homebrew/bin/cursor-agent",
+  "/usr/local/bin/cursor-agent",
+];
+
+export const findClaude = () => findExecutable(["claude"], CLAUDE_FALLBACKS);
+export const findCursor = () => findExecutable(["cursor-agent", "agent"], CURSOR_FALLBACKS);
 
 async function claudeVersion(binary: string): Promise<string | null> {
   const { stdout } = await exec(binary, ["--version"]).catch(() => ({ stdout: "" }));
@@ -69,9 +42,8 @@ const PLANS: Record<string, string> = {
   claude_pro: "Claude Pro",
 };
 
-// ~/.claude.json holds the signed-in profile; the tokens themselves live in the
-// system keychain and are deliberately never read here
-async function readAccount(): Promise<ProviderAccount | null> {
+// ~/.claude.json holds profile metadata; the tokens themselves stay in the system keychain.
+async function readClaudeAccount(): Promise<ProviderAccount | null> {
   const raw = await fs.readFile(path.join(os.homedir(), ".claude.json"), "utf8").catch(() => null);
   if (!raw) return null;
   try {
@@ -90,54 +62,141 @@ async function readAccount(): Promise<ProviderAccount | null> {
   }
 }
 
-
-export async function listProviders(): Promise<ProviderStatus[]> {
+async function claudeStatus(): Promise<ProviderStatus> {
   const binary = await findClaude();
   const [version, account] = await Promise.all([
     binary ? claudeVersion(binary) : Promise.resolve(null),
-    readAccount(),
+    readClaudeAccount(),
   ]);
-
   const state: ProviderStatus["state"] = !binary ? "missing" : account ? "ready" : "signed-out";
-  const detail =
-    state === "missing"
-      ? "Claude Code (`claude`) was not found on PATH."
-      : state === "signed-out"
-        ? "Installed, but no account is signed in yet."
-        : [account?.plan, account?.organization].filter(Boolean).join(" · ") || "Authenticated";
-
-  return [
-    {
-      id: "claude",
-      label: "Claude",
-      state,
-      detail,
-      version,
-      binary,
-      account,
-      settingSources: SETTING_SOURCES,
-      models: await listModels(),
-      defaults: {
-        model: DEFAULT_MODEL,
-        permissionMode: DEFAULT_PERMISSION_MODE,
-        effort: DEFAULT_EFFORT,
-      },
-      // sr03 runs through the Agent SDK, which reuses the CLI's own login
-      signInHint: "Run `claude auth login` in a terminal to sign in.",
-    },
-  ];
+  if (binary) await listModels("claude");
+  return {
+    ...currentProvider("claude"),
+    state,
+    detail:
+      state === "missing"
+        ? "Claude Code (`claude`) was not found on PATH."
+        : state === "signed-out"
+          ? "Installed, but no account is signed in yet."
+          : [account?.plan, account?.organization].filter(Boolean).join(" · ") || "Authenticated",
+    version,
+    binary,
+    account,
+    settingSources: CLAUDE_SETTING_SOURCES,
+    signInHint: "Run this command in a terminal to sign in.",
+    signInCommand: "claude auth login",
+    logoutCommand: "claude auth logout",
+  };
 }
 
-export const PROVIDER_OPTIONS = { permissionModes: PERMISSION_MODES, efforts: EFFORT_LEVELS };
+interface CursorAbout {
+  cliVersion?: unknown;
+  subscriptionTier?: unknown;
+  userEmail?: unknown;
+}
 
-// logout is the CLI's own `auth logout`, so the credentials are cleared the same way
-// the CLI would clear them — this never touches the keychain directly
-export async function logoutProvider(id: string): Promise<{ ok: boolean; output: string }> {
-  if (id !== "claude") throw new Error(`Unknown provider: ${id}`);
-  const binary = await findClaude();
-  if (!binary) throw new Error("Claude Code (`claude`) was not found on PATH");
+interface CursorAuth {
+  status?: unknown;
+  isAuthenticated?: unknown;
+  userInfo?: { email?: unknown };
+}
+
+async function readCursor(binary: string): Promise<{
+  version: string | null;
+  account: ProviderAccount | null;
+}> {
+  const [about, status] = await Promise.all([
+    exec(binary, ["about", "--format", "json"], {
+      timeout: 8_000,
+      maxBuffer: 1 << 20,
+    }).catch(() => null),
+    exec(binary, ["status", "--format", "json"], {
+      timeout: 8_000,
+      maxBuffer: 1 << 20,
+    }).catch(() => null),
+  ]);
+
+  let details: CursorAbout = {};
+  let auth: CursorAuth = {};
   try {
-    const { stdout, stderr } = await exec(binary, ["auth", "logout"]);
+    details = about ? (JSON.parse(about.stdout) as CursorAbout) : {};
+  } catch {
+    details = {};
+  }
+  try {
+    auth = status ? (JSON.parse(status.stdout) as CursorAuth) : {};
+  } catch {
+    auth = {};
+  }
+
+  const authenticated = auth.isAuthenticated === true || auth.status === "authenticated";
+  const email =
+    typeof details.userEmail === "string" && details.userEmail.trim()
+      ? details.userEmail
+      : typeof auth.userInfo?.email === "string"
+        ? auth.userInfo.email
+        : null;
+  return {
+    version: typeof details.cliVersion === "string" ? details.cliVersion : null,
+    account:
+      authenticated || email
+        ? {
+            email,
+            organization: null,
+            plan:
+              typeof details.subscriptionTier === "string"
+                ? `Cursor ${details.subscriptionTier}`
+                : null,
+          }
+        : null,
+  };
+}
+
+async function cursorStatus(): Promise<ProviderStatus> {
+  const binary = await findCursor();
+  const details = binary ? await readCursor(binary) : { version: null, account: null };
+  const state: ProviderStatus["state"] = !binary
+    ? "missing"
+    : details.account
+      ? "ready"
+      : "signed-out";
+  if (binary) await listModels("cursor");
+  return {
+    ...currentProvider("cursor"),
+    state,
+    detail:
+      state === "missing"
+        ? "Cursor Agent (`cursor-agent`) was not found on PATH."
+        : state === "signed-out"
+          ? "Installed, but no Cursor account is signed in yet."
+          : details.account?.plan ?? "Authenticated",
+    version: details.version,
+    binary,
+    account: details.account,
+    settingSources: CURSOR_SETTING_SOURCES,
+    signInHint: "Run this command in a terminal to sign in.",
+    signInCommand: "cursor-agent login",
+    logoutCommand: "cursor-agent logout",
+  };
+}
+
+export async function listProviders(): Promise<ProviderStatus[]> {
+  return Promise.all([claudeStatus(), cursorStatus()]);
+}
+
+export async function providerStatus(providerId: ProviderId): Promise<ProviderStatus> {
+  return providerId === "claude" ? claudeStatus() : cursorStatus();
+}
+
+// Logout is delegated to the selected CLI so it clears the same credentials as its own client.
+export async function logoutProvider(id: string): Promise<{ ok: boolean; output: string }> {
+  if (id !== "claude" && id !== "cursor") throw new Error(`Unknown provider: ${id}`);
+  const providerId: ProviderId = id;
+  const binary = providerId === "claude" ? await findClaude() : await findCursor();
+  if (!binary) throw new Error(`${currentProvider(providerId).label} was not found on PATH`);
+  const args = providerId === "claude" ? ["auth", "logout"] : ["logout"];
+  try {
+    const { stdout, stderr } = await exec(binary, args);
     return { ok: true, output: (stdout || stderr).trim() };
   } catch (error) {
     const failure = error as { stdout?: string; stderr?: string };
