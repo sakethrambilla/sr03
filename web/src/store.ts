@@ -14,6 +14,7 @@ import type {
   Effort,
   GitSnapshot,
   Message,
+  ModelOption,
   PendingApproval,
   PendingQuestion,
   PermissionMode,
@@ -205,7 +206,7 @@ function tuneForModel(
   model: string,
   effort: Effort,
 ): { effort: Effort; fast: boolean } {
-  const option = provider.models.find((entry) => entry.slug === model);
+  const option = findModel(provider.models, model);
   const levels = option?.effortLevels ?? provider.effortLevels;
   return {
     effort: levels.some((level) => level.value === effort)
@@ -213,6 +214,22 @@ function tuneForModel(
       : (option?.defaultEffort ?? provider.defaults.effort),
     fast: false,
   };
+}
+
+// mirrors the server's findModel: Cursor stores parameterized ACP ids (`grok-4.6[effort=high]`),
+// so a stored model only matches its catalog entry once the parameters are stripped
+const baseId = (id: string): string => (id.includes("[") ? id.slice(0, id.indexOf("[")) : id);
+
+export function findModel(models: ModelOption[], value: string): ModelOption | null {
+  if (!value) return null;
+  const wanted = value === "auto" ? "default" : baseId(value);
+  return (
+    models.find((model) => {
+      if (model.slug === value || model.resolved === value) return true;
+      const slug = model.slug === "auto" ? "default" : model.slug;
+      return slug === wanted || baseId(model.resolved ?? model.slug) === wanted;
+    }) ?? null
+  );
 }
 
 export function commandKey(providerId: ProviderId, cwd: string): string {

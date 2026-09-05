@@ -28,7 +28,6 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
-  Gauge,
   GitBranch,
   ListFilter,
   Maximize2,
@@ -249,7 +248,7 @@ const ICONS = {
   CursorIcon: MousePointer2,
   StopIcon: Square,
   RewindIcon: Undo2,
-  FastIcon: Gauge,
+  FastIcon: Zap,
   ZedIcon: Zap,
 } as const;
 

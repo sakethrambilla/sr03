@@ -17,7 +17,7 @@ import type {
   SlashCommand,
   Thread,
 } from "../lib/types.ts";
-import { commandKey, EMPTY_PROVIDER, useStore } from "../store.ts";
+import { commandKey, EMPTY_PROVIDER, findModel, useStore } from "../store.ts";
 import { UsageMeter } from "./UsageMeter.tsx";
 import { Button } from "@/components/ui/button";
 import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -191,7 +191,7 @@ function ModelPicker({
   onPick: (model: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const selected = models.find((option) => option.slug === model || option.resolved === model);
+  const selected = findModel(models, model);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -227,7 +227,7 @@ function ModelPicker({
                     <span className="block truncate text-[11px] text-faint">{option.hint}</span>
                   ) : null}
                 </span>
-                {option.slug === model || option.resolved === model ? (
+                {option === selected ? (
                   <CheckIcon className="text-primary" />
                 ) : null}
               </CommandItem>
@@ -357,7 +357,7 @@ export function Composer({
     (state) => state.providers.find((entry) => entry.id === providerId) ?? EMPTY_PROVIDER,
   );
   const { models, permissionModes, capabilities } = provider;
-  const selectedModel = models.find((entry) => entry.slug === model);
+  const selectedModel = findModel(models, model);
   // Cursor scopes both knobs to the model — Kimi K3 offers low/high/max and nothing between
   const effortLevels = selectedModel?.effortLevels ?? provider.effortLevels;
   const fastOption = selectedModel?.fast;
@@ -708,7 +708,8 @@ export function Composer({
                   onPressedChange={onFast}
                   disabled={Boolean(running && !capabilities.liveFastSwitch)}
                   aria-label="Fast mode"
-                  className="size-7 min-w-7 text-faint data-[state=on]:text-primary"
+                  // TooltipTrigger asChild overwrites data-state, so the on-state must come from `fast`
+                  className={cn("size-7 min-w-7", fast ? "text-git-added" : "text-faint")}
                 >
                   <FastIcon />
                 </Toggle>
