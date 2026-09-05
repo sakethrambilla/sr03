@@ -206,7 +206,7 @@ export function CopyButton({
           () => undefined,
         );
       }}
-      className={cn("size-6 text-faint hover:text-foreground", className)}
+      className={cn("size-5 text-faint hover:text-foreground", className)}
     >
       {copied ? <CheckIcon className="size-3 text-git-added" /> : <CopyIcon className="size-3" />}
     </Button>

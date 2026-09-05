@@ -189,7 +189,7 @@ const ToolGroup = memo(function ToolGroup({ messages }: { messages: Message[] })
 // the row is always laid out so nothing shifts when it appears, and only its ink fades in
 function MessageActions({ children }: { children: ReactNode }) {
   return (
-    <div className="flex h-6 items-center opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+    <div className="-mt-0.5 flex h-5 items-center opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
       {children}
     </div>
   );
