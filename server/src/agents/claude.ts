@@ -716,6 +716,9 @@ async function open(
         session.abort.abort();
       }
     },
+    async stopTask(taskId) {
+      await session.query.stopTask(taskId);
+    },
     async respondToApproval(id, decision) {
       const pending = session.approvals.get(id);
       if (!pending) return false;

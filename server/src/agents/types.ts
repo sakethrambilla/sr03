@@ -52,6 +52,7 @@ export interface AgentSettingsPatch {
 export interface AgentSession {
   send(text: string): Promise<void>;
   interrupt(): Promise<void>;
+  stopTask?(taskId: string): Promise<void>;
   respondToApproval(id: string, decision: ApprovalDecision): Promise<boolean>;
   respondToQuestion(id: string, answers: Record<string, string[]>): Promise<boolean>;
   applySettings(patch: AgentSettingsPatch): Promise<"applied" | "restart">;

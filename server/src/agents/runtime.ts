@@ -344,6 +344,19 @@ export function pendingQuestion(threadId: string, questionId: string): PendingQu
   return sessions.get(threadId)?.questions.get(questionId) ?? null;
 }
 
+export async function stopTask(
+  threadId: string,
+  taskId: string,
+): Promise<"ok" | "unowned" | "unavailable" | "unsupported"> {
+  const session = sessions.get(threadId);
+  if (!session || !threadStore.owns(threadId)) return "unowned";
+  const handle = session.handle;
+  if (!handle) return "unavailable";
+  if (!handle.stopTask) return "unsupported";
+  await handle.stopTask(taskId);
+  return "ok";
+}
+
 export async function interrupt(threadId: string): Promise<boolean> {
   const session = sessions.get(threadId);
   if (!session || !threadStore.owns(threadId)) {

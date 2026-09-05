@@ -1017,6 +1017,22 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
   },
   {
     method: "POST",
+    pattern: /^\/api\/threads\/([^/]+)\/tasks\/([^/]+)\/stop$/,
+    handler: async ({ params }) => {
+      const thread = requireThread(params[0]!);
+      const outcome = await agents.stopTask(thread.id, params[1]!);
+      if (outcome === "unowned") {
+        throw new HttpError(409, "This server does not own the running session");
+      }
+      if (outcome === "unavailable") throw new HttpError(409, "This session is still starting");
+      if (outcome === "unsupported") {
+        throw new HttpError(501, "This provider cannot stop a single subagent");
+      }
+      return { ok: true };
+    },
+  },
+  {
+    method: "POST",
     pattern: /^\/api\/threads\/([^/]+)\/approvals\/([^/]+)$/,
     handler: async ({ params, request }) => {
       const thread = requireThread(params[0]!);
