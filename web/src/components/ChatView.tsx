@@ -20,6 +20,7 @@ import { SidebarToggle } from "./Sidebar.tsx";
 import { Separator } from "@/components/ui/separator";
 import {
   AgentIcon,
+  BranchIcon,
   ChangesIcon,
   Dialog,
   ChevronIcon,
@@ -31,8 +32,10 @@ import {
   MessageIcon,
   StatusDot,
   TerminalIcon,
+  WorktreeIcon,
   ZedIcon,
   cn,
+  usePersistedIdState,
   usePersistedState,
 } from "./ui.tsx";
 import {
@@ -48,6 +51,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 
 const NO_TASKS: ThreadTask[] = [];
 const NO_FILES: string[] = [];
+
+// today's h-64; a thread that has never been sized opens here, and double-clicking the sash
+// comes back to it
+const TERMINAL_HEIGHT = 256;
 
 // xterm is ~490 KB of the main bundle for a panel most sessions never open — load it only
 // once someone actually asks for a terminal
@@ -99,6 +106,26 @@ function AppIcon({ id }: { id: string }) {
       onError={() => setFailed(true)}
       className="size-4 shrink-0"
     />
+  );
+}
+
+// the worktree/branch icon pair matches the file tree's footer, so the two never disagree
+function BranchChip({ branch, isWorktree }: { branch: string; isWorktree: boolean }) {
+  return (
+    <span
+      title={isWorktree ? `Worktree on ${branch}` : `On ${branch}`}
+      className={cn(
+        "flex min-w-0 max-w-48 items-center gap-1 rounded-md border border-border/70 px-1.5 py-0.5 font-mono text-[10.5px]",
+        isWorktree ? "text-primary" : "text-faint",
+      )}
+    >
+      {isWorktree ? (
+        <WorktreeIcon className="size-2.5 shrink-0" />
+      ) : (
+        <BranchIcon className="size-2.5 shrink-0" />
+      )}
+      <span className="truncate">{branch}</span>
+    </span>
   );
 }
 
@@ -266,7 +293,23 @@ export function ChatView({ thread }: { thread: Thread }) {
   const loadFiles = useStore((state) => state.loadFiles);
   const fsTick = useStore((state) => state.fsVersionByThread[thread.id] ?? 0);
   const [treeOpen, setTreeOpen] = usePersistedState<boolean>("file-tree", false);
-  const [terminalOpen, setTerminalOpen] = usePersistedState<boolean>("terminal", false);
+  // the terminal panel is per thread: a shared flag would open it — and spawn a shell — in
+  // every session you merely pass through
+  const [terminalOpen, setTerminalOpen] = usePersistedIdState<boolean>(
+    "terminal.open",
+    thread.id,
+    false,
+  );
+  const [terminalHeight, setTerminalHeight] = usePersistedIdState<number>(
+    "terminal.height",
+    thread.id,
+    TERMINAL_HEIGHT,
+  );
+  const [terminalMax, setTerminalMax] = usePersistedIdState<boolean>(
+    "terminal.max",
+    thread.id,
+    false,
+  );
   const [agentsOpen, setAgentsOpen] = usePersistedState<boolean>("agents", false);
   const [openFiles, setOpenFiles] = useState<string[]>([]);
   const [active, setActive] = useState<string | null>(null);
@@ -278,6 +321,9 @@ export function ChatView({ thread }: { thread: Thread }) {
   const [pendingClose, setPendingClose] = useState<string | null>(null);
   const [palette, setPalette] = useState<PaletteMode | null>(null);
   const [fsVersion, setFsVersion] = useState(0);
+  // seeded from the stored value so the chip paints on the first frame, then kept live: the
+  // column is written once at creation and any checkout since would leave it stale
+  const [branch, setBranch] = useState<string | null>(thread.branch);
 
   // each open FileView registers its own save, since only it holds the edited text
   const savers = useRef(new Map<string, () => Promise<boolean>>());
@@ -296,12 +342,25 @@ export function ChatView({ thread }: { thread: Thread }) {
     });
   }, []);
 
+  // a maximized terminal covers the editor, so anything that needs the editor gives it back.
+  // through a ref because openFile must stay stable — every FileView holds it via links
+  const restorePanel = useRef(() => {});
+  restorePanel.current = () => {
+    if (terminalMax) setTerminalMax(false);
+  };
+
   const openFile = useCallback((path: string, line?: number) => {
     setOpenFiles((files) => (files.includes(path) ? files : [...files, path]));
     setActive(path);
+    restorePanel.current();
     // the key is what makes clicking the same reference twice jump again
     if (line) setReveal((current) => ({ path, line, key: (current?.key ?? 0) + 1 }));
   }, []);
+
+  const selectTab = (path: string | null) => {
+    setActive(path);
+    restorePanel.current();
+  };
 
   // closing the active tab lands on its neighbour, falling back to the chat
   const closeFile = (path: string) => {
@@ -353,6 +412,20 @@ export function ChatView({ thread }: { thread: Thread }) {
   useEffect(() => {
     void loadFiles(thread.id, thread.cwd);
   }, [loadFiles, thread.id, thread.cwd, fsTick, fsVersion]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setBranch(thread.branch);
+    api
+      .threadGit(thread.id)
+      .then((info) => {
+        if (!cancelled) setBranch(info.branch);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [thread.id, thread.branch, fsTick, fsVersion]);
 
   // the panel owns the terminals, so it is left to decide which one a command lands in
   const runCommand = useCallback(
@@ -477,9 +550,10 @@ export function ChatView({ thread }: { thread: Thread }) {
           <h1 className="min-w-0 truncate text-[13.5px] font-medium" title={thread.cwd}>
             {thread.title}
           </h1>
-          <span className="rounded-md border border-border/70 px-1.5 py-0.5 text-[10.5px] text-faint">
+          <span className="shrink-0 rounded-md border border-border/70 px-1.5 py-0.5 text-[10.5px] text-faint">
             {provider.label}
           </span>
+          {branch ? <BranchChip branch={branch} isWorktree={thread.isWorktree} /> : null}
           <div className="flex-1" />
           {/* the toggles are icon buttons with padding of their own, so they sit tighter than the header gap */}
           <div className="flex items-center gap-1">
@@ -498,53 +572,71 @@ export function ChatView({ thread }: { thread: Thread }) {
           </div>
         </header>
 
-        {openFiles.length > 0 ? (
-          <EditorTabs
-            title={thread.title}
-            files={openFiles}
-            active={active}
-            dirty={dirty}
-            onSelect={setActive}
-            onClose={requestClose}
-          />
-        ) : null}
-
-        {/* every open file stays mounted so an unsaved draft survives a tab switch */}
-        {openFiles.map((path) => (
-          <div
-            key={path}
-            className={cn("flex min-h-0 flex-1 flex-col", path === active ? "" : "hidden")}
-          >
-            <FileView
-              thread={thread}
-              path={path}
-              active={path === active}
-              onClose={closeFileTab}
-              onDirtyChange={markDirty}
-              onSaved={savedFile}
-              registerSave={registerSave}
-              reveal={reveal?.path === path ? reveal : null}
-              links={links}
+        {/* a maximized terminal hides all of this rather than unmounting it, so scroll
+            positions, unsaved edits and the composer's draft survive the round trip */}
+        <div
+          className={cn(
+            "flex min-h-0 flex-1 flex-col",
+            terminalOpen && terminalMax && "hidden",
+          )}
+        >
+          {openFiles.length > 0 ? (
+            <EditorTabs
+              title={thread.title}
+              files={openFiles}
+              active={active}
+              dirty={dirty}
+              onSelect={selectTab}
+              onClose={requestClose}
             />
-          </div>
-        ))}
+          ) : null}
 
-        {active === null ? (
-          <>
-            <Timeline
-              threadId={thread.id}
-              running={thread.status === "running"}
-              files={links}
-              onRun={runCommand}
-              onRewind={setPendingRewind}
-            />
-            <ThreadComposer thread={thread} restore={restore} />
-          </>
-        ) : null}
+          {/* every open file stays mounted so an unsaved draft survives a tab switch */}
+          {openFiles.map((path) => (
+            <div
+              key={path}
+              className={cn("flex min-h-0 flex-1 flex-col", path === active ? "" : "hidden")}
+            >
+              <FileView
+                thread={thread}
+                path={path}
+                active={path === active}
+                onClose={closeFileTab}
+                onDirtyChange={markDirty}
+                onSaved={savedFile}
+                registerSave={registerSave}
+                reveal={reveal?.path === path ? reveal : null}
+                links={links}
+              />
+            </div>
+          ))}
+
+          {active === null ? (
+            <>
+              <Timeline
+                threadId={thread.id}
+                running={thread.status === "running"}
+                files={links}
+                onRun={runCommand}
+                onRewind={setPendingRewind}
+              />
+              <ThreadComposer thread={thread} restore={restore} />
+            </>
+          ) : null}
+        </div>
 
         {terminalOpen ? (
           <Suspense fallback={null}>
-            <TerminalPanel thread={thread} command={command} onClose={() => setTerminalOpen(false)} />
+            <TerminalPanel
+              thread={thread}
+              command={command}
+              height={terminalHeight}
+              defaultHeight={TERMINAL_HEIGHT}
+              maximized={terminalMax}
+              onHeightChange={setTerminalHeight}
+              onToggleMaximize={() => setTerminalMax(!terminalMax)}
+              onClose={() => setTerminalOpen(false)}
+            />
           </Suspense>
         ) : null}
       </main>
