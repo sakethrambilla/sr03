@@ -24,6 +24,7 @@ import {
   renameWorkspaceEntry,
   revealWorkspaceEntry,
   saveUpload,
+  scanWorkspaceText,
   trashWorkspaceEntry,
   walkWorkspaceFiles,
   writeWorkspaceFile,
@@ -128,6 +129,10 @@ function requireProject(id: string) {
   if (!project) throw new HttpError(404, "Project not found");
   return project;
 }
+
+// roughly a screenful of grep hits per page in VS Code; past this the palette stops being
+// something you read and starts being something you scroll
+const SEARCH_LIMIT = 200;
 
 type Handler = (context: {
   request: IncomingMessage;
@@ -519,6 +524,19 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
       const thread = requireThread(params[0]!);
       const files = (await git.listedFiles(thread.cwd)) ?? (await walkWorkspaceFiles(thread.cwd));
       return { files };
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/threads\/([^/]+)\/search$/,
+    handler: async ({ params, url }) => {
+      const thread = requireThread(params[0]!);
+      const query = url.searchParams.get("q") ?? "";
+      if (!query) return { matches: [] };
+      const matches =
+        (await git.searchText(thread.cwd, query, SEARCH_LIMIT)) ??
+        (await scanWorkspaceText(thread.cwd, query, SEARCH_LIMIT));
+      return { matches };
     },
   },
   {

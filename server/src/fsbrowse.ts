@@ -1,7 +1,8 @@
 // Filesystem work that isn't git: the folder picker's directory listing and the native macOS
 // dialog behind it, dropped-file uploads, the session folder's own tree — read, write, create,
-// rename, trash, reveal — and the "open in Cursor/VS Code/Zed/Finder" app list. Every path that
-// names something inside a session goes through safeJoin, which refuses to leave the folder.
+// rename, trash, reveal — the "open in Cursor/VS Code/Zed/Finder" app list, and the file walk and
+// text scan a folder falls back to when git can't index it. Every path that names something inside
+// a session goes through safeJoin, which refuses to leave the folder.
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +10,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import { UPLOADS_DIR } from "./config.ts";
+import { MATCH_TEXT_LIMIT } from "./git.ts";
+import type { TextMatch } from "./git.ts";
 
 const exec = promisify(execFile);
 
@@ -368,4 +371,33 @@ export async function walkWorkspaceFiles(root: string): Promise<string[]> {
     }
   }
   return files;
+}
+
+// the other half of the fallback: a folder git can't grep gets scanned here instead, over the
+// same list walkWorkspaceFiles produced
+export async function scanWorkspaceText(
+  root: string,
+  query: string,
+  limit: number,
+): Promise<TextMatch[]> {
+  // smart case, matching searchText: an all-lowercase query lowercases the line too
+  const insensitive = query === query.toLowerCase();
+  const matches: TextMatch[] = [];
+
+  for (const rel of await walkWorkspaceFiles(root)) {
+    if (matches.length >= limit) break;
+    const target = path.join(root, rel);
+    const stats = await fs.stat(target).catch(() => null);
+    if (!stats?.isFile() || stats.size > FILE_LIMIT) continue;
+    const bytes = await fs.readFile(target).catch(() => null);
+    if (!bytes || bytes.includes(0)) continue;
+
+    const lines = bytes.toString("utf8").split("\n");
+    for (let index = 0; index < lines.length && matches.length < limit; index += 1) {
+      const text = lines[index]!;
+      if (!(insensitive ? text.toLowerCase() : text).includes(query)) continue;
+      matches.push({ path: rel, line: index + 1, text: text.slice(0, MATCH_TEXT_LIMIT) });
+    }
+  }
+  return matches;
 }

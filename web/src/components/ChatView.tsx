@@ -13,6 +13,8 @@ import { AgentsPanel } from "./AgentsPanel.tsx";
 import { ThreadComposer } from "./Composer.tsx";
 import { FileTree } from "./FileTree.tsx";
 import { FileView } from "./FileView.tsx";
+import { SearchPalette } from "./SearchPalette.tsx";
+import type { PaletteMode } from "./SearchPalette.tsx";
 import { Timeline } from "./Timeline.tsx";
 import { SidebarToggle } from "./Sidebar.tsx";
 import { Separator } from "@/components/ui/separator";
@@ -271,6 +273,7 @@ export function ChatView({ thread }: { thread: Thread }) {
   const [pendingRewind, setPendingRewind] = useState<Message | null>(null);
   const [dirty, setDirty] = useState<Set<string>>(new Set());
   const [pendingClose, setPendingClose] = useState<string | null>(null);
+  const [palette, setPalette] = useState<PaletteMode | null>(null);
   const [fsVersion, setFsVersion] = useState(0);
 
   // each open FileView registers its own save, since only it holds the edited text
@@ -427,6 +430,17 @@ export function ChatView({ thread }: { thread: Thread }) {
         setTerminalOpen(!terminalOpen);
         return;
       }
+      // a browser tab would print instead, so this one is taken back by hand
+      if (key === "p" && !event.shiftKey) {
+        event.preventDefault();
+        setPalette("files");
+        return;
+      }
+      if (key === "f" && event.shiftKey) {
+        event.preventDefault();
+        setPalette("text");
+        return;
+      }
       // the chat tab is pinned, so cmd+w only ever closes a file
       if (key === "w" && !event.shiftKey) {
         event.preventDefault();
@@ -536,6 +550,16 @@ export function ChatView({ thread }: { thread: Thread }) {
           onDeleted={deleted}
           refreshToken={fsVersion}
           onClose={() => setTreeOpen(false)}
+        />
+      ) : null}
+
+      {palette ? (
+        <SearchPalette
+          thread={thread}
+          files={workspace}
+          mode={palette}
+          onOpenFile={openFile}
+          onClose={() => setPalette(null)}
         />
       ) : null}
 
