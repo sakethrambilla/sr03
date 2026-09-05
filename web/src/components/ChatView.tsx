@@ -132,7 +132,7 @@ function BranchChip({ branch, isWorktree }: { branch: string; isWorktree: boolea
 function OpenMenu({ thread }: { thread: Thread }) {
   const apps = useStore((state) => state.apps);
   const setError = useStore((state) => state.setError);
-  const [preferred, setPreferred] = usePersistedState<string>("open-app", "");
+  const [preferred, setPreferred] = usePersistedState<string>("open-app", "vscode");
 
   const primary = apps.find((app) => app.id === preferred) ?? apps[0] ?? null;
 
