@@ -20,6 +20,7 @@ import { SidebarToggle } from "./Sidebar.tsx";
 import { Separator } from "@/components/ui/separator";
 import {
   AgentIcon,
+  BranchIcon,
   ChangesIcon,
   Dialog,
   ChevronIcon,
@@ -31,6 +32,7 @@ import {
   MessageIcon,
   StatusDot,
   TerminalIcon,
+  WorktreeIcon,
   ZedIcon,
   cn,
   usePersistedState,
@@ -99,6 +101,26 @@ function AppIcon({ id }: { id: string }) {
       onError={() => setFailed(true)}
       className="size-4 shrink-0"
     />
+  );
+}
+
+// the worktree/branch icon pair matches the file tree's footer, so the two never disagree
+function BranchChip({ branch, isWorktree }: { branch: string; isWorktree: boolean }) {
+  return (
+    <span
+      title={isWorktree ? `Worktree on ${branch}` : `On ${branch}`}
+      className={cn(
+        "flex min-w-0 max-w-48 items-center gap-1 rounded-md border border-border/70 px-1.5 py-0.5 font-mono text-[10.5px]",
+        isWorktree ? "text-primary" : "text-faint",
+      )}
+    >
+      {isWorktree ? (
+        <WorktreeIcon className="size-2.5 shrink-0" />
+      ) : (
+        <BranchIcon className="size-2.5 shrink-0" />
+      )}
+      <span className="truncate">{branch}</span>
+    </span>
   );
 }
 
@@ -278,6 +300,9 @@ export function ChatView({ thread }: { thread: Thread }) {
   const [pendingClose, setPendingClose] = useState<string | null>(null);
   const [palette, setPalette] = useState<PaletteMode | null>(null);
   const [fsVersion, setFsVersion] = useState(0);
+  // seeded from the stored value so the chip paints on the first frame, then kept live: the
+  // column is written once at creation and any checkout since would leave it stale
+  const [branch, setBranch] = useState<string | null>(thread.branch);
 
   // each open FileView registers its own save, since only it holds the edited text
   const savers = useRef(new Map<string, () => Promise<boolean>>());
@@ -353,6 +378,20 @@ export function ChatView({ thread }: { thread: Thread }) {
   useEffect(() => {
     void loadFiles(thread.id, thread.cwd);
   }, [loadFiles, thread.id, thread.cwd, fsTick, fsVersion]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setBranch(thread.branch);
+    api
+      .threadGit(thread.id)
+      .then((info) => {
+        if (!cancelled) setBranch(info.branch);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [thread.id, thread.branch, fsTick, fsVersion]);
 
   // the panel owns the terminals, so it is left to decide which one a command lands in
   const runCommand = useCallback(
@@ -477,9 +516,10 @@ export function ChatView({ thread }: { thread: Thread }) {
           <h1 className="min-w-0 truncate text-[13.5px] font-medium" title={thread.cwd}>
             {thread.title}
           </h1>
-          <span className="rounded-md border border-border/70 px-1.5 py-0.5 text-[10.5px] text-faint">
+          <span className="shrink-0 rounded-md border border-border/70 px-1.5 py-0.5 text-[10.5px] text-faint">
             {provider.label}
           </span>
+          {branch ? <BranchChip branch={branch} isWorktree={thread.isWorktree} /> : null}
           <div className="flex-1" />
           {/* the toggles are icon buttons with padding of their own, so they sit tighter than the header gap */}
           <div className="flex items-center gap-1">
