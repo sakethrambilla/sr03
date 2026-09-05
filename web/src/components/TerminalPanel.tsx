@@ -2,6 +2,7 @@
 // than through the store, since a keystroke must not re-render the app. Lazily imported by
 // ChatView — xterm is ~490 KB, for a panel most sessions never open.
 import { useEffect, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
@@ -10,7 +11,15 @@ import type { Thread } from "../lib/types.ts";
 import { onPtyEvent, sendClientMessage } from "../lib/ws.ts";
 import { useStore } from "../store.ts";
 import { Button } from "@/components/ui/button";
-import { CloseIcon, PlusIcon, TerminalIcon, cn } from "./ui.tsx";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { CloseIcon, MaximizeIcon, PlusIcon, RestoreIcon, TerminalIcon, cn } from "./ui.tsx";
+
+// the panel keeps a few rows visible however hard you drag. VS Code's equivalent floor is 77px
+// for a panel with no tab strip of its own
+const MIN_HEIGHT = 120;
+// and it always leaves this much of the session above it, measured from <main>: the 60px header
+// plus the composer's 107px resting height plus a sliver of transcript
+const MIN_CONTENT = 240;
 
 // xterm needs a literal color, and canvas normalises any CSS color the browser understands —
 // so the oklch theme tokens can drive the terminal without being duplicated as hex
@@ -85,10 +94,15 @@ function TerminalView({
       sendClientMessage({ type: "pty.input", threadId, terminalId, data }),
     );
 
-    // a hidden terminal measures as zero, so only the visible one may refit
+    // a hidden terminal measures as zero, so only the visible one may refit. dragging the
+    // panel fires this per pixel, where only every fifteenth or so changes the row count
+    const sent = { cols: 0, rows: 0 };
     const observer = new ResizeObserver(() => {
       if (container.offsetParent === null) return;
       fit.fit();
+      if (term.cols === sent.cols && term.rows === sent.rows) return;
+      sent.cols = term.cols;
+      sent.rows = term.rows;
       sendClientMessage({ type: "pty.resize", threadId, terminalId, cols: term.cols, rows: term.rows });
     });
     observer.observe(container);
@@ -135,13 +149,24 @@ function TerminalView({
 export function TerminalPanel({
   thread,
   command,
+  height,
+  defaultHeight,
+  maximized,
+  onHeightChange,
+  onToggleMaximize,
   onClose,
 }: {
   thread: Thread;
   command: { text: string; key: number } | null;
+  height: number;
+  defaultHeight: number;
+  maximized: boolean;
+  onHeightChange: (height: number) => void;
+  onToggleMaximize: () => void;
   onClose: () => void;
 }) {
   const connected = useStore((state) => state.connected);
+  const section = useRef<HTMLElement>(null);
   // ids and the active one move together, so they share a single updater
   const [tabs, setTabs] = useState<{ ids: string[]; active: string | null }>({ ids: [], active: null });
   const [ready, setReady] = useState(false);
@@ -217,8 +242,58 @@ export function TerminalPanel({
     if (ready && spawned.current && ids.length === 0) onClose();
   }, [ready, ids.length]);
 
+  // the drag writes the height straight to the element and only commits on release: routing
+  // every pointer move through React would re-render the transcript, the composer and every
+  // open file at pointer rate. xterm still refits live, off its own ResizeObserver
+  const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const el = section.current;
+    const parent = el?.parentElement;
+    if (!el || !parent) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+
+    const startY = event.clientY;
+    const startHeight = el.getBoundingClientRect().height;
+    const ceiling = Math.max(parent.getBoundingClientRect().height - MIN_CONTENT, MIN_HEIGHT);
+    let settled = startHeight;
+
+    const move = (moved: PointerEvent) => {
+      settled = Math.min(Math.max(startHeight - (moved.clientY - startY), MIN_HEIGHT), ceiling);
+      el.style.height = `${settled}px`;
+    };
+    const done = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", done);
+      window.removeEventListener("pointercancel", done);
+      onHeightChange(settled);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", done);
+    // a cancelled pointer would otherwise leave the move listener resizing forever
+    window.addEventListener("pointercancel", done);
+  };
+
   return (
-    <section className="flex h-64 shrink-0 flex-col border-t border-border/60 bg-card">
+    <section
+      ref={section}
+      // the stored height came from whatever window it was dragged in, so a smaller one now
+      // must still leave the transcript something
+      style={maximized ? undefined : { height: `min(${height}px, calc(100% - ${MIN_CONTENT}px))` }}
+      className={cn(
+        "relative flex flex-col border-t border-border/60 bg-card",
+        maximized ? "min-h-0 flex-1" : "shrink-0",
+      )}
+    >
+      {maximized ? null : (
+        <div
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize terminal panel"
+          onPointerDown={startResize}
+          onDoubleClick={() => onHeightChange(defaultHeight)}
+          className="absolute inset-x-0 -top-px z-20 h-1 cursor-ns-resize transition-colors delay-150 hover:bg-primary/70"
+        />
+      )}
       <header className="flex items-center gap-1 border-b border-border/60 px-3 py-1.5">
         <TerminalIcon className="size-3.5 shrink-0 text-faint" />
         <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
@@ -261,6 +336,18 @@ export function TerminalPanel({
         <span className="min-w-0 shrink truncate font-mono text-[10.5px] text-faint">
           {thread.cwd.replace(/^\/Users\/[^/]+/, "~")}
         </span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              onClick={onToggleMaximize}
+              aria-label={maximized ? "Restore terminal panel" : "Maximize terminal panel"}
+            >
+              {maximized ? <RestoreIcon /> : <MaximizeIcon />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{maximized ? "Restore" : "Maximize"}</TooltipContent>
+        </Tooltip>
         <Button variant="ghost" onClick={onClose} aria-label="Hide terminal panel">
           <CloseIcon />
         </Button>

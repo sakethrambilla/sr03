@@ -3,7 +3,7 @@
 // place — usePersistedState for per-view preferences, and the file-type icon map. Restyling
 // belongs here rather than in components/ui/*, which is generated.
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowUp,
   Bot,
@@ -30,8 +30,10 @@ import {
   FolderPlus,
   GitBranch,
   ListFilter,
+  Maximize2,
   MessageSquare,
   Mic,
+  Minimize2,
   MousePointer2,
   PanelLeft,
   Pencil,
@@ -239,6 +241,8 @@ const ICONS = {
   NewFolderIcon: FolderPlus,
   CollapseIcon: ChevronsDownUp,
   ExpandIcon: ChevronsUpDown,
+  MaximizeIcon: Maximize2,
+  RestoreIcon: Minimize2,
   RenameIcon: Pencil,
   TrashIcon: Trash2,
   CursorIcon: MousePointer2,
@@ -284,6 +288,8 @@ export const NewFileIcon = icon(ICONS.NewFileIcon);
 export const NewFolderIcon = icon(ICONS.NewFolderIcon);
 export const CollapseIcon = icon(ICONS.CollapseIcon);
 export const ExpandIcon = icon(ICONS.ExpandIcon);
+export const MaximizeIcon = icon(ICONS.MaximizeIcon);
+export const RestoreIcon = icon(ICONS.RestoreIcon);
 export const CursorIcon = icon(ICONS.CursorIcon);
 export const StopIcon = icon(ICONS.StopIcon);
 export const RewindIcon = icon(ICONS.RewindIcon);
@@ -360,14 +366,19 @@ export function Menu({
 }
 
 // small per-view preferences that should outlive a remount, but never reach the server
-export function usePersistedState<T extends string | boolean>(
+export function usePersistedState<T extends string | boolean | number>(
   key: string,
   fallback: T,
 ): [T, (value: T) => void] {
   const [value, setValue] = useState<T>(() => {
     const stored = localStorage.getItem(`sr03:${key}`);
     if (stored === null) return fallback;
-    return (typeof fallback === "boolean" ? stored === "true" : stored) as T;
+    if (typeof fallback === "boolean") return (stored === "true") as T;
+    if (typeof fallback === "number") {
+      const parsed = Number(stored);
+      return (Number.isFinite(parsed) ? parsed : fallback) as T;
+    }
+    return stored as T;
   });
   return [
     value,
@@ -376,6 +387,25 @@ export function usePersistedState<T extends string | boolean>(
       setValue(next);
     },
   ];
+}
+
+// view state that belongs to one thread rather than the app: a single key holds the
+// thread id → value map, so switching sessions never carries a panel, its size, or its shell
+export function usePersistedIdState<T extends string | boolean | number>(
+  key: string,
+  id: string,
+  fallback: T,
+): [T, (value: T) => void] {
+  const [raw, setRaw] = usePersistedState<string>(key, "");
+  const map = useMemo((): Record<string, T> => {
+    try {
+      const parsed: unknown = JSON.parse(raw || "{}");
+      return parsed && typeof parsed === "object" ? (parsed as Record<string, T>) : {};
+    } catch {
+      return {};
+    }
+  }, [raw]);
+  return [map[id] ?? fallback, (next: T) => setRaw(JSON.stringify({ ...map, [id]: next }))];
 }
 
 // file-type icons, mapped the way an editor's icon theme does: shape by kind, hue by family

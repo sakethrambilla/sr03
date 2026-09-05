@@ -33,6 +33,7 @@ import {
   TerminalIcon,
   ZedIcon,
   cn,
+  usePersistedIdState,
   usePersistedState,
 } from "./ui.tsx";
 import {
@@ -48,6 +49,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 
 const NO_TASKS: ThreadTask[] = [];
 const NO_FILES: string[] = [];
+
+// today's h-64; a thread that has never been sized opens here, and double-clicking the sash
+// comes back to it
+const TERMINAL_HEIGHT = 256;
 
 // xterm is ~490 KB of the main bundle for a panel most sessions never open — load it only
 // once someone actually asks for a terminal
@@ -266,7 +271,23 @@ export function ChatView({ thread }: { thread: Thread }) {
   const loadFiles = useStore((state) => state.loadFiles);
   const fsTick = useStore((state) => state.fsVersionByThread[thread.id] ?? 0);
   const [treeOpen, setTreeOpen] = usePersistedState<boolean>("file-tree", false);
-  const [terminalOpen, setTerminalOpen] = usePersistedState<boolean>("terminal", false);
+  // the terminal panel is per thread: a shared flag would open it — and spawn a shell — in
+  // every session you merely pass through
+  const [terminalOpen, setTerminalOpen] = usePersistedIdState<boolean>(
+    "terminal.open",
+    thread.id,
+    false,
+  );
+  const [terminalHeight, setTerminalHeight] = usePersistedIdState<number>(
+    "terminal.height",
+    thread.id,
+    TERMINAL_HEIGHT,
+  );
+  const [terminalMax, setTerminalMax] = usePersistedIdState<boolean>(
+    "terminal.max",
+    thread.id,
+    false,
+  );
   const [agentsOpen, setAgentsOpen] = usePersistedState<boolean>("agents", false);
   const [openFiles, setOpenFiles] = useState<string[]>([]);
   const [active, setActive] = useState<string | null>(null);
@@ -296,12 +317,25 @@ export function ChatView({ thread }: { thread: Thread }) {
     });
   }, []);
 
+  // a maximized terminal covers the editor, so anything that needs the editor gives it back.
+  // through a ref because openFile must stay stable — every FileView holds it via links
+  const restorePanel = useRef(() => {});
+  restorePanel.current = () => {
+    if (terminalMax) setTerminalMax(false);
+  };
+
   const openFile = useCallback((path: string, line?: number) => {
     setOpenFiles((files) => (files.includes(path) ? files : [...files, path]));
     setActive(path);
+    restorePanel.current();
     // the key is what makes clicking the same reference twice jump again
     if (line) setReveal((current) => ({ path, line, key: (current?.key ?? 0) + 1 }));
   }, []);
+
+  const selectTab = (path: string | null) => {
+    setActive(path);
+    restorePanel.current();
+  };
 
   // closing the active tab lands on its neighbour, falling back to the chat
   const closeFile = (path: string) => {
@@ -498,53 +532,71 @@ export function ChatView({ thread }: { thread: Thread }) {
           </div>
         </header>
 
-        {openFiles.length > 0 ? (
-          <EditorTabs
-            title={thread.title}
-            files={openFiles}
-            active={active}
-            dirty={dirty}
-            onSelect={setActive}
-            onClose={requestClose}
-          />
-        ) : null}
-
-        {/* every open file stays mounted so an unsaved draft survives a tab switch */}
-        {openFiles.map((path) => (
-          <div
-            key={path}
-            className={cn("flex min-h-0 flex-1 flex-col", path === active ? "" : "hidden")}
-          >
-            <FileView
-              thread={thread}
-              path={path}
-              active={path === active}
-              onClose={closeFileTab}
-              onDirtyChange={markDirty}
-              onSaved={savedFile}
-              registerSave={registerSave}
-              reveal={reveal?.path === path ? reveal : null}
-              links={links}
+        {/* a maximized terminal hides all of this rather than unmounting it, so scroll
+            positions, unsaved edits and the composer's draft survive the round trip */}
+        <div
+          className={cn(
+            "flex min-h-0 flex-1 flex-col",
+            terminalOpen && terminalMax && "hidden",
+          )}
+        >
+          {openFiles.length > 0 ? (
+            <EditorTabs
+              title={thread.title}
+              files={openFiles}
+              active={active}
+              dirty={dirty}
+              onSelect={selectTab}
+              onClose={requestClose}
             />
-          </div>
-        ))}
+          ) : null}
 
-        {active === null ? (
-          <>
-            <Timeline
-              threadId={thread.id}
-              running={thread.status === "running"}
-              files={links}
-              onRun={runCommand}
-              onRewind={setPendingRewind}
-            />
-            <ThreadComposer thread={thread} restore={restore} />
-          </>
-        ) : null}
+          {/* every open file stays mounted so an unsaved draft survives a tab switch */}
+          {openFiles.map((path) => (
+            <div
+              key={path}
+              className={cn("flex min-h-0 flex-1 flex-col", path === active ? "" : "hidden")}
+            >
+              <FileView
+                thread={thread}
+                path={path}
+                active={path === active}
+                onClose={closeFileTab}
+                onDirtyChange={markDirty}
+                onSaved={savedFile}
+                registerSave={registerSave}
+                reveal={reveal?.path === path ? reveal : null}
+                links={links}
+              />
+            </div>
+          ))}
+
+          {active === null ? (
+            <>
+              <Timeline
+                threadId={thread.id}
+                running={thread.status === "running"}
+                files={links}
+                onRun={runCommand}
+                onRewind={setPendingRewind}
+              />
+              <ThreadComposer thread={thread} restore={restore} />
+            </>
+          ) : null}
+        </div>
 
         {terminalOpen ? (
           <Suspense fallback={null}>
-            <TerminalPanel thread={thread} command={command} onClose={() => setTerminalOpen(false)} />
+            <TerminalPanel
+              thread={thread}
+              command={command}
+              height={terminalHeight}
+              defaultHeight={TERMINAL_HEIGHT}
+              maximized={terminalMax}
+              onHeightChange={setTerminalHeight}
+              onToggleMaximize={() => setTerminalMax(!terminalMax)}
+              onClose={() => setTerminalOpen(false)}
+            />
           </Suspense>
         ) : null}
       </main>
