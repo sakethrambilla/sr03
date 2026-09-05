@@ -31,6 +31,7 @@ import { FileView } from "./FileView.tsx";
 import { SearchPalette } from "./SearchPalette.tsx";
 import type { PaletteMode } from "./SearchPalette.tsx";
 import { Timeline } from "./Timeline.tsx";
+import { SubagentView } from "./SubagentView.tsx";
 import { SidebarToggle } from "./Sidebar.tsx";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -302,8 +303,6 @@ export function ChatView({ thread }: { thread: Thread }) {
 
   const openSubagent = (taskId: string) =>
     commit(openTab(layoutRef.current, { kind: "subagent", taskId }, focusedRef.current));
-  // task 5 wires the panel to this; read it so noUnusedLocals is satisfied until then
-  void openSubagent;
 
   useEffect(() => {
     const known = new Set(tasks.map((task) => task.id));
@@ -650,12 +649,17 @@ export function ChatView({ thread }: { thread: Thread }) {
                           files={links}
                           onRun={runCommand}
                           onRewind={setPendingRewind}
+                          onOpenSubagent={openSubagent}
                         />
                         <ThreadComposer thread={thread} restore={restore} />
                       </>
                     ) : tab.kind === "subagent" ? (
-                      // task 5 fills this in with SubagentView
-                      null
+                      <SubagentView
+                        thread={thread}
+                        taskId={tab.taskId}
+                        files={links}
+                        onRun={runCommand}
+                      />
                     ) : (
                       <FileView
                         thread={thread}
@@ -695,7 +699,7 @@ export function ChatView({ thread }: { thread: Thread }) {
         ) : null}
       </main>
       {agentsOpen && provider.capabilities.tasks ? (
-        <AgentsPanel thread={thread} onClose={() => setAgentsOpen(false)} />
+        <AgentsPanel thread={thread} onClose={() => setAgentsOpen(false)} onOpen={openSubagent} />
       ) : null}
       {treeOpen ? (
         <FileTree

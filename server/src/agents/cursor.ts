@@ -735,6 +735,7 @@ function handleTaskNotification(
     depth: existing?.depth ?? 1,
     startedAt,
     endedAt: durationMs !== null ? startedAt + durationMs : null,
+    toolUseId: toolCallId,
   });
   session.emit({ type: "tasks.changed", tasks: [...session.tasks.values()] });
   return {};

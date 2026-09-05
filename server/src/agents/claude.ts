@@ -140,6 +140,7 @@ function trackTask(session: ClaudeSession, message: SystemMessage): void {
         depth: message.spawn_depth ?? 1,
         startedAt: Date.now(),
         endedAt: null,
+        toolUseId: typeof message.tool_use_id === "string" ? message.tool_use_id : null,
       });
       return;
     case "task_progress": {

@@ -130,6 +130,8 @@ export interface ThreadTask {
   depth: number;
   startedAt: number;
   endedAt: number | null;
+  // Agent/Task tool_use_id that spawned this row; Claude's id is the SDK task_id, which differs
+  toolUseId: string | null;
 }
 
 // one row of the CLI's slash-command list: built-ins, skills, and the folder's own commands
