@@ -23,7 +23,9 @@ export interface DropAllow {
 }
 
 export function tabKey(tab: EditorTab): string {
-  return tab.kind === "chat" ? "chat:" : `file:${tab.path}`;
+  if (tab.kind === "chat") return "chat:";
+  if (tab.kind === "subagent") return `subagent:${tab.taskId}`;
+  return `file:${tab.path}`;
 }
 
 export function sameTab(a: EditorTab, b: EditorTab): boolean {
@@ -218,6 +220,16 @@ export function normalize(layout: EditorLayout | null): EditorLayout {
   const restored = repaired.groups.slice();
   restored[0] = { ...first, tabs: [CHAT, ...first.tabs], active: first.active + 1 };
   return rebuild(axis, restored, repaired.sizes);
+}
+
+// subagent tabs are session-scoped, and the server's layout guard 400s on unknown kinds —
+// which would leave every later layout write failing against a stale stored copy
+export function persistable(layout: EditorLayout): EditorLayout {
+  const groups = layout.groups.map((group) => ({
+    ...group,
+    tabs: group.tabs.filter((tab) => tab.kind !== "subagent"),
+  }));
+  return normalize({ ...layout, groups });
 }
 
 // The template for the split axis. Horizontal groups are one column each, so the cross axis is a

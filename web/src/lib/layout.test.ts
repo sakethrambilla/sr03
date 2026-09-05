@@ -15,6 +15,7 @@ import {
   moveTab,
   normalize,
   openTab,
+  persistable,
   resize,
   sameTab,
   selectTab,
@@ -35,7 +36,9 @@ function split(): EditorLayout {
 }
 
 const paths = (layout: EditorLayout, group: number) =>
-  layout.groups[group]!.tabs.map((tab) => (tab.kind === "chat" ? "chat" : tab.path));
+  layout.groups[group]!.tabs.map((tab) =>
+    tab.kind === "chat" ? "chat" : tab.kind === "file" ? tab.path : tab.taskId,
+  );
 
 // --- identity and construction -------------------------------------------------------------
 
@@ -355,4 +358,34 @@ test("a locked axis suppresses the cross-axis zones only", () => {
   assert.equal(dropTargetAt(R, 20, 500, { split: true, axis: "horizontal" }), "left");
   assert.equal(dropTargetAt(R, 20, 500, { split: true, axis: "vertical" }), "center");
   assert.equal(dropTargetAt(R, 500, 20, { split: true, axis: "vertical" }), "up");
+});
+
+const SUB = { kind: "subagent" as const, taskId: "x" };
+
+test("tabKey is distinct for a subagent and a file with the same name", () => {
+  assert.notEqual(tabKey(SUB), tabKey(file("x")));
+});
+
+test("closeTab and moveTab handle a subagent tab like any other", () => {
+  const opened = openTab(singleGroup(), SUB, 0);
+  assert.equal(groupOf(opened, SUB), 0);
+  const moved = moveTab(opened, SUB, { group: 0, zone: "right" });
+  assert.equal(moved.groups.length, 2);
+  assert.equal(groupOf(moved, SUB), 1);
+  const closed = closeTab(moved, SUB);
+  assert.equal(closed.groups.length, 1);
+  assert.equal(groupOf(closed, SUB), -1);
+});
+
+test("persistable strips a subagent-only group and keeps one chat tab", () => {
+  const layout = moveTab(openTab(singleGroup(), SUB, 0), SUB, { group: 0, zone: "right" });
+  assert.equal(layout.groups.length, 2);
+  const next = persistable(layout);
+  assert.equal(next.groups.length, 1);
+  assert.ok(Math.abs(next.sizes.reduce((sum, size) => sum + size, 0) - 1) < 1e-9);
+  assert.equal(next.groups[0]!.tabs.filter((tab) => tab.kind === "chat").length, 1);
+  assert.equal(
+    allTabs(next).some((tab) => tab.kind === "subagent"),
+    false,
+  );
 });

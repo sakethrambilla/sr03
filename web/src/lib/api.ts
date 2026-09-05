@@ -213,6 +213,8 @@ export const api = {
   rewind: (id: string, messageId: string) =>
     post<{ text: string }>(`/api/threads/${id}/rewind`, { messageId }),
   interrupt: (id: string) => post<{ ok: true }>(`/api/threads/${id}/interrupt`),
+  stopTask: (threadId: string, taskId: string) =>
+    post<{ ok: true }>(`/api/threads/${threadId}/tasks/${taskId}/stop`),
   respondToApproval: (threadId: string, approvalId: string, decision: ApprovalDecision) =>
     post<{ ok: true }>(
       `/api/threads/${threadId}/approvals/${approvalId}`,

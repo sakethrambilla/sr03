@@ -16,7 +16,7 @@ import {
   trackOf,
   trackTemplate,
 } from "../lib/layout.ts";
-import { CloseIcon, FileIcon, MessageIcon, cn } from "./ui.tsx";
+import { AgentIcon, CloseIcon, FileIcon, MessageIcon, cn } from "./ui.tsx";
 
 // a press has to travel this far before it becomes a drag, so an ordinary click still selects
 const DRAG_SLOP = 4;
@@ -30,8 +30,10 @@ export interface DropTarget {
   before?: EditorTab;
 }
 
-function tabName(tab: EditorTab, title: string): string {
-  return tab.kind === "chat" ? title : tab.path.slice(tab.path.lastIndexOf("/") + 1);
+function tabName(tab: EditorTab, title: string, labels: Record<string, string>): string {
+  if (tab.kind === "chat") return title;
+  if (tab.kind === "subagent") return labels[tab.taskId] ?? "Subagent";
+  return tab.path.slice(tab.path.lastIndexOf("/") + 1);
 }
 
 function sameTarget(a: DropTarget | null, b: DropTarget | null): boolean {
@@ -54,6 +56,7 @@ export function EditorTabs({
   index,
   title,
   dirty,
+  labels,
   dragging,
   insertBefore,
   onSelect,
@@ -64,10 +67,11 @@ export function EditorTabs({
   index: number;
   title: string;
   dirty: Set<string>;
+  labels: Record<string, string>;
   dragging: EditorTab | null;
   insertBefore: EditorTab | null;
   onSelect: (groupIndex: number, tab: EditorTab) => void;
-  onClose: (path: string) => void;
+  onClose: (tab: EditorTab) => void;
   onTabPointerDown: (
     tab: EditorTab,
     groupIndex: number,
@@ -85,7 +89,7 @@ export function EditorTabs({
           insertBefore && sameTab(tab, insertBefore) ? (
             <span className="w-0.5 shrink-0 self-stretch bg-primary" />
           ) : null;
-        const name = tabName(tab, title);
+        const name = tabName(tab, title, labels);
 
         return (
           <div key={tabKey(tab)} data-tab={tabKey(tab)} className="flex shrink-0 items-stretch">
@@ -106,10 +110,51 @@ export function EditorTabs({
                 <MessageIcon className="size-3.5" />
                 <span className="max-w-40 truncate">{title}</span>
               </button>
+            ) : tab.kind === "subagent" ? (
+              <div
+                onAuxClick={(event) => {
+                  if (event.button === 1) onClose(tab);
+                }}
+                className={cn(
+                  "group/tab flex h-8 shrink-0 items-center gap-1.5 border-r border-border/60 pr-1.5 pl-3 transition",
+                  selected
+                    ? "bg-card shadow-[inset_0_1px_0_var(--color-primary)]"
+                    : "hover:bg-card/50",
+                  lifted && "opacity-40",
+                )}
+              >
+                <button
+                  onPointerDown={(event) => onTabPointerDown(tab, index, event)}
+                  onClick={() => onSelect(index, tab)}
+                  title={name}
+                  className="flex min-w-0 items-center gap-1.5 text-[12px]"
+                >
+                  <AgentIcon className="size-3.5" />
+                  <span
+                    className={cn(
+                      "max-w-40 truncate",
+                      selected ? "text-foreground" : "text-muted-foreground",
+                    )}
+                  >
+                    {name}
+                  </span>
+                </button>
+                <button
+                  onClick={() => onClose(tab)}
+                  aria-label={`Close ${name}`}
+                  title={`Close ${name}`}
+                  className={cn(
+                    "group/close grid size-4 shrink-0 place-items-center rounded text-faint transition hover:bg-accent hover:text-foreground",
+                    selected ? "" : "opacity-0 group-hover/tab:opacity-100",
+                  )}
+                >
+                  <CloseIcon className="size-3" />
+                </button>
+              </div>
             ) : (
               <div
                 onAuxClick={(event) => {
-                  if (event.button === 1) onClose(tab.path);
+                  if (event.button === 1) onClose(tab);
                 }}
                 className={cn(
                   "group/tab flex h-8 shrink-0 items-center gap-1.5 border-r border-border/60 pr-1.5 pl-3 transition",
@@ -136,7 +181,7 @@ export function EditorTabs({
                   </span>
                 </button>
                 <button
-                  onClick={() => onClose(tab.path)}
+                  onClick={() => onClose(tab)}
                   aria-label={`Close ${name}`}
                   title={
                     dirty.has(tab.path) ? "Unsaved changes — click to close" : `Close ${name}`
@@ -168,6 +213,7 @@ export function EditorGroups({
   layout,
   title,
   dirty,
+  labels,
   onFocusGroup,
   onResize,
   onEqualise,
@@ -179,12 +225,13 @@ export function EditorGroups({
   layout: EditorLayout;
   title: string;
   dirty: Set<string>;
+  labels: Record<string, string>;
   focused: number;
   onFocusGroup: (index: number) => void;
   onResize: (sashIndex: number, fractions: [number, number]) => void;
   onEqualise: () => void;
   onSelect: (groupIndex: number, tab: EditorTab) => void;
-  onClose: (path: string) => void;
+  onClose: (tab: EditorTab) => void;
   onDrop: (tab: EditorTab, target: DropTarget) => void;
   children: ReactNode;
 }) {
@@ -379,6 +426,7 @@ export function EditorGroups({
             index={index}
             title={title}
             dirty={dirty}
+            labels={labels}
             dragging={drag?.tab ?? null}
             insertBefore={drag?.over?.group === index ? (drag.over.before ?? null) : null}
             onSelect={onSelect}
@@ -426,10 +474,12 @@ export function EditorGroups({
         >
           {drag.tab.kind === "chat" ? (
             <MessageIcon className="size-3.5" />
+          ) : drag.tab.kind === "subagent" ? (
+            <AgentIcon className="size-3.5" />
           ) : (
-            <FileIcon name={tabName(drag.tab, title)} />
+            <FileIcon name={tabName(drag.tab, title, labels)} />
           )}
-          <span className="max-w-40 truncate">{tabName(drag.tab, title)}</span>
+          <span className="max-w-40 truncate">{tabName(drag.tab, title, labels)}</span>
         </div>
       ) : null}
     </div>
