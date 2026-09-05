@@ -5,6 +5,7 @@ import type {
   ApprovalDecision,
   ChangedFile,
   DirListing,
+  EditorLayout,
   Effort,
   GitSnapshot,
   Message,
@@ -30,7 +31,10 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
     headers: init?.body ? { "content-type": "application/json" } : undefined,
   });
   const body = (await response.json()) as T & { error?: string };
-  if (!response.ok) throw new Error(body.error ?? response.statusText);
+  if (!response.ok) {
+    // the status rides along so a caller can tell "gone" from "could not be read"
+    throw Object.assign(new Error(body.error ?? response.statusText), { status: response.status });
+  }
   return body;
 }
 
@@ -122,6 +126,12 @@ export const api = {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(patch),
+    }),
+  setThreadLayout: (id: string, layout: EditorLayout | null) =>
+    call<Thread>(`/api/threads/${id}/layout`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ layout }),
     }),
   changes: (id: string) =>
     call<{ isGit: boolean; branch: string | null; files: ChangedFile[] }>(`/api/threads/${id}/changes`),

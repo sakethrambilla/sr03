@@ -7,9 +7,24 @@ import type { ReactNode } from "react";
 import { api } from "../lib/api.ts";
 import { createFileIndex } from "../lib/fileref.ts";
 import type { FileRef } from "../lib/fileref.ts";
-import type { Message, Thread, ThreadTask } from "../lib/types.ts";
+import type { EditorLayout, EditorTab, Message, Thread, ThreadTask } from "../lib/types.ts";
+import {
+  MAX_GROUPS,
+  activeTab,
+  allTabs,
+  closeTab,
+  moveTab,
+  normalize,
+  openTab,
+  resize as resizeGroups,
+  sameTab,
+  selectTab as selectInGroup,
+  tabKey,
+  trackOf,
+} from "../lib/layout.ts";
 import { EMPTY_PROVIDER, useStore } from "../store.ts";
 import { AgentsPanel } from "./AgentsPanel.tsx";
+import { EditorGroups } from "./EditorGroups.tsx";
 import { ThreadComposer } from "./Composer.tsx";
 import { FileTree } from "./FileTree.tsx";
 import { FileView } from "./FileView.tsx";
@@ -24,12 +39,9 @@ import {
   ChangesIcon,
   Dialog,
   ChevronIcon,
-  CloseIcon,
   CodeIcon,
   CursorIcon,
-  FileIcon,
   FolderIcon,
-  MessageIcon,
   StatusDot,
   TerminalIcon,
   WorktreeIcon,
@@ -197,91 +209,6 @@ function OpenMenu({ thread }: { thread: Thread }) {
 }
 
 
-function EditorTabs({
-  title,
-  files,
-  active,
-  dirty,
-  onSelect,
-  onClose,
-}: {
-  title: string;
-  files: string[];
-  active: string | null;
-  dirty: Set<string>;
-  onSelect: (path: string | null) => void;
-  onClose: (path: string) => void;
-}) {
-  return (
-    <div className="flex shrink-0 items-stretch overflow-x-auto border-b border-border/60 bg-background">
-      <button
-        onClick={() => onSelect(null)}
-        title={title}
-        className={cn(
-          "flex h-8 shrink-0 items-center gap-1.5 border-r border-border/60 px-3 text-[12px] transition",
-          active === null
-            ? "bg-card text-foreground shadow-[inset_0_1px_0_var(--color-primary)]"
-            : "text-muted-foreground hover:text-foreground",
-        )}
-      >
-        <MessageIcon className="size-3.5" />
-        <span className="max-w-40 truncate">{title}</span>
-      </button>
-
-      {files.map((path) => {
-        const name = path.slice(path.lastIndexOf("/") + 1);
-        return (
-          <div
-            key={path}
-            onAuxClick={(event) => {
-              if (event.button === 1) onClose(path);
-            }}
-            className={cn(
-              "group/tab flex h-8 shrink-0 items-center gap-1.5 border-r border-border/60 pr-1.5 pl-3 transition",
-              path === active
-                ? "bg-card shadow-[inset_0_1px_0_var(--color-primary)]"
-                : "hover:bg-card/50",
-            )}
-          >
-            <button
-              onClick={() => onSelect(path)}
-              title={path}
-              className="flex min-w-0 items-center gap-1.5 text-[12px]"
-            >
-              <FileIcon name={name} />
-              <span
-                className={cn(
-                  "max-w-40 truncate",
-                  path === active ? "text-foreground" : "text-muted-foreground",
-                )}
-              >
-                {name}
-              </span>
-            </button>
-            <button
-              onClick={() => onClose(path)}
-              aria-label={`Close ${name}`}
-              title={dirty.has(path) ? "Unsaved changes — click to close" : `Close ${name}`}
-              className={cn(
-                "group/close grid size-4 shrink-0 place-items-center rounded text-faint transition hover:bg-accent hover:text-foreground",
-                path === active || dirty.has(path) ? "" : "opacity-0 group-hover/tab:opacity-100",
-              )}
-            >
-              {dirty.has(path) ? (
-                <>
-                  <span className="size-1.5 rounded-full bg-git-modified group-hover/close:hidden" />
-                  <CloseIcon className="hidden size-3 group-hover/close:block" />
-                </>
-              ) : (
-                <CloseIcon className="size-3" />
-              )}
-            </button>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 export function ChatView({ thread }: { thread: Thread }) {
   const setError = useStore((state) => state.setError);
@@ -311,8 +238,14 @@ export function ChatView({ thread }: { thread: Thread }) {
     false,
   );
   const [agentsOpen, setAgentsOpen] = usePersistedState<boolean>("agents", false);
-  const [openFiles, setOpenFiles] = useState<string[]>([]);
-  const [active, setActive] = useState<string | null>(null);
+  // ChatView is keyed by thread.id in App.tsx, so this is seeded once per session and is the single
+  // writer for the layout — the thread.updated events setLayout provokes are echoes of these writes
+  const [layout, setLayoutState] = useState(() => normalize(thread.layout));
+  const [focused, setFocused] = useState(0);
+  const setLayout = useStore((state) => state.setLayout);
+  // read by openFile, which must stay stable — every FileView holds it through `links`
+  const focusedRef = useRef(focused);
+  focusedRef.current = Math.min(focused, layout.groups.length - 1);
   const [reveal, setReveal] = useState<{ path: string; line: number; key: number } | null>(null);
   const [command, setCommand] = useState<{ text: string; key: number } | null>(null);
   const [restore, setRestore] = useState<{ text: string; key: number } | null>(null);
@@ -349,27 +282,43 @@ export function ChatView({ thread }: { thread: Thread }) {
     if (terminalMax) setTerminalMax(false);
   };
 
-  const openFile = useCallback((path: string, line?: number) => {
-    setOpenFiles((files) => (files.includes(path) ? files : [...files, path]));
-    setActive(path);
-    restorePanel.current();
-    // the key is what makes clicking the same reference twice jump again
-    if (line) setReveal((current) => ({ path, line, key: (current?.key ?? 0) + 1 }));
-  }, []);
+  // every mutation goes through here, so the optimistic state and the server write never diverge.
+  // the ref is what lets openFile stay stable while still reading the current layout
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+  const commit = useCallback(
+    (next: EditorLayout) => {
+      layoutRef.current = next;
+      setLayoutState(next);
+      setLayout(thread.id, next);
+    },
+    [setLayout, thread.id],
+  );
 
-  const selectTab = (path: string | null) => {
-    setActive(path);
+  const openFile = useCallback(
+    (path: string, line?: number) => {
+      commit(openTab(layoutRef.current, { kind: "file", path }, focusedRef.current));
+      restorePanel.current();
+      // the key is what makes clicking the same reference twice jump again
+      if (line) setReveal((current) => ({ path, line, key: (current?.key ?? 0) + 1 }));
+    },
+    [commit],
+  );
+
+  const selectTab = (groupIndex: number, tab: EditorTab) => {
+    setFocused(groupIndex);
+    commit(selectInGroup(layoutRef.current, groupIndex, tab));
     restorePanel.current();
   };
 
-  // closing the active tab lands on its neighbour, falling back to the chat
   const closeFile = (path: string) => {
-    const index = openFiles.indexOf(path);
-    const next = openFiles.filter((file) => file !== path);
-    setOpenFiles(next);
+    const next = closeTab(layoutRef.current, { kind: "file", path });
+    commit(next);
     markDirty(path, false);
-    if (active === path) setActive(next[index] ?? next[index - 1] ?? null);
-    promptNextDirty(next, path);
+    promptNextDirty(
+      allTabs(next).flatMap((tab) => (tab.kind === "file" ? [tab.path] : [])),
+      path,
+    );
   };
 
   const requestClose = (path: string) => {
@@ -402,11 +351,39 @@ export function ChatView({ thread }: { thread: Thread }) {
 
   const closeAll = () => {
     const unsaved = openFiles.filter((file) => dirty.has(file));
-    setOpenFiles(unsaved);
-    setActive(unsaved[0] ?? null);
+    let next = layoutRef.current;
+    for (const path of openFiles) {
+      if (!dirty.has(path)) next = closeTab(next, { kind: "file", path });
+    }
+    commit(next);
     closingAll.current = unsaved.length > 0;
     if (unsaved[0]) setPendingClose(unsaved[0]);
   };
+
+  // the shortcuts and the dirty tracking still think in terms of one strip; these keep them
+  // working while the layout underneath is the real state
+  const openFiles = allTabs(layout).flatMap((tab) => (tab.kind === "file" ? [tab.path] : []));
+  const focusedGroup = layout.groups[focusedRef.current] ?? layout.groups[0]!;
+  const focusedTab = activeTab(focusedGroup);
+  const active = focusedTab.kind === "file" ? focusedTab.path : null;
+
+  // the first split settles the axis; afterwards a split can only extend the same row or column
+  const splitFocused = () => {
+    const current = layoutRef.current;
+    if (current.groups.length >= MAX_GROUPS) return;
+    const group = current.groups[focusedRef.current] ?? current.groups[0]!;
+    if (group.tabs.length < 2 && current.groups.length > 1) return;
+    const zone = current.groups.length > 1 && current.axis === "vertical" ? "down" : "right";
+    const next = moveTab(current, activeTab(group), { group: focusedRef.current, zone });
+    if (next === current) return;
+    commit(next);
+    setFocused(Math.min(focusedRef.current + 1, next.groups.length - 1));
+  };
+
+  const moveFocus = (step: number) =>
+    setFocused((current) =>
+      Math.min(Math.max(current + step, 0), layoutRef.current.groups.length - 1),
+    );
 
   // a turn that wrote to disk may have added or renamed files, so the index follows it
   useEffect(() => {
@@ -483,6 +460,11 @@ export function ChatView({ thread }: { thread: Thread }) {
           closeAll();
           return;
         }
+        if (key === "arrowleft" || key === "arrowright") {
+          event.preventDefault();
+          moveFocus(key === "arrowleft" ? -1 : 1);
+          return;
+        }
       }
       if (!meta) return;
 
@@ -517,7 +499,12 @@ export function ChatView({ thread }: { thread: Thread }) {
         setPalette("text");
         return;
       }
-      // the chat tab is pinned, so cmd+w only ever closes a file
+      if (key === "\\" && !event.shiftKey) {
+        event.preventDefault();
+        splitFocused();
+        return;
+      }
+      // the chat tab is pinned, so cmd+w only ever closes a file — and only in the focused group
       if (key === "w" && !event.shiftKey) {
         event.preventDefault();
         if (active) requestClose(active);
@@ -525,20 +512,29 @@ export function ChatView({ thread }: { thread: Thread }) {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [active, treeOpen, terminalOpen, agentsOpen, openFiles, dirty, provider.capabilities.tasks]);
+  }, [active, treeOpen, terminalOpen, agentsOpen, openFiles, dirty, layout, focused, provider.capabilities.tasks]);
 
   const renamed = (from: string, to: string) => {
     const moved = (path: string) =>
       path === from ? to : path.startsWith(`${from}/`) ? to + path.slice(from.length) : path;
-    setOpenFiles((files) => files.map(moved));
-    setActive((current) => (current === null ? null : moved(current)));
+    commit({
+      ...layoutRef.current,
+      groups: layoutRef.current.groups.map((group) => ({
+        ...group,
+        tabs: group.tabs.map((tab) =>
+          tab.kind === "file" ? { kind: "file" as const, path: moved(tab.path) } : tab,
+        ),
+      })),
+    });
   };
 
   const deleted = (path: string) => {
     const gone = (candidate: string) => candidate === path || candidate.startsWith(`${path}/`);
-    const next = openFiles.filter((file) => !gone(file));
-    setOpenFiles(next);
-    if (active !== null && gone(active)) setActive(next[0] ?? null);
+    let next = layoutRef.current;
+    for (const tab of allTabs(next)) {
+      if (tab.kind === "file" && gone(tab.path)) next = closeTab(next, tab);
+    }
+    commit(next);
   };
 
   return (
@@ -580,49 +576,75 @@ export function ChatView({ thread }: { thread: Thread }) {
             terminalOpen && terminalMax && "hidden",
           )}
         >
-          {openFiles.length > 0 ? (
-            <EditorTabs
-              title={thread.title}
-              files={openFiles}
-              active={active}
-              dirty={dirty}
-              onSelect={selectTab}
-              onClose={requestClose}
-            />
-          ) : null}
-
-          {/* every open file stays mounted so an unsaved draft survives a tab switch */}
-          {openFiles.map((path) => (
-            <div
-              key={path}
-              className={cn("flex min-h-0 flex-1 flex-col", path === active ? "" : "hidden")}
-            >
-              <FileView
-                thread={thread}
-                path={path}
-                active={path === active}
-                onClose={closeFileTab}
-                onDirtyChange={markDirty}
-                onSaved={savedFile}
-                registerSave={registerSave}
-                reveal={reveal?.path === path ? reveal : null}
-                links={links}
-              />
-            </div>
-          ))}
-
-          {active === null ? (
-            <>
-              <Timeline
-                threadId={thread.id}
-                running={thread.status === "running"}
-                files={links}
-                onRun={runCommand}
-                onRewind={setPendingRewind}
-              />
-              <ThreadComposer thread={thread} restore={restore} />
-            </>
-          ) : null}
+          <EditorGroups
+            layout={layout}
+            focused={focusedRef.current}
+            title={thread.title}
+            dirty={dirty}
+            onFocusGroup={setFocused}
+            onResize={(sashIndex, fractions) =>
+              commit(resizeGroups(layoutRef.current, sashIndex, fractions))
+            }
+            onEqualise={() =>
+              commit({
+                ...layoutRef.current,
+                sizes: layoutRef.current.sizes.map(() => 1),
+              })
+            }
+            onSelect={selectTab}
+            onClose={requestClose}
+            onDrop={(tab, target) => commit(moveTab(layoutRef.current, tab, target))}
+          >
+            {/* One flat list, every entry a direct child of the grid and keyed by its tab, so a tab
+                moving between groups only changes a track style. Re-parenting these into per-group
+                wrappers would remount FileView and lose its uncontrolled edits. */}
+            {layout.groups.flatMap((group, index) =>
+              group.tabs.map((tab) => {
+                const showing = sameTab(tab, activeTab(group));
+                const cell =
+                  layout.axis === "horizontal"
+                    ? { gridColumn: trackOf(index, layout.axis, "view"), gridRow: 2 }
+                    : { gridColumn: 1, gridRow: trackOf(index, layout.axis, "view") };
+                return (
+                  <div
+                    key={tabKey(tab)}
+                    style={cell}
+                    // clicking into an editor is how a group is focused, not just clicking its tab
+                    onPointerDownCapture={() => setFocused(index)}
+                    className={cn("flex min-h-0 min-w-0 flex-col", showing ? "" : "hidden")}
+                  >
+                    {tab.kind === "chat" ? (
+                      <>
+                        <Timeline
+                          threadId={thread.id}
+                          running={thread.status === "running"}
+                          files={links}
+                          onRun={runCommand}
+                          onRewind={setPendingRewind}
+                        />
+                        <ThreadComposer thread={thread} restore={restore} />
+                      </>
+                    ) : (
+                      <FileView
+                        thread={thread}
+                        path={tab.path}
+                        // FileView's cmd+S / cmd+shift+V / Esc handlers sit on window, so without
+                        // the focus test two groups would both answer every one of those keys
+                        active={showing && index === focusedRef.current}
+                        onClose={closeFileTab}
+                        onMissing={closeFileTab}
+                        onDirtyChange={markDirty}
+                        onSaved={savedFile}
+                        registerSave={registerSave}
+                        reveal={reveal?.path === tab.path ? reveal : null}
+                        links={links}
+                      />
+                    )}
+                  </div>
+                );
+              }),
+            )}
+          </EditorGroups>
         </div>
 
         {terminalOpen ? (

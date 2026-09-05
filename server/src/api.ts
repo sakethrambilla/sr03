@@ -30,6 +30,7 @@ import {
 import { readTable, readValues, tableKind, writeCell } from "./table.ts";
 import type { TableFilter, TableQuery } from "./table.ts";
 import { messages, projects, settings, threads } from "./db.ts";
+import { parseLayout } from "./layout.ts";
 import {
   currentDefaults,
   currentProvider,
@@ -623,7 +624,10 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
       const rel = url.searchParams.get("path")?.trim() ?? "";
       if (!rel) throw new HttpError(400, "`path` is required");
       const [file, state] = await Promise.all([
-        readWorkspaceFile(thread.cwd, rel),
+        // a file deleted since a tab was opened is a 404, not a 500: the client closes the tab on it
+        readWorkspaceFile(thread.cwd, rel).catch((error: NodeJS.ErrnoException) => {
+          throw error.code === "ENOENT" ? new HttpError(404, "File not found") : error;
+        }),
         git.fileState(thread.cwd, rel),
       ]);
       return { path: rel, ...file, ...state };
@@ -861,6 +865,24 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
         publish({ type: "thread.updated", thread: updated });
         return updated;
       });
+    },
+  },
+  {
+    method: "PATCH",
+    pattern: /^\/api\/threads\/([^/]+)\/layout$/,
+    // deliberately outside withThreadOperation: a layout touches no agent state, so queueing it
+    // behind a running turn — or refusing it when the thread is live elsewhere — would be wrong
+    handler: async ({ params, request }) => {
+      const body = await readBody(request);
+      const thread = requireThread(params[0]!);
+      const layout = body.layout === null ? null : parseLayout(body.layout);
+      if (body.layout !== null && layout === null) {
+        throw new HttpError(400, "`layout` is not a valid editor layout");
+      }
+      const updated = threads.setLayout(thread.id, layout);
+      if (!updated) throw new HttpError(404, "Thread not found");
+      publish({ type: "thread.updated", thread: updated });
+      return updated;
     },
   },
   {
