@@ -27,8 +27,9 @@ it, and can be stopped from there — and its activity stops contaminating the p
 - **A subagent transcript for Cursor.** Cursor's protocol carries no child stream. This is a fixed
   external constraint, not a corner being cut, and the Cursor case is designed for explicitly
   rather than left broken.
-- **A tree view.** Subagents can nest several layers deep. They are listed flat in start order,
-  with depth shown as a value, not as indentation or an expandable hierarchy.
+- **A tree view.** Subagents can nest several layers deep. They stay one flat list in start order,
+  indented by depth as they are today, with no expand-collapse hierarchy and no parent-child
+  grouping.
 - **Changing how approvals work.** A permission prompt raised from inside a subagent keeps
   surfacing exactly where it surfaces today.
 - **A setting for any of this.** No toggle for message forwarding, no per-thread opt-in.
@@ -104,8 +105,8 @@ is indistinguishable from one that failed to render.
   stream, no capability advertised for one. Everything Cursor publishes about a subagent arrives in
   a single one-way notification. No amount of client work changes this, and the design must not
   assume it will.
-- Cursor's notification already carries the subagent's type and its duration; both are currently
-  discarded. Capturing them is part of this change.
+- Cursor's notification already carries the subagent's type and its duration. Nothing in sr03
+  listens for it today, so both are lost. Capturing them is part of this change.
 - Wire event types exist twice, once on the server and once mirrored on the web, and must move
   together in the same change.
 - The dependency budget stands. The tab, the list and the card are composed from the UI components

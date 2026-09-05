@@ -24,7 +24,7 @@ import {
 } from "../lib/layout.ts";
 import { EMPTY_PROVIDER, useStore } from "../store.ts";
 import { AgentsPanel } from "./AgentsPanel.tsx";
-import { EditorGroups, EditorTabs } from "./EditorGroups.tsx";
+import { EditorGroups } from "./EditorGroups.tsx";
 import { ThreadComposer } from "./Composer.tsx";
 import { FileTree } from "./FileTree.tsx";
 import { FileView } from "./FileView.tsx";
@@ -579,6 +579,8 @@ export function ChatView({ thread }: { thread: Thread }) {
           <EditorGroups
             layout={layout}
             focused={focusedRef.current}
+            title={thread.title}
+            dirty={dirty}
             onFocusGroup={setFocused}
             onResize={(sashIndex, fractions) =>
               commit(resizeGroups(layoutRef.current, sashIndex, fractions))
@@ -589,16 +591,9 @@ export function ChatView({ thread }: { thread: Thread }) {
                 sizes: layoutRef.current.sizes.map(() => 1),
               })
             }
-            strip={(group, index) => (
-              <EditorTabs
-                group={group}
-                index={index}
-                title={thread.title}
-                dirty={dirty}
-                onSelect={selectTab}
-                onClose={requestClose}
-              />
-            )}
+            onSelect={selectTab}
+            onClose={requestClose}
+            onDrop={(tab, target) => commit(moveTab(layoutRef.current, tab, target))}
           >
             {/* One flat list, every entry a direct child of the grid and keyed by its tab, so a tab
                 moving between groups only changes a track style. Re-parenting these into per-group

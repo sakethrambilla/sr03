@@ -1,6 +1,6 @@
 # Task 3: Stop one subagent
 
-**Depends on:** Task 1 (task rows exist for both providers)
+**Depends on:** Task 1 (task rows and the `stopSubagents` capability exist)
 
 **Files:**
 - Modify: `server/src/agents/types.ts` — optional `stopTask` on `AgentSession`
@@ -10,9 +10,9 @@
 
 **Interfaces:**
 - Consumes: `Query.stopTask(taskId: string): Promise<void>` — already on the SDK's `Query`
-  interface, beside `interrupt` and `backgroundTasks`.
-- Produces: `POST /api/threads/:id/tasks/:taskId/stop` → `{ ok: true }`, or `409` when this server
-  does not own the session, or `501` when the provider cannot stop a task.
+  interface (`sdk.d.ts:2886`), beside `interrupt` and `backgroundTasks`.
+- Produces: `POST /api/threads/:id/tasks/:taskId/stop` → `{ ok: true }`; `409` when this server
+  does not own the session; `501` when the provider cannot stop a single task.
 
 ## Notes before starting
 
@@ -22,12 +22,12 @@ Cursor adapter deliberately does not implement it and the route answers `501`. D
 Cursor adapter cancel the turn instead: stopping one subagent and killing the whole turn are
 different actions, and silently substituting one for the other is worse than an honest refusal.
 
-The SDK emits a `task_notification` with status `stopped` when the stop lands. `trackTask` already
-maps `stopped → "failed"` via its `TASK_STATUS` table (`claude.ts:108`). Leave that mapping alone
-in this task — the row reading "failed" after a user-initiated stop is a wording problem for
-task 5, not a routing problem here.
+Task 1 already changed `TASK_STATUS` so the SDK's `stopped` reaches the row as `"stopped"`. Nothing
+further is needed here for the row to read correctly.
 
-Model the route on the existing interrupt route at `api.ts:1007`, including the 409.
+Model the route on the interrupt route at `api.ts:1007`. Model the handle lookup on `interrupt`
+(`runtime.ts:319`), which distinguishes three states that matter here: no session at all, a session
+this server does not own, and a session that exists but whose `handle` is still opening.
 
 ## Steps
 
@@ -44,11 +44,16 @@ Model the route on the existing interrupt route at `api.ts:1007`, including the 
 
 - [ ] 3. In `server/src/agents/runtime.ts`, export:
       ```ts
-      export async function stopTask(threadId: string, taskId: string): Promise<"ok" | "unowned" | "unsupported"> {
+      export async function stopTask(
+        threadId: string,
+        taskId: string,
+      ): Promise<"ok" | "unowned" | "unavailable" | "unsupported"> {
       ```
-      Return `"unowned"` when there is no live handle for the thread, `"unsupported"` when the
-      handle has no `stopTask`, and `"ok"` after awaiting it. Model the handle lookup on
-      `interrupt` (line ~319).
+      - no `sessions.get(threadId)`, or `!threadStore.owns(threadId)` → `"unowned"`
+      - a session whose `handle` is still null → `"unavailable"` (it exists and is ours, it is just
+        not up yet; answering `"unowned"` here would tell the user something false)
+      - a handle without `stopTask` → `"unsupported"`
+      - otherwise `await handle.stopTask(taskId)` and return `"ok"`
 
 - [ ] 4. In `server/src/api.ts`, add a route beside the interrupt one:
       ```ts
@@ -58,22 +63,23 @@ Model the route on the existing interrupt route at `api.ts:1007`, including the 
         handler: async ({ params }) => { ... },
       }
       ```
-      `requireThread(params[0]!)`, call `agents.stopTask(thread.id, params[1]!)`, and map
-      `"unowned"` to `new HttpError(409, "This server does not own the running session")` and
-      `"unsupported"` to `new HttpError(501, "This provider cannot stop a single subagent")`.
-      Return `{ ok: true }` otherwise.
+      `requireThread(params[0]!)`, call `agents.stopTask(thread.id, params[1]!)`, and map:
+      `"unowned"` → `HttpError(409, "This server does not own the running session")`;
+      `"unavailable"` → `HttpError(409, "This session is still starting")`;
+      `"unsupported"` → `HttpError(501, "This provider cannot stop a single subagent")`;
+      `"ok"` → `{ ok: true }`.
 
 - [ ] 5. Run `pnpm typecheck && pnpm test`. Expect: both pass.
 
 - [ ] 6. Start `pnpm dev` and, in a Claude thread on `/tmp/sr03-repo`, send:
       `Use the Explore subagent to read every file in this repo one at a time and summarise each.`
-      While the agents panel shows the subagent running, read its task id from the panel row or
-      from the `thread.tasks` frames in the browser devtools' WS inspector.
+      While the agents panel shows the subagent running, read its task id from the `thread.tasks`
+      frames in the browser devtools' WS inspector.
 
 - [ ] 7. With that id, run:
       `curl -sS -X POST http://localhost:3399/api/threads/<threadId>/tasks/<taskId>/stop`
       Expect: `{"ok":true}`, and within a second or two the agents panel row stops advancing its
-      token and tool counts and settles to a terminal status.
+      token and tool counts and settles. Its status dot goes non-running.
 
 - [ ] 8. Repeat step 7 against a Cursor thread's task id.
       Expect: HTTP 501 with the message `This provider cannot stop a single subagent`, and the
@@ -84,5 +90,6 @@ Model the route on the existing interrupt route at `api.ts:1007`, including the 
 
 ## Done when
 
-A running Claude subagent can be stopped by its task id and settles to a terminal status without
-ending its parent turn; the same request against Cursor returns 501 and changes nothing.
+A running Claude subagent can be stopped by its task id and settles without ending its parent turn;
+the same request against Cursor returns 501 and changes nothing; a request against a session that
+is still starting returns 409 with a message that says so.

@@ -28,6 +28,7 @@ Active while a session is open.
 | `⌘K` then `←` / `→` | Move focus to the previous / next editor group | `web/src/components/ChatView.tsx` |
 | `⌘W` | Close the focused group's active file tab — the chat tab is pinned | `web/src/components/ChatView.tsx` |
 | `⌘K` then `W` | Close every file tab, in every group | `web/src/components/ChatView.tsx` |
+| `Esc` | Cancel a tab drag, leaving the layout untouched | `web/src/components/EditorGroups.tsx` |
 
 ## Quick open
 
