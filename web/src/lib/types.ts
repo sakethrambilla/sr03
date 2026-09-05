@@ -251,6 +251,12 @@ export interface TreeEntry {
   ignored: boolean;
 }
 
+export interface TextMatch {
+  path: string;
+  line: number;
+  text: string;
+}
+
 export interface ProviderAccount {
   email: string | null;
   organization: string | null;

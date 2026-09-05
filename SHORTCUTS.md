@@ -19,11 +19,23 @@ Active while a session is open.
 | Shortcut | Action | Code |
 | --- | --- | --- |
 | `⌘O` | Open the session's folder in the preferred app (the one marked in the **Open** menu) | `web/src/components/ChatView.tsx` |
+| `⌘P` | Quick open — files by name, `%` for text across the folder | `web/src/components/ChatView.tsx` |
+| `⌘⇧F` | Quick open, already switched to text | `web/src/components/ChatView.tsx` |
 | `⌘B` | Show / hide the file tree | `web/src/components/ChatView.tsx` |
 | `⌘J` | Show / hide the terminal | `web/src/components/ChatView.tsx` |
 | `⌘⇧A` | Show / hide the agents panel | `web/src/components/ChatView.tsx` |
 | `⌘W` | Close the active file tab — the chat tab is pinned | `web/src/components/ChatView.tsx` |
 | `⌘K` then `W` | Close every file tab | `web/src/components/ChatView.tsx` |
+
+## Quick open
+
+Active while the palette is open.
+
+| Shortcut | Action | Code |
+| --- | --- | --- |
+| `↑` / `↓` | Move the highlight | `web/src/components/SearchPalette.tsx` |
+| `⏎` | Open the highlighted file, on its line | `web/src/components/SearchPalette.tsx` |
+| `Esc` | Close the palette | `web/src/components/SearchPalette.tsx` |
 
 ## File editor
 

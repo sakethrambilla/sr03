@@ -14,6 +14,7 @@ import type {
   TableFilter,
   TableValues,
   TableWindow,
+  TextMatch,
   Thread,
   ThreadTask,
   TreeEntry,
@@ -127,6 +128,10 @@ export const api = {
       body: JSON.stringify({ key, value }),
     }),
   files: (id: string) => call<{ files: string[] }>(`/api/threads/${id}/files`),
+  searchText: (id: string, query: string) =>
+    call<{ matches: TextMatch[] }>(
+      `/api/threads/${id}/search?q=${encodeURIComponent(query)}`,
+    ),
   tree: (id: string, path: string) =>
     call<{ path: string; entries: TreeEntry[] }>(
       `/api/threads/${id}/tree${path ? `?path=${encodeURIComponent(path)}` : ""}`,
