@@ -39,6 +39,7 @@ export interface Draft {
   model: string;
   permissionMode: PermissionMode;
   effort: Effort;
+  fast: boolean;
 }
 
 // What the draft's branch + worktree pair will actually do on send. `folder` with no checkout runs
@@ -137,7 +138,12 @@ interface Store extends AppState {
   removeThread: (id: string) => Promise<void>;
   send: (text: string) => Promise<void>;
   interrupt: () => Promise<void>;
-  patchActive: (patch: { model?: string; permissionMode?: PermissionMode; effort?: Effort }) => Promise<void>;
+  patchActive: (patch: {
+    model?: string;
+    permissionMode?: PermissionMode;
+    effort?: Effort;
+    fast?: boolean;
+  }) => Promise<void>;
   setDefaultPermissionMode: (mode: PermissionMode) => Promise<void>;
   respond: (approval: PendingApproval, decision: ApprovalDecision) => Promise<void>;
   answerQuestion: (questionId: string, answers: Record<string, string[]>) => Promise<void>;
@@ -172,6 +178,7 @@ export const EMPTY_PROVIDER: ProviderCatalog = {
   defaults: { model: "default", permissionMode: "default", effort: "high" },
   capabilities: {
     effort: false,
+    fast: false,
     slashCommands: false,
     usage: false,
     tasks: false,
@@ -179,6 +186,8 @@ export const EMPTY_PROVIDER: ProviderCatalog = {
     questions: false,
     liveModelSwitch: false,
     livePermissionModeSwitch: false,
+    liveEffortSwitch: false,
+    liveFastSwitch: false,
   },
 };
 
@@ -187,6 +196,23 @@ export function providerCatalog(
   providerId: ProviderId,
 ): ProviderCatalog {
   return providers.find((provider) => provider.id === providerId) ?? EMPTY_PROVIDER;
+}
+
+// Cursor scopes both knobs to the model, so a model switch can strand the chosen rung — Kimi K3
+// has no `medium`. Fast always returns to off: support varies and it is a billing multiplier.
+function tuneForModel(
+  provider: ProviderCatalog,
+  model: string,
+  effort: Effort,
+): { effort: Effort; fast: boolean } {
+  const option = provider.models.find((entry) => entry.slug === model);
+  const levels = option?.effortLevels ?? provider.effortLevels;
+  return {
+    effort: levels.some((level) => level.value === effort)
+      ? effort
+      : (option?.defaultEffort ?? provider.defaults.effort),
+    fast: false,
+  };
 }
 
 export function commandKey(providerId: ProviderId, cwd: string): string {
@@ -422,7 +448,7 @@ export const useStore = create<Store>((set, get) => ({
         worktree: Boolean(input?.worktreePath),
         model: provider.defaults.model,
         permissionMode,
-        effort: provider.defaults.effort,
+        ...tuneForModel(provider, provider.defaults.model, provider.defaults.effort),
       },
     });
   },
@@ -438,7 +464,17 @@ export const useStore = create<Store>((set, get) => ({
             ...patch,
             model: provider.defaults.model,
             permissionMode: provider.defaults.permissionMode,
-            effort: provider.defaults.effort,
+            ...tuneForModel(provider, provider.defaults.model, provider.defaults.effort),
+          },
+        };
+      }
+      if (patch.model && patch.model !== state.draft.model) {
+        const provider = providerCatalog(state.providers, state.draft.providerId);
+        return {
+          draft: {
+            ...state.draft,
+            ...patch,
+            ...tuneForModel(provider, patch.model, state.draft.effort),
           },
         };
       }
@@ -477,6 +513,7 @@ export const useStore = create<Store>((set, get) => ({
       model: draft.model,
       permissionMode: draft.permissionMode,
       effort: draft.effort,
+      fast: draft.fast,
     });
     set((state) => ({
       threads: upsertThread(state.threads, thread),
@@ -552,11 +589,23 @@ export const useStore = create<Store>((set, get) => ({
   patchActive: async (patch) => {
     const id = get().activeThreadId;
     if (!id) return;
+    const current = get().threads.find((thread) => thread.id === id);
+    const next =
+      current && patch.model && patch.model !== current.model
+        ? {
+            ...patch,
+            ...tuneForModel(
+              providerCatalog(get().providers, current.providerId),
+              patch.model,
+              patch.effort ?? current.effort,
+            ),
+          }
+        : patch;
     set((state) => ({
-      threads: state.threads.map((thread) => (thread.id === id ? { ...thread, ...patch } : thread)),
+      threads: state.threads.map((thread) => (thread.id === id ? { ...thread, ...next } : thread)),
     }));
     try {
-      const thread = await api.patchThread(id, patch);
+      const thread = await api.patchThread(id, next);
       set((state) => ({ threads: upsertThread(state.threads, thread) }));
     } catch (error) {
       set({ error: (error as Error).message });

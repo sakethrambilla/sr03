@@ -319,9 +319,11 @@ export function DraftView({ draft }: { draft: Draft }) {
         model={draft.model}
         permissionMode={draft.permissionMode}
         effort={draft.effort}
+        fast={draft.fast}
         onModel={(model) => patchDraft({ model })}
         onPermissionMode={(permissionMode) => patchDraft({ permissionMode })}
         onEffort={(effort) => patchDraft({ effort })}
+        onFast={(fast) => patchDraft({ fast })}
         placeholder={draft.projectId ? "Describe a task or ask a question" : "Choose a folder to start…"}
         blocked={!draft.projectId || plan.kind === "blocked"}
         onSubmit={async (text) => {

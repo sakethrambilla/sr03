@@ -92,6 +92,7 @@ export const api = {
     model?: string;
     permissionMode?: PermissionMode;
     effort?: Effort;
+    fast?: boolean;
     title?: string;
   }) => post<Thread>("/api/threads", input),
   thread: (id: string) =>
@@ -113,6 +114,7 @@ export const api = {
       model?: string;
       permissionMode?: PermissionMode;
       effort?: Effort;
+      fast?: boolean;
       archived?: boolean;
     },
   ) =>

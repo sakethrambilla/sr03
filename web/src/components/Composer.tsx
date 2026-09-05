@@ -29,6 +29,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import {
   CheckIcon,
   CloseIcon,
+  FastIcon,
   Menu,
   MicIcon,
   PlusIcon,
@@ -62,10 +63,12 @@ function EffortPicker({
   effort,
   levels,
   onPick,
+  disabled,
 }: {
   effort: Effort;
   levels: EffortOption[];
   onPick: (effort: Effort) => void;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [dragging, setDragging] = useState<number | null>(null);
@@ -99,7 +102,8 @@ function EffortPicker({
         <Button
           variant="ghost"
           size="sm"
-          title="Reasoning effort"
+          disabled={disabled}
+          title={disabled ? "Effort can change after this turn" : "Reasoning effort"}
           className="h-7 px-1.5 text-[12.5px] text-muted-foreground"
         >
           {committed?.label ?? effort}
@@ -318,9 +322,11 @@ export function Composer({
   model,
   permissionMode,
   effort,
+  fast,
   onModel,
   onPermissionMode,
   onEffort,
+  onFast,
   placeholder,
   onSubmit,
   running,
@@ -335,9 +341,11 @@ export function Composer({
   model: string;
   permissionMode: PermissionMode;
   effort: Effort;
+  fast: boolean;
   onModel: (model: string) => void;
   onPermissionMode: (mode: PermissionMode) => void;
   onEffort: (effort: Effort) => void;
+  onFast: (fast: boolean) => void;
   placeholder: string;
   onSubmit: (text: string) => void | Promise<void>;
   running?: boolean;
@@ -348,7 +356,11 @@ export function Composer({
   const provider = useStore(
     (state) => state.providers.find((entry) => entry.id === providerId) ?? EMPTY_PROVIDER,
   );
-  const { models, permissionModes, effortLevels, capabilities } = provider;
+  const { models, permissionModes, capabilities } = provider;
+  const selectedModel = models.find((entry) => entry.slug === model);
+  // Cursor scopes both knobs to the model — Kimi K3 offers low/high/max and nothing between
+  const effortLevels = selectedModel?.effortLevels ?? provider.effortLevels;
+  const fastOption = selectedModel?.fast;
   const setError = useStore((state) => state.setError);
   const loadCommands = useStore((state) => state.loadCommands);
   const key = cwd ? commandKey(providerId, cwd) : null;
@@ -679,8 +691,30 @@ export function Composer({
             onPick={onModel}
             disabled={Boolean(running && !capabilities.liveModelSwitch)}
           />
-          {capabilities.effort && effortLevels.length > 0 ? (
-            <EffortPicker effort={effort} levels={effortLevels} onPick={onEffort} />
+          {capabilities.effort && effortLevels.length >= 2 ? (
+            <EffortPicker
+              effort={effort}
+              levels={effortLevels}
+              onPick={onEffort}
+              disabled={Boolean(running && !capabilities.liveEffortSwitch)}
+            />
+          ) : null}
+          {capabilities.fast && fastOption ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Toggle
+                  size="sm"
+                  pressed={fast}
+                  onPressedChange={onFast}
+                  disabled={Boolean(running && !capabilities.liveFastSwitch)}
+                  aria-label="Fast mode"
+                  className="size-7 min-w-7 text-faint data-[state=on]:text-primary"
+                >
+                  <FastIcon />
+                </Toggle>
+              </TooltipTrigger>
+              <TooltipContent>{fastOption.hint}</TooltipContent>
+            </Tooltip>
           ) : null}
           <UsageMeter showProviderUsage={capabilities.usage} />
         </div>
@@ -1023,9 +1057,11 @@ export function ThreadComposer({
       model={thread.model}
       permissionMode={thread.permissionMode}
       effort={thread.effort}
+      fast={thread.fast}
       onModel={(model) => void patchActive({ model })}
       onPermissionMode={(permissionMode) => void patchActive({ permissionMode })}
       onEffort={(effort) => void patchActive({ effort })}
+      onFast={(fast) => void patchActive({ fast })}
       placeholder={running ? `${name} is working…` : `Ask ${name} to change something…`}
       onSubmit={(text) => send(text)}
       running={running}

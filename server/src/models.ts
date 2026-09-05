@@ -20,6 +20,17 @@ export const DEFAULT_MODEL = "default";
 export const DEFAULT_PERMISSION_MODE: PermissionMode = "default";
 export const DEFAULT_EFFORT: Effort = "high";
 
+// faint-to-deep; the display order for whichever subset a model exposes
+export const EFFORT_ORDER: Effort[] = [
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
+
 export const EFFORT_LEVELS: EffortOption[] = [
   { value: "low", label: "Low", hint: "Minimal thinking, fastest" },
   { value: "medium", label: "Medium", hint: "Moderate thinking" },
@@ -85,6 +96,7 @@ function makeCatalog(providerId: ProviderId): ProviderCatalog {
       },
       capabilities: {
         effort: true,
+        fast: false,
         slashCommands: true,
         usage: true,
         tasks: true,
@@ -92,6 +104,8 @@ function makeCatalog(providerId: ProviderId): ProviderCatalog {
         questions: false,
         liveModelSwitch: true,
         livePermissionModeSwitch: true,
+        liveEffortSwitch: true,
+        liveFastSwitch: false,
       },
     };
   }
@@ -103,7 +117,8 @@ function makeCatalog(providerId: ProviderId): ProviderCatalog {
     effortLevels: [],
     defaults: { model: "auto", permissionMode: "default", effort: DEFAULT_EFFORT },
     capabilities: {
-      effort: false,
+      effort: true,
+      fast: true,
       slashCommands: false,
       usage: false,
       tasks: false,
@@ -111,6 +126,8 @@ function makeCatalog(providerId: ProviderId): ProviderCatalog {
       questions: true,
       liveModelSwitch: false,
       livePermissionModeSwitch: false,
+      liveEffortSwitch: false,
+      liveFastSwitch: false,
     },
   };
 }
@@ -227,21 +244,53 @@ export function isPermissionMode(
   return makeCatalog(providerId).permissionModes.some((mode) => mode.value === value);
 }
 
-export function isModel(providerId: ProviderId, value: unknown): value is string {
-  if (typeof value !== "string" || value.trim().length === 0) return false;
+export function findModel(providerId: ProviderId, value: unknown): ModelOption | null {
+  if (typeof value !== "string" || value.trim().length === 0) return null;
   const wanted = value === "auto" ? "default" : value.includes("[") ? value.slice(0, value.indexOf("[")) : value;
-  return makeCatalog(providerId).models.some((model) => {
-    if (model.slug === value || model.resolved === value) return true;
-    const slug = model.slug === "auto" ? "default" : model.slug;
-    const resolved = model.resolved ?? model.slug;
-    const resolvedBase = resolved.includes("[") ? resolved.slice(0, resolved.indexOf("[")) : resolved;
-    return slug === wanted || resolvedBase === wanted;
-  });
+  return (
+    makeCatalog(providerId).models.find((model) => {
+      if (model.slug === value || model.resolved === value) return true;
+      const slug = model.slug === "auto" ? "default" : model.slug;
+      const resolved = model.resolved ?? model.slug;
+      const resolvedBase = resolved.includes("[") ? resolved.slice(0, resolved.indexOf("[")) : resolved;
+      return slug === wanted || resolvedBase === wanted;
+    }) ?? null
+  );
 }
 
-export function isEffort(providerId: ProviderId, value: unknown): value is Effort {
+export function isModel(providerId: ProviderId, value: unknown): value is string {
+  return findModel(providerId, value) !== null;
+}
+
+// Cursor scopes effort to the selected model — Kimi K3 offers low/high/max and nothing between —
+// so the model's own ladder wins, and the provider's flat list is the fallback Claude Code uses.
+export function effortLevelsFor(providerId: ProviderId, model: string): EffortOption[] {
   const provider = makeCatalog(providerId);
-  return provider.capabilities.effort
-    ? provider.effortLevels.some((level) => level.value === value)
-    : value === provider.defaults.effort;
+  return findModel(providerId, model)?.effortLevels ?? provider.effortLevels;
+}
+
+export function defaultEffortFor(providerId: ProviderId, model: string): Effort {
+  const provider = makeCatalog(providerId);
+  const option = findModel(providerId, model);
+  if (option?.defaultEffort) return option.defaultEffort;
+  const levels = effortLevelsFor(providerId, model);
+  return levels.some((level) => level.value === provider.defaults.effort)
+    ? provider.defaults.effort
+    : (levels[levels.length - 1]?.value ?? provider.defaults.effort);
+}
+
+export function supportsFast(providerId: ProviderId, model: string): boolean {
+  return (
+    makeCatalog(providerId).capabilities.fast && findModel(providerId, model)?.fast !== undefined
+  );
+}
+
+export function isEffort(providerId: ProviderId, model: string, value: unknown): value is Effort {
+  const provider = makeCatalog(providerId);
+  if (!provider.capabilities.effort) return value === provider.defaults.effort;
+  const levels = effortLevelsFor(providerId, model);
+  // a model with no ladder of its own — Cursor's Auto — keeps the stored value inert but valid
+  return levels.length === 0
+    ? value === provider.defaults.effort
+    : levels.some((level) => level.value === value);
 }

@@ -28,6 +28,7 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  Gauge,
   GitBranch,
   ListFilter,
   MessageSquare,
@@ -244,6 +245,7 @@ const ICONS = {
   CursorIcon: MousePointer2,
   StopIcon: Square,
   RewindIcon: Undo2,
+  FastIcon: Gauge,
   ZedIcon: Zap,
 } as const;
 
@@ -287,6 +289,7 @@ export const ExpandIcon = icon(ICONS.ExpandIcon);
 export const CursorIcon = icon(ICONS.CursorIcon);
 export const StopIcon = icon(ICONS.StopIcon);
 export const RewindIcon = icon(ICONS.RewindIcon);
+export const FastIcon = icon(ICONS.FastIcon);
 export const ZedIcon = icon(ICONS.ZedIcon);
 
 export interface MenuItem {

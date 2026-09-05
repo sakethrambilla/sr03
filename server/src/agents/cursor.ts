@@ -3,9 +3,12 @@
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 
-import { currentProvider } from "../models.ts";
+import { EFFORT_ORDER, currentProvider, findModel } from "../models.ts";
 import { findCursor } from "../providers.ts";
 import type {
+  Effort,
+  EffortOption,
+  FastOption,
   ModelOption,
   PendingApproval,
   PendingQuestion,
@@ -92,6 +95,8 @@ interface CursorNativeSession {
   sessionId: string | null;
   model: string;
   models: Map<string, string>;
+  effort: Effort;
+  fast: boolean;
   permissionMode: PermissionMode;
   started: boolean;
   disposed: boolean;
@@ -825,6 +830,53 @@ function desiredMode(permissionMode: PermissionMode): "agent" | "plan" | "ask" {
   return permissionMode === "plan" || permissionMode === "ask" ? permissionMode : "agent";
 }
 
+// Unknown options and older CLIs without the method at all are not worth failing a turn over.
+async function setConfigOption(
+  session: CursorNativeSession,
+  configId: string,
+  value: string,
+  quiet = false,
+): Promise<void> {
+  if (!session.sessionId) return;
+  try {
+    await session.connection.request(
+      "session/set_config_option",
+      { sessionId: session.sessionId, configId, value },
+      { timeoutMs: SETTINGS_TIMEOUT_MS },
+    );
+  } catch (error) {
+    if (error instanceof AcpRpcError && (error.code === -32601 || error.code === -32602)) {
+      if (!quiet) console.error(`[cursor:${session.threadId}] ${configId}: ${error.message}`);
+      return;
+    }
+    throw error;
+  }
+}
+
+// Both knobs hang off the selected model, so this always runs after `session/set_model`.
+async function applyTuning(
+  session: CursorNativeSession,
+  model: string,
+  effort: Effort,
+  fast: boolean,
+): Promise<void> {
+  const option = findModel("cursor", model);
+  const level = option?.effortLevels?.find((entry) => entry.value === effort);
+  if (level?.native) {
+    await setConfigOption(session, level.native.configId, level.native.value);
+    // effort is inert on a model whose separate thinking switch is off in Cursor's own state
+    if (level.native.configId !== "thinking") {
+      await setConfigOption(session, "thinking", "true", true);
+    }
+  }
+  if (option?.fast) {
+    // asserted even when false: Cursor persists this globally and defaults it on for some models
+    await setConfigOption(session, "fast", fast ? "true" : "false");
+  }
+  session.effort = effort;
+  session.fast = fast;
+}
+
 async function applySetupSettings(
   session: CursorNativeSession,
   thread: Thread,
@@ -834,8 +886,17 @@ async function applySetupSettings(
   if (advertised.models.length > 0) {
     session.models = advertised.nativeBySlug;
     const known = currentProvider("cursor").models;
+    // session setup lists models without their config options, so fill an empty catalog from the
+    // richer call instead — otherwise the picker would cache models with no effort ladders
     if (known.length <= 1) {
-      session.emit({ type: "models.changed", models: advertised.models });
+      const listed = await session.connection
+        .request("cursor/list_available_models", {}, { timeoutMs: SETTINGS_TIMEOUT_MS })
+        .then(parseListedModels)
+        .catch(() => [] as ModelOption[]);
+      session.emit({
+        type: "models.changed",
+        models: listed.length > 0 ? listed : advertised.models,
+      });
     }
   }
   const nativeModel = nativeModelId(thread.model, session.models);
@@ -856,6 +917,7 @@ async function applySetupSettings(
     );
   }
   session.model = thread.model;
+  await applyTuning(session, thread.model, thread.effort, thread.fast);
 }
 
 interface TurnCompletion {
@@ -1015,25 +1077,29 @@ async function applySettings(
   ) {
     return "restart";
   }
-  if (
-    patch.model === undefined ||
-    patch.model === session.model
-  ) {
+  const model = patch.model ?? session.model;
+  const effort = patch.effort ?? session.effort;
+  const fast = patch.fast ?? session.fast;
+  const modelChanged = model !== session.model;
+  if (!modelChanged && effort === session.effort && fast === session.fast) {
     return "applied";
   }
   if (session.disposed || !session.sessionId) return "restart";
-  const nativeModel = nativeModelId(patch.model, session.models);
   try {
-    await session.connection.request(
-      "session/set_model",
-      { sessionId: session.sessionId, modelId: nativeModel },
-      { timeoutMs: SETTINGS_TIMEOUT_MS },
-    );
-    session.model = patch.model;
+    if (modelChanged) {
+      await session.connection.request(
+        "session/set_model",
+        { sessionId: session.sessionId, modelId: nativeModelId(model, session.models) },
+        { timeoutMs: SETTINGS_TIMEOUT_MS },
+      );
+      session.model = model;
+    }
+    // a model switch brings a different option set with it, so both knobs are reasserted
+    await applyTuning(session, model, effort, fast);
     return "applied";
   } catch (error) {
     if (error instanceof AcpRpcError && error.code === -32602) {
-      throw new Error(`Cursor rejected model "${patch.model}": ${error.message}`);
+      throw new Error(`Cursor rejected model "${model}": ${error.message}`);
     }
     return "restart";
   }
@@ -1072,6 +1138,8 @@ async function open(
     models: new Map(
       currentProvider("cursor").models.map((model) => [model.slug, model.resolved ?? model.slug]),
     ),
+    effort: thread.effort,
+    fast: thread.fast,
     permissionMode: thread.permissionMode,
     started: false,
     disposed: false,
@@ -1220,6 +1288,146 @@ function listedModelHint(entry: Record<string, unknown>): string {
   return names.length > 0 ? names.join(" · ") : "Available through Cursor ACP";
 }
 
+// Cursor pads some option labels with zero-width characters, which render as stray gaps
+function cleanLabel(value: string): string {
+  return value.replace(/[\u200B-\u200F\uFEFF]/g, "").trim();
+}
+
+interface ConfigOption {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  currentValue: string | null;
+  options: Array<{ value: string; name: string }>;
+}
+
+function parseConfigOptions(value: unknown): ConfigOption[] {
+  const raw = Array.isArray(value) ? value : [];
+  const parsed: ConfigOption[] = [];
+  for (const entry of raw) {
+    if (!isRecord(entry)) continue;
+    const id = stringValue(entry.id);
+    if (!id) continue;
+    const choices = Array.isArray(entry.options) ? entry.options : [];
+    const options: Array<{ value: string; name: string }> = [];
+    for (const choice of choices) {
+      if (!isRecord(choice)) continue;
+      const optionValue = stringValue(choice.value);
+      if (!optionValue) continue;
+      options.push({
+        value: optionValue,
+        name: cleanLabel(stringValue(choice.name) ?? optionValue) || optionValue,
+      });
+    }
+    parsed.push({
+      id,
+      name: cleanLabel(stringValue(entry.name) ?? id) || id,
+      description: stringValue(entry.description) ?? "",
+      category: stringValue(entry.category) ?? "",
+      currentValue: stringValue(entry.currentValue),
+      options,
+    });
+  }
+  return parsed;
+}
+
+// `effort`, `reasoning` and `thinking` are all thought-level knobs; a model can advertise more
+// than one, and the richest ladder is the one worth putting under the slider.
+const THOUGHT_PREFERENCE = ["effort", "reasoning", "thinking"];
+
+function thoughtOption(options: ConfigOption[]): ConfigOption | null {
+  const candidates = options.filter(
+    (option) => option.category === "thought_level" && option.options.length >= 2,
+  );
+  let best: ConfigOption | null = null;
+  for (const candidate of candidates) {
+    if (!best) {
+      best = candidate;
+      continue;
+    }
+    if (candidate.options.length !== best.options.length) {
+      if (candidate.options.length > best.options.length) best = candidate;
+      continue;
+    }
+    const rank = (option: ConfigOption) => {
+      const index = THOUGHT_PREFERENCE.indexOf(option.id);
+      return index === -1 ? THOUGHT_PREFERENCE.length : index;
+    };
+    if (rank(candidate) < rank(best)) best = candidate;
+  }
+  return best;
+}
+
+// One canonical ladder, so a thread's stored effort survives a model switch where the rung exists.
+function canonicalEffort(configId: string, value: string): Effort | null {
+  if (configId === "thinking") return value === "true" ? "high" : "none";
+  switch (value) {
+    case "extra-high":
+      return "xhigh";
+    case "none":
+    case "minimal":
+    case "low":
+    case "medium":
+    case "high":
+    case "xhigh":
+    case "max":
+      return value;
+    default:
+      return null;
+  }
+}
+
+function effortLadder(option: ConfigOption): {
+  levels: EffortOption[];
+  defaultEffort: Effort | undefined;
+} {
+  const levels: EffortOption[] = [];
+  const seen = new Set<Effort>();
+  for (const choice of option.options) {
+    const value = canonicalEffort(option.id, choice.value);
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    levels.push({
+      value,
+      label: choice.name,
+      hint: option.description || option.name,
+      native: { configId: option.id, value: choice.value },
+    });
+  }
+  levels.sort((a, b) => EFFORT_ORDER.indexOf(a.value) - EFFORT_ORDER.indexOf(b.value));
+  const current = option.currentValue ? canonicalEffort(option.id, option.currentValue) : null;
+  return {
+    levels,
+    defaultEffort: current && seen.has(current) ? current : levels[levels.length - 1]?.value,
+  };
+}
+
+function fastOption(options: ConfigOption[]): FastOption | undefined {
+  const option = options.find((entry) => entry.id === "fast");
+  if (!option) return undefined;
+  return {
+    hint: option.description || "Faster, at a higher usage cost",
+    default: option.currentValue === "true",
+  };
+}
+
+function modelTuning(entry: Record<string, unknown>): Partial<ModelOption> {
+  const options = parseConfigOptions(entry.configOptions);
+  const thought = thoughtOption(options);
+  const ladder = thought ? effortLadder(thought) : null;
+  const fast = fastOption(options);
+  return {
+    ...(ladder && ladder.levels.length >= 2
+      ? {
+          effortLevels: ladder.levels,
+          ...(ladder.defaultEffort ? { defaultEffort: ladder.defaultEffort } : {}),
+        }
+      : {}),
+    ...(fast ? { fast } : {}),
+  };
+}
+
 function parseListedModels(value: unknown): ModelOption[] {
   const listed = isRecord(value) && Array.isArray(value.models) ? value.models : [];
   const models: ModelOption[] = [];
@@ -1237,6 +1445,7 @@ function parseListedModels(value: unknown): ModelOption[] {
       label,
       hint: listedModelHint(entry),
       resolved: acpBaseId(modelId),
+      ...modelTuning(entry),
     });
   }
   return models;

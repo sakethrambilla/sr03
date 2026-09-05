@@ -8,7 +8,8 @@ export type PermissionMode =
   | "plan"
   | "ask"
   | "bypassPermissions";
-export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+// Ordered faint-to-deep; a provider exposes whichever subset its selected model supports.
+export type Effort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type ThreadStatus = "idle" | "running" | "error";
 export type MessageRole = "user" | "assistant" | "tool" | "system" | "error";
 
@@ -31,6 +32,7 @@ export interface Thread {
   model: string;
   permissionMode: PermissionMode;
   effort: Effort;
+  fast: boolean;
   sessionId: string | null;
   status: ThreadStatus;
   archived: boolean;
@@ -108,6 +110,15 @@ export interface ModelOption {
   label: string;
   hint: string;
   resolved?: string;
+  // set only where a provider scopes these to the model — Cursor does, Claude Code does not
+  effortLevels?: EffortOption[];
+  defaultEffort?: Effort;
+  fast?: FastOption;
+}
+
+export interface FastOption {
+  hint: string;
+  default: boolean;
 }
 
 export interface PermissionModeOption {
@@ -125,10 +136,13 @@ export interface EffortOption {
   value: Effort;
   label: string;
   hint: string;
+  // the provider-native pair this rung maps to, where the wire value isn't the native one
+  native?: { configId: string; value: string };
 }
 
 export interface ProviderCapabilities {
   effort: boolean;
+  fast: boolean;
   slashCommands: boolean;
   usage: boolean;
   tasks: boolean;
@@ -136,6 +150,8 @@ export interface ProviderCapabilities {
   questions: boolean;
   liveModelSwitch: boolean;
   livePermissionModeSwitch: boolean;
+  liveEffortSwitch: boolean;
+  liveFastSwitch: boolean;
 }
 
 export interface ProviderCatalog {

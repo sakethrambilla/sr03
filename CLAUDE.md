@@ -114,6 +114,12 @@ REST for commands, WebSocket (`/ws`) for everything the server pushes back. Wire
   loaded session.
 - `session/load` replays prior updates. The adapter suppresses that replay because sr03 already owns
   the persisted transcript; replaying it would duplicate every message and tool row.
+- Effort and fast are per-model config options, not model-id parameters: `cursor/list_available_models`
+  advertises them per model (`effort`/`reasoning`/`thinking` under `thought_level`, plus `fast`), and
+  `session/set_config_option` applies them after every new or loaded session. The option set belongs
+  to the selected model, so both are reapplied after `session/set_model`. The CLI persists these
+  globally, so `fast` is asserted even when false — otherwise a thread inherits Cursor's own default,
+  which is on for some models.
 - ACP request-permission options are provider supplied. Only decisions present in that request may
   be returned, and `cursor/ask_question` stays pending until the web client answers it.
 

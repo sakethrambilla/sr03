@@ -34,12 +34,14 @@ import {
   currentDefaults,
   currentProvider,
   currentProviders,
+  defaultEffortFor,
   defaultProviderId,
   isEffort,
   isModel,
   isPermissionMode,
   isProviderId,
   setDefaultPermissionMode,
+  supportsFast,
 } from "./models.ts";
 import type { Question } from "./types.ts";
 import { publish } from "./bus.ts";
@@ -473,18 +475,29 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
       ) {
         throw new HttpError(400, "Unknown permission mode");
       }
-      if (body.effort !== undefined && !isEffort(providerId, body.effort)) {
+      const model = body.model ?? defaults.model;
+      // effort validity depends on the model, so it is resolved before the level is checked
+      if (body.effort !== undefined && !isEffort(providerId, model, body.effort)) {
         throw new HttpError(400, "Unknown effort level");
+      }
+      if (body.fast !== undefined) {
+        if (typeof body.fast !== "boolean") {
+          throw new HttpError(400, "`fast` must be a boolean");
+        }
+        if (body.fast && !supportsFast(providerId, model)) {
+          throw new HttpError(400, "This model has no fast mode");
+        }
       }
       const thread = threads.create({
         projectId: project.id,
         providerId,
-        effort: body.effort ?? defaults.effort,
+        effort: body.effort ?? defaultEffortFor(providerId, model),
+        fast: body.fast === true,
         title: typeof body.title === "string" && body.title.trim() ? body.title.trim() : "New thread",
         cwd,
         branch: info.branch,
         isWorktree: path.resolve(cwd) !== path.resolve(project.path),
-        model: body.model ?? defaults.model,
+        model,
         permissionMode: body.permissionMode ?? defaults.permissionMode,
       });
       publish({ type: "thread.updated", thread });
@@ -769,6 +782,7 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
           model?: string;
           permissionMode?: typeof thread.permissionMode;
           effort?: typeof thread.effort;
+          fast?: boolean;
           archived?: boolean;
         } = {};
         if (body.title !== undefined) {
@@ -787,11 +801,21 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
           }
           patch.permissionMode = body.permissionMode;
         }
+        const model = patch.model ?? thread.model;
         if (body.effort !== undefined) {
-          if (!isEffort(thread.providerId, body.effort)) {
+          if (!isEffort(thread.providerId, model, body.effort)) {
             throw new HttpError(400, "Unknown effort level");
           }
           patch.effort = body.effort;
+        }
+        if (body.fast !== undefined) {
+          if (typeof body.fast !== "boolean") {
+            throw new HttpError(400, "`fast` must be a boolean");
+          }
+          if (body.fast && !supportsFast(thread.providerId, model)) {
+            throw new HttpError(400, "This model has no fast mode");
+          }
+          patch.fast = body.fast;
         }
         if (body.archived !== undefined) {
           if (typeof body.archived !== "boolean") {
@@ -807,14 +831,19 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
             !capabilities.liveModelSwitch) ||
             (patch.permissionMode !== undefined &&
               patch.permissionMode !== thread.permissionMode &&
-              !capabilities.livePermissionModeSwitch))
+              !capabilities.livePermissionModeSwitch) ||
+            (patch.effort !== undefined &&
+              patch.effort !== thread.effort &&
+              !capabilities.liveEffortSwitch) ||
+            (patch.fast !== undefined && patch.fast !== thread.fast && !capabilities.liveFastSwitch))
         ) {
           throw new HttpError(409, "That setting can only change after the current turn finishes");
         }
         const changesAgentSettings =
           patch.model !== undefined ||
           patch.permissionMode !== undefined ||
-          patch.effort !== undefined;
+          patch.effort !== undefined ||
+          patch.fast !== undefined;
         if (changesAgentSettings && !agents.canOperate(thread.id)) {
           throw new HttpError(409, "This thread is active in another sr03 instance");
         }
@@ -864,6 +893,7 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
             model: source.model,
             permissionMode: source.permissionMode,
             effort: source.effort,
+            fast: source.fast,
           });
           for (const message of transcript) {
             messages.append({
