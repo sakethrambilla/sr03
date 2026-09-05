@@ -1,7 +1,7 @@
-// The prompt box, in two layers: `Composer` is the plain one the draft screen uses — textarea,
+// The prompt box, in two layers: `Composer` is the plain one the draft screen uses — text box,
 // attachments, dictation, slash-command menu, and the model / permission / effort pickers — and
 // `ThreadComposer` wires it to a live thread, adding the tool-approval prompts above it.
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { api } from "../lib/api.ts";
@@ -18,12 +18,13 @@ import type {
   Thread,
 } from "../lib/types.ts";
 import { commandKey, EMPTY_PROVIDER, useStore } from "../store.ts";
+import { MentionInput } from "./MentionInput.tsx";
+import type { MentionInputHandle } from "./MentionInput.tsx";
 import { UsageMeter } from "./UsageMeter.tsx";
 import { Button } from "@/components/ui/button";
 import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Textarea } from "@/components/ui/textarea";
 import { Toggle } from "@/components/ui/toggle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -360,7 +361,7 @@ export function Composer({
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [viewing, setViewing] = useState<Attachment | null>(null);
   const [dragging, setDragging] = useState(false);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<MentionInputHandle>(null);
   const dictationRef = useRef<Recognizer | null>(null);
 
   const [picked, setPicked] = useState(0);
@@ -371,8 +372,7 @@ export function Composer({
   // the key is what makes rewinding to the same message twice refill the box again
   useEffect(() => {
     if (!restore) return;
-    setText(restore.text);
-    inputRef.current?.focus();
+    inputRef.current?.setText(restore.text);
   }, [restore?.key]);
 
   // the menu only stands in for the command name, so it goes away as soon as arguments start
@@ -395,25 +395,12 @@ export function Composer({
   const active = matches[Math.min(picked, matches.length - 1)] ?? null;
 
   const pickCommand = (command: SlashCommand) => {
-    setText(`/${command.name} `);
+    inputRef.current?.setText(`/${command.name} `);
     setPicked(0);
-    inputRef.current?.focus();
   };
 
-  useLayoutEffect(() => {
-    const input = inputRef.current;
-    if (!input) return;
-    if (!text) {
-      input.style.height = "";
-      return;
-    }
-    input.style.height = "auto";
-    input.style.height = `${Math.min(input.scrollHeight, 220)}px`;
-  }, [text]);
-
   const append = (value: string) => {
-    setText((current) => (current.trim() ? `${current.trimEnd()} ${value}` : value));
-    inputRef.current?.focus();
+    inputRef.current?.setText(text.trim() ? `${text.trimEnd()} ${value}` : value);
   };
 
   // Dropped files land in the data dir; the message carries their paths so the provider can read them.
@@ -476,7 +463,7 @@ export function Composer({
     setBusy(true);
     try {
       await onSubmit(payload);
-      setText("");
+      inputRef.current?.setText("");
       setAttachments([]);
     } catch {
       // the caller surfaces the failure; keep the text so it can be retried
@@ -548,40 +535,34 @@ export function Composer({
           ) : null}
 
           <div className="flex items-end gap-1.5 px-3 py-2.5">
-            <Textarea
+            <MentionInput
               ref={inputRef}
-              value={text}
-              onChange={(event) => {
-                setText(event.target.value);
+              placeholder={placeholder}
+              onChange={(next) => {
+                setText(next);
                 setPicked(0);
                 setDismissed(false);
               }}
+              onSubmit={() => void submit()}
               onKeyDown={(event) => {
-                if (menu && active) {
-                  const step =
-                    event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
-                  if (step) {
-                    event.preventDefault();
-                    setPicked((current) => {
-                      const at = Math.min(current, matches.length - 1) + step;
-                      return (at + matches.length) % matches.length;
-                    });
-                    return;
-                  }
-                  if (event.key === "Enter" || event.key === "Tab") {
-                    event.preventDefault();
-                    pickCommand(active);
-                    return;
-                  }
-                  if (event.key === "Escape") {
-                    event.preventDefault();
-                    setDismissed(true);
-                    return;
-                  }
-                }
-                if (event.key === "Enter" && !event.shiftKey) {
+                if (!menu || !active) return;
+                const step = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
+                if (step) {
                   event.preventDefault();
-                  void submit();
+                  setPicked((current) => {
+                    const at = Math.min(current, matches.length - 1) + step;
+                    return (at + matches.length) % matches.length;
+                  });
+                  return;
+                }
+                if (event.key === "Enter" || event.key === "Tab") {
+                  event.preventDefault();
+                  pickCommand(active);
+                  return;
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setDismissed(true);
                 }
               }}
               onPaste={(event) => {
@@ -590,9 +571,6 @@ export function Composer({
                 event.preventDefault();
                 void addFiles(files);
               }}
-              rows={1}
-              placeholder={placeholder}
-              className="max-h-[220px] min-h-8 w-full flex-1 resize-none rounded-none border-0 bg-transparent px-0 py-1.5 text-[14px] leading-relaxed shadow-none focus-visible:ring-0 placeholder:text-faint dark:bg-transparent"
             />
             {running && onInterrupt ? (
               <Button
