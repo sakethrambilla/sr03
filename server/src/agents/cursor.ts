@@ -13,6 +13,7 @@ import type {
   PendingApproval,
   PendingQuestion,
   PermissionMode,
+  SlashCommand,
   Thread,
   Usage,
 } from "../types.ts";
@@ -90,6 +91,7 @@ interface ReplayGate {
 
 interface CursorNativeSession {
   threadId: string;
+  cwd: string;
   emit: AgentEventSink;
   connection: AcpConnection;
   sessionId: string | null;
@@ -121,6 +123,8 @@ const CLIENT_CAPABILITIES = {
   image: false,
   _meta: { parameterizedModelPicker: true },
 };
+// covers the probe's whole cold start, not just the push: session/new alone can take ~10s
+const COMMANDS_TIMEOUT_MS = 45_000;
 const CANCEL_WRITE_TIMEOUT_MS = 2_000;
 const CANCEL_FINISH_TIMEOUT_MS = 8_000;
 const LOAD_REPLAY_IDLE_MS = 175;
@@ -466,11 +470,38 @@ function updateTool(session: CursorNativeSession, update: Record<string, unknown
   session.emit({ type: "phase", phase: null });
 }
 
+const commandsByCwd = new Map<string, SlashCommand[]>();
+
+function parseAvailableCommands(update: Record<string, unknown>): SlashCommand[] {
+  const listed = Array.isArray(update.availableCommands) ? update.availableCommands : [];
+  const commands: SlashCommand[] = [];
+  for (const entry of listed) {
+    if (!isRecord(entry)) continue;
+    const name = stringValue(entry.name);
+    if (!name) continue;
+    commands.push({
+      name,
+      description: stringValue(entry.description) ?? "",
+      // Cursor advertises no argument hints
+      argumentHint: "",
+    });
+  }
+  return commands.sort((left, right) => left.name.localeCompare(right.name));
+}
+
 function handleSessionUpdate(session: CursorNativeSession, params: unknown): void {
   if (!isRecord(params)) return;
   const incomingSessionId = stringValue(params.sessionId);
   if (incomingSessionId && session.sessionId && incomingSessionId !== session.sessionId) return;
   const update = isRecord(params.update) ? params.update : params;
+
+  // command state, not transcript replay — below either gate the push is silently dropped
+  if (update.sessionUpdate === "available_commands_update") {
+    const commands = parseAvailableCommands(update);
+    commandsByCwd.set(session.cwd, commands);
+    session.emit({ type: "commands.changed", commands });
+    return;
+  }
 
   if (session.replayGate) {
     session.replayGate.activity += 1;
@@ -1131,6 +1162,7 @@ async function open(
   });
   session = {
     threadId: thread.id,
+    cwd: thread.cwd,
     emit,
     connection,
     sessionId: thread.sessionId,
@@ -1494,11 +1526,80 @@ export async function discoverCursorModels(): Promise<ModelOption[]> {
   }
 }
 
+// The list only ever arrives as a push, so a cold read starts a session and waits for it.
+async function probeCommands(cwd: string): Promise<SlashCommand[]> {
+  const binary = await findCursor();
+  if (!binary) return [];
+  const connection = spawnAcp({
+    binary,
+    args: ["acp"],
+    cwd,
+    onStderr(text) {
+      const message = text.trim();
+      if (message) console.error(`[cursor:commands] ${message}`);
+    },
+  });
+  let settle!: (commands: SlashCommand[]) => void;
+  const pushed = new Promise<SlashCommand[]>((resolve) => {
+    settle = resolve;
+  });
+  const timer = setTimeout(() => settle([]), COMMANDS_TIMEOUT_MS);
+  connection.registerNotificationHandler("session/update", (params) => {
+    if (!isRecord(params)) return;
+    const update = isRecord(params.update) ? params.update : params;
+    if (update.sessionUpdate !== "available_commands_update") return;
+    settle(parseAvailableCommands(update));
+  });
+  try {
+    await connection.request(
+      "initialize",
+      {
+        protocolVersion: 1,
+        clientCapabilities: CLIENT_CAPABILITIES,
+        clientInfo: { name: "sr03", version: "0.0.0" },
+      },
+      { timeoutMs: STARTUP_TIMEOUT_MS },
+    );
+    await connection.request(
+      "authenticate",
+      { methodId: "cursor_login" },
+      { timeoutMs: STARTUP_TIMEOUT_MS },
+    );
+    await connection.request(
+      "session/new",
+      { cwd, mcpServers: [] },
+      { timeoutMs: STARTUP_TIMEOUT_MS },
+    );
+    return await pushed;
+  } catch (error) {
+    console.error(`[cursor:commands] ${errorMessage(error)}`);
+    return [];
+  } finally {
+    clearTimeout(timer);
+    connection.close();
+  }
+}
+
+const probesByCwd = new Map<string, Promise<SlashCommand[]>>();
+
+function listCommands(cwd: string): Promise<SlashCommand[]> {
+  const pushed = commandsByCwd.get(cwd);
+  if (pushed) return Promise.resolve(pushed);
+  const known = probesByCwd.get(cwd);
+  if (known) return known;
+  // an empty result means the probe failed, so it is not cached and the next read retries
+  const pending = probeCommands(cwd).then((commands) => {
+    if (commands.length) commandsByCwd.set(cwd, commands);
+    else probesByCwd.delete(cwd);
+    return commands;
+  });
+  probesByCwd.set(cwd, pending);
+  return pending;
+}
+
 export const cursorProvider: AgentProvider = {
   id: "cursor",
   open,
-  async listCommands() {
-    return [];
-  },
+  listCommands,
   readUsage,
 };
