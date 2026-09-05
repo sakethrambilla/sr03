@@ -118,6 +118,41 @@ async function freeWorktreePath(dir: string, name: string): Promise<string> {
   }
 }
 
+// Claude Code's .worktreeinclude: one path per line, relative to the repo root, naming gitignored
+// paths (.env, node_modules) that a fresh worktree still needs. Plain paths, not gitignore patterns
+// or pathspecs — git resolves a malformed pathspec to "match everything", which would copy the
+// whole ignored tree. check-ignore is what keeps this to ignored paths only.
+// Best-effort: the worktree already exists by the time this runs, so a missing or unreadable entry
+// is logged and the worktree still ships without it.
+async function copyIncludedPaths(root: string, target: string): Promise<void> {
+  const manifest = await fs
+    .readFile(path.join(root, ".worktreeinclude"), "utf8")
+    .catch(() => null);
+  if (manifest === null) return;
+
+  for (const line of manifest.split("\n")) {
+    const entry = line.trim();
+    if (entry.length === 0 || entry.startsWith("#")) continue;
+    const from = path.resolve(root, entry);
+    if (!from.startsWith(root + path.sep)) {
+      console.error("[git] .worktreeinclude skipping path outside the repo:", entry);
+      continue;
+    }
+    const ignored = await git(root, ["check-ignore", "-q", "--", entry]).then(
+      () => true,
+      () => false,
+    );
+    if (!ignored) {
+      console.error("[git] .worktreeinclude skipping path git does not ignore:", entry);
+      continue;
+    }
+    if (!(await fs.stat(from).then(() => true, () => false))) continue;
+    const to = path.join(target, path.relative(root, from));
+    await fs.mkdir(path.dirname(to), { recursive: true });
+    await fs.cp(from, to, { recursive: true, force: true, errorOnExist: false });
+  }
+}
+
 export async function addWorktree(input: {
   root: string;
   branch: string;
@@ -132,6 +167,9 @@ export async function addWorktree(input: {
     ? ["worktree", "add", "-b", input.branch, target, input.base ?? "HEAD"]
     : ["worktree", "add", target, input.branch];
   await git(input.root, args);
+  await copyIncludedPaths(input.root, target).catch((error: Error) =>
+    console.error("[git] .worktreeinclude", error.message),
+  );
   return { path: target, branch: input.branch, isMain: false };
 }
 
