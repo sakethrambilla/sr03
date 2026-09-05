@@ -1,8 +1,6 @@
 // The shape guard for a thread's editor layout. Everything crossing the API boundary comes through
 // here, so a malformed or stale layout becomes null rather than something the client has to survive.
-import type { EditorGroup, EditorLayout } from "./types.ts";
-
-export const CHAT_TAB = "chat";
+import type { EditorGroup, EditorLayout, EditorTab } from "./types.ts";
 
 // three groups on one axis is the whole model — see docs/plans/2026-09-05-editor-split-groups
 export const MAX_GROUPS = 3;
@@ -15,15 +13,30 @@ function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
+function parseTab(value: unknown): EditorTab | null {
+  if (!isRecord(value)) return null;
+  if (value.kind === "chat") return { kind: "chat" };
+  if (value.kind === "file" && nonEmptyString(value.path)) return { kind: "file", path: value.path };
+  return null;
+}
+
 function parseGroup(value: unknown): EditorGroup | null {
   if (!isRecord(value)) return null;
   if (!nonEmptyString(value.id)) return null;
   if (!Array.isArray(value.tabs) || value.tabs.length === 0) return null;
-  if (!value.tabs.every(nonEmptyString)) return null;
-  if (new Set(value.tabs).size !== value.tabs.length) return null;
-  const active = value.active ?? null;
-  if (active !== null && !(nonEmptyString(active) && value.tabs.includes(active))) return null;
-  return { id: value.id, tabs: [...value.tabs], active };
+
+  const tabs: EditorTab[] = [];
+  for (const entry of value.tabs) {
+    const tab = parseTab(entry);
+    if (!tab) return null;
+    tabs.push(tab);
+  }
+
+  const active = value.active;
+  if (!Number.isInteger(active) || (active as number) < 0 || (active as number) >= tabs.length) {
+    return null;
+  }
+  return { id: value.id, tabs, active: active as number };
 }
 
 export function parseLayout(value: unknown): EditorLayout | null {
@@ -47,9 +60,11 @@ export function parseLayout(value: unknown): EditorLayout | null {
     groups.push(group);
   }
 
+  // one transcript, and at most one tab per file, across the whole layout
   const tabs = groups.flatMap((group) => group.tabs);
-  if (new Set(tabs).size !== tabs.length) return null;
-  if (tabs.filter((tab) => tab === CHAT_TAB).length !== 1) return null;
+  const paths = tabs.flatMap((tab) => (tab.kind === "file" ? [tab.path] : []));
+  if (new Set(paths).size !== paths.length) return null;
+  if (tabs.filter((tab) => tab.kind === "chat").length !== 1) return null;
 
   if (!Array.isArray(source.sizes) || source.sizes.length !== groups.length) return null;
   if (!source.sizes.every((size) => typeof size === "number" && Number.isFinite(size) && size > 0)) {

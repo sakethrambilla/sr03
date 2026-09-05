@@ -21,14 +21,18 @@ export interface Project {
   createdAt: number;
 }
 
-// The editor area as a flat row or column of one to three groups. `tabs` holds workspace-relative
-// file paths plus the literal "chat"; `sizes` is one fraction per group, parallel to `groups`.
+// The editor area as a flat row or column of one to three groups. A tab is tagged rather than a
+// bare string so the transcript can never collide with a file that happens to be named "chat".
+// `active` indexes into the group's own `tabs`; `sizes` is one fraction per group, parallel to
+// `groups`.
 export type LayoutAxis = "horizontal" | "vertical";
+
+export type EditorTab = { kind: "chat" } | { kind: "file"; path: string };
 
 export interface EditorGroup {
   id: string;
-  tabs: string[];
-  active: string | null;
+  tabs: EditorTab[];
+  active: number;
 }
 
 export interface EditorLayout {
