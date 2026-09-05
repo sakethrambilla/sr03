@@ -202,7 +202,9 @@ function ModelPicker({
           size="sm"
           disabled={disabled}
           title={title}
-          className="h-7 max-w-44 px-1.5 text-[12.5px] text-muted-foreground"
+          // shrink + min-w-0 override Button's own shrink-0, so the label truncates instead of
+          // spilling out of a narrow editor group
+          className="h-7 max-w-44 min-w-0 shrink px-1.5 text-[12.5px] text-muted-foreground"
         >
           <span className="truncate">{selected?.label ?? model}</span>
         </Button>
@@ -614,7 +616,9 @@ export function Composer({
           </div>
         </div>
 
-        <div className="mt-1.5 flex items-center gap-0.5 px-1">
+        {/* the controls are all shrink-0, so in a narrow editor group they wrap to a second line
+            rather than spilling past the group's edge */}
+        <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-0.5 px-1">
           {permissionModes.length > 0 ? (
             <Menu
               title={
