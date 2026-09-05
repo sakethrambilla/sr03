@@ -119,7 +119,7 @@ function makeCatalog(providerId: ProviderId): ProviderCatalog {
     capabilities: {
       effort: true,
       fast: true,
-      slashCommands: false,
+      slashCommands: true,
       usage: false,
       tasks: false,
       fork: false,
