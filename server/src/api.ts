@@ -851,13 +851,15 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
         if (reserved && !agents.reserveThread(thread.id)) throw new HttpError(409, "Thread is busy");
         try {
           await agents.applyThreadSettings(thread, patch);
-          const updated = threads.update(thread.id, patch);
-          if (!updated) throw new HttpError(404, "Thread not found");
-          publish({ type: "thread.updated", thread: updated });
-          return updated;
         } finally {
+          // the reservation marks the row running, so it has to lift before the row is read back —
+          // otherwise the published snapshot strands every client on "running"
           if (reserved) agents.releaseThreadReservation(thread.id, thread.status);
         }
+        const updated = threads.update(thread.id, patch);
+        if (!updated) throw new HttpError(404, "Thread not found");
+        publish({ type: "thread.updated", thread: updated });
+        return updated;
       });
     },
   },
