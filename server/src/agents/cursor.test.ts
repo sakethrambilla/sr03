@@ -39,6 +39,20 @@ for await (const line of lines) {
         }
       }
     });
+    send({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "mock-session",
+        update: {
+          sessionUpdate: "available_commands_update",
+          availableCommands: [
+            { name: "worktree", description: "Create a worktree" },
+            { name: "alias", description: "Name a thing" }
+          ]
+        }
+      }
+    });
   } else if (message.method === "session/set_model" || message.method === "session/set_mode") {
     send({ jsonrpc: "2.0", id: message.id, result: {} });
   } else if (message.method === "session/set_config_option") {
@@ -239,6 +253,15 @@ test("normalizes Cursor ACP setup and interactive events", async (context) => {
       { slug: "kimi-k3", resolved: "kimi-k3" },
       { slug: "gpt-5.3-codex", resolved: "gpt-5.3-codex" },
       { slug: "claude-opus-4-5", resolved: "claude-opus-4-5" },
+    ],
+  );
+
+  const pushed = events.find((event) => event.type === "commands.changed");
+  assert.deepEqual(
+    pushed?.type === "commands.changed" ? pushed.commands : [],
+    [
+      { name: "alias", description: "Name a thing", argumentHint: "" },
+      { name: "worktree", description: "Create a worktree", argumentHint: "" },
     ],
   );
 

@@ -13,6 +13,7 @@ import type {
   PendingApproval,
   PendingQuestion,
   PermissionMode,
+  SlashCommand,
   Thread,
   Usage,
 } from "../types.ts";
@@ -90,6 +91,7 @@ interface ReplayGate {
 
 interface CursorNativeSession {
   threadId: string;
+  cwd: string;
   emit: AgentEventSink;
   connection: AcpConnection;
   sessionId: string | null;
@@ -466,11 +468,38 @@ function updateTool(session: CursorNativeSession, update: Record<string, unknown
   session.emit({ type: "phase", phase: null });
 }
 
+const commandsByCwd = new Map<string, SlashCommand[]>();
+
+function parseAvailableCommands(update: Record<string, unknown>): SlashCommand[] {
+  const listed = Array.isArray(update.availableCommands) ? update.availableCommands : [];
+  const commands: SlashCommand[] = [];
+  for (const entry of listed) {
+    if (!isRecord(entry)) continue;
+    const name = stringValue(entry.name);
+    if (!name) continue;
+    commands.push({
+      name,
+      description: stringValue(entry.description) ?? "",
+      // Cursor advertises no argument hints
+      argumentHint: "",
+    });
+  }
+  return commands.sort((left, right) => left.name.localeCompare(right.name));
+}
+
 function handleSessionUpdate(session: CursorNativeSession, params: unknown): void {
   if (!isRecord(params)) return;
   const incomingSessionId = stringValue(params.sessionId);
   if (incomingSessionId && session.sessionId && incomingSessionId !== session.sessionId) return;
   const update = isRecord(params.update) ? params.update : params;
+
+  // command state, not transcript replay — below either gate the push is silently dropped
+  if (update.sessionUpdate === "available_commands_update") {
+    const commands = parseAvailableCommands(update);
+    commandsByCwd.set(session.cwd, commands);
+    session.emit({ type: "commands.changed", commands });
+    return;
+  }
 
   if (session.replayGate) {
     session.replayGate.activity += 1;
@@ -1131,6 +1160,7 @@ async function open(
   });
   session = {
     threadId: thread.id,
+    cwd: thread.cwd,
     emit,
     connection,
     sessionId: thread.sessionId,
