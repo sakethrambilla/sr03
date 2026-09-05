@@ -41,6 +41,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Shapes,
   Sparkles,
   Settings,
   Square,
@@ -48,6 +49,7 @@ import {
   SquareTerminal,
   Trash2,
   Undo2,
+  Workflow,
   X,
   Zap,
   type LucideIcon,
@@ -417,6 +419,9 @@ const FILE_KINDS: Array<{ match: RegExp; Source: LucideIcon; tone: string }> = [
   { match: /\.(sh|bash|zsh|fish|ps1|bat|cmd)$/i, Source: SquareTerminal, tone: "text-file-shell" },
   { match: /(^\.env|^\.?[\w.-]*rc$|\.(toml|ini|conf|config)$)/i, Source: FileCog, tone: "text-file-data" },
   { match: /\.(csv|tsv|xlsx?|xlsm)$/i, Source: FileSpreadsheet, tone: "text-file-data" },
+  { match: /\.(mmd|mermaid)$/i, Source: Workflow, tone: "text-file-data" },
+  // ahead of the json row below, since *.excalidraw.json would otherwise match that first
+  { match: /\.excalidraw(\.json)?$/i, Source: Shapes, tone: "text-file-style" },
   { match: /\.(json|jsonc|ya?ml|lock|xml)$/i, Source: FileJson2, tone: "text-file-data" },
   { match: /\.(m?d|mdx|txt|pdf|log)$/i, Source: FileText, tone: "text-file-doc" },
   {

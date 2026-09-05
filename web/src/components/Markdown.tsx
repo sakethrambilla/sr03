@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 import { FILE_REF_SOURCE } from "../lib/fileref.ts";
 import type { FileLinks, FileRef } from "../lib/fileref.ts";
 import { TOKEN_CLASS, tokenize } from "../lib/highlight.ts";
+import { Mermaid } from "./Mermaid.tsx";
 import { CopyButton, RunIcon, cn } from "./ui.tsx";
 import { Button } from "@/components/ui/button";
 
@@ -99,9 +100,24 @@ function LinkSpan({ href, children }: { href: string; children: ReactNode }) {
 
 const SHELL_FENCES = new Set(["sh", "bash", "zsh", "fish", "shell", "console"]);
 
-function CodeBlock({ lang, body }: { lang: string; body: string }) {
+// closed is false for a fence a stream hasn't finished yet — rendering a diagram from a
+// half-written definition would just flash parse errors on every incoming token
+function CodeBlock({ lang, body, closed }: { lang: string; body: string; closed: boolean }) {
   const run = useContext(Run);
-  const runnable = run && SHELL_FENCES.has(lang.toLowerCase()) && body.trim().length > 0;
+  // a still-streaming command is a truncated one — running it early is the same risk closed
+  // already guards against for a diagram, just with a shell instead of a parser doing the flashing
+  const runnable = closed && run && SHELL_FENCES.has(lang.toLowerCase()) && body.trim().length > 0;
+
+  if (closed && lang.toLowerCase() === "mermaid") {
+    return (
+      <div className="group relative">
+        <Mermaid source={body} className="rounded-lg border border-border bg-background px-3 py-2.5" />
+        <div className="absolute top-1.5 right-1.5 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+          <CopyButton text={body} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="group relative">
@@ -238,8 +254,10 @@ function blocks(lines: string[], key: string): ReactNode[] {
       i++;
       const body: string[] = [];
       while (i < lines.length && !FENCE.test(lines[i])) body.push(lines[i++]);
-      i++;
-      out.push(<CodeBlock key={k} lang={fence[1]} body={body.join("\n")} />);
+      // still streaming in when the closing ``` hasn't arrived yet
+      const closed = i < lines.length;
+      if (closed) i++;
+      out.push(<CodeBlock key={k} lang={fence[1]} body={body.join("\n")} closed={closed} />);
       continue;
     }
 

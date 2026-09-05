@@ -54,7 +54,7 @@ Active while a file tab is selected.
 | Shortcut | Action | Code |
 | --- | --- | --- |
 | `⌘S` | Save | `web/src/components/FileView.tsx` |
-| `⌘⇧V` | Toggle preview — Markdown, CSV and TSV only | `web/src/components/FileView.tsx` |
+| `⌘⇧V` | Toggle preview — Markdown, Mermaid, Excalidraw, CSV and TSV only | `web/src/components/FileView.tsx` |
 | `Esc` | Close the file, only when it has no unsaved changes | `web/src/components/FileView.tsx` |
 | `⌘`-click an import | Open that file | `web/src/components/FileView.tsx` |
 
