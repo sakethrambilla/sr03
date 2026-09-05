@@ -64,9 +64,11 @@ REST for commands, WebSocket (`/ws`) for everything the server pushes back. Wire
 ## Conventions
 
 - Server side: no frameworks, no ORM, no Effect. Node built-ins and the Agent SDK are the
-  dependency budget; reuse what's here before adding anything. The terminal panel is the one
+  dependency budget; reuse what's here before adding anything. The terminal panel is one
   exception — `node-pty` on the server and `@xterm/xterm` on the web, since a PTY and an ANSI
-  renderer can't be built from built-ins.
+  renderer can't be built from built-ins. The mermaid and excalidraw file previews are the other —
+  `mermaid` and `@excalidraw/excalidraw` on the web, both dynamically imported so opening neither
+  kind of file costs anything on the rest of the app.
 - UI comes from shadcn/ui — never hand-roll a button, dialog, menu, popover, input or the like.
   Add what you need with `pnpm dlx shadcn@latest add <component>` (run it in `web/`), then compose
   it. Icons come from `lucide-react`, aliased in `components/ui.tsx`; no hand-drawn SVG glyphs and

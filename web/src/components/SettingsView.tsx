@@ -18,6 +18,7 @@ import {
 } from "./ui.tsx";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -286,6 +287,30 @@ function GeneralPanel() {
   );
 }
 
+function EditorPanel() {
+  const [autoPreview, setAutoPreview] = usePersistedState<boolean>("auto-preview", true);
+
+  return (
+    <section className="rounded-lg border border-border/70 bg-card/40">
+      <header className="border-b border-border/60 px-4 py-3">
+        <h2 className="text-[14px] font-medium">Editor</h2>
+        <p className="mt-0.5 text-[12px] text-muted-foreground">
+          Applies to files opened from now on. Files already open keep their current view.
+        </p>
+      </header>
+      <div className="flex items-center gap-4 px-4 py-4">
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] text-foreground">Open diagrams in preview</p>
+          <p className="text-[11.5px] text-faint">
+            A .mmd or .excalidraw file opens rendered, not as its raw source
+          </p>
+        </div>
+        <Switch checked={autoPreview} onCheckedChange={setAutoPreview} />
+      </div>
+    </section>
+  );
+}
+
 function AppearancePanel() {
   const appearance = useStore((state) => state.appearance);
   const setAppearance = useStore((state) => state.setAppearance);
@@ -442,7 +467,12 @@ export function SettingsView() {
 
         <div className="min-h-0 flex-1 overflow-auto">
           <div className="mx-auto flex max-w-2xl flex-col gap-4 px-6 py-6">
-            {section === "general" ? <GeneralPanel /> : null}
+            {section === "general" ? (
+              <>
+                <GeneralPanel />
+                <EditorPanel />
+              </>
+            ) : null}
             {section === "appearance" ? <AppearancePanel /> : null}
             {section === "providers" ? (
               <>
