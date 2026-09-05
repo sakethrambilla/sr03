@@ -5,7 +5,9 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 
 import { DB_PATH } from "./config.ts";
+import { parseLayout } from "./layout.ts";
 import type {
+  EditorLayout,
   Effort,
   Message,
   MessageRole,
@@ -63,6 +65,7 @@ db.exec(`
     session_id TEXT,
     status TEXT NOT NULL DEFAULT 'idle',
     owner_id TEXT,
+    layout TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
@@ -114,6 +117,9 @@ try {
   }
   if (!threadColumns.includes("owner_id")) {
     db.exec("ALTER TABLE threads ADD COLUMN owner_id TEXT");
+  }
+  if (!threadColumns.includes("layout")) {
+    db.exec("ALTER TABLE threads ADD COLUMN layout TEXT");
   }
   db.exec("COMMIT");
 } catch (error) {
@@ -242,6 +248,7 @@ function toThread(row: Row): Thread {
     sessionId: (row.session_id as string | null) ?? null,
     status: row.status as ThreadStatus,
     archived: Boolean(row.archived),
+    layout: parseLayout(row.layout),
     createdAt: row.created_at as number,
     updatedAt: row.updated_at as number,
   };
@@ -279,6 +286,7 @@ const sql = {
   projectRemove: db.prepare("DELETE FROM projects WHERE id = ?"),
   threadsList: db.prepare("SELECT * FROM threads ORDER BY updated_at DESC"),
   threadById: db.prepare("SELECT * FROM threads WHERE id = ?"),
+  threadSetLayout: db.prepare("UPDATE threads SET layout = ? WHERE id = ?"),
   threadInsert: db.prepare(
     `INSERT INTO threads (id, project_id, provider_id, title, cwd, branch, is_worktree, model, permission_mode, effort, fast, session_id, status, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -412,6 +420,7 @@ export const threads = {
       sessionId: null,
       status: "idle",
       archived: false,
+      layout: null,
       createdAt: now,
       updatedAt: now,
       ...input,
@@ -459,6 +468,13 @@ export const threads = {
   release(id: string): void {
     sql.threadRelease.run(Date.now(), id, INSTANCE_ID);
   },
+  // deliberately not update(): that writes updated_at, and threadsList is ordered by it, so a
+  // dragged tab would jump the session to the top of the sidebar
+  setLayout(id: string, layout: EditorLayout | null): Thread | null {
+    sql.threadSetLayout.run(layout ? JSON.stringify(layout) : null, id);
+    return threads.byId(id);
+  },
+
   update(
     id: string,
     patch: Partial<

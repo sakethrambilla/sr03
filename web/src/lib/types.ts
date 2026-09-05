@@ -21,6 +21,26 @@ export interface Project {
   createdAt: number;
 }
 
+// The editor area as a flat row or column of one to three groups. A tab is tagged rather than a
+// bare string so the transcript can never collide with a file that happens to be named "chat".
+// `active` indexes into the group's own `tabs`; `sizes` is one fraction per group, parallel to
+// `groups`.
+export type LayoutAxis = "horizontal" | "vertical";
+
+export type EditorTab = { kind: "chat" } | { kind: "file"; path: string };
+
+export interface EditorGroup {
+  id: string;
+  tabs: EditorTab[];
+  active: number;
+}
+
+export interface EditorLayout {
+  axis: LayoutAxis;
+  groups: EditorGroup[];
+  sizes: number[];
+}
+
 export interface Thread {
   id: string;
   projectId: string;
@@ -36,6 +56,7 @@ export interface Thread {
   sessionId: string | null;
   status: ThreadStatus;
   archived: boolean;
+  layout: EditorLayout | null;
   createdAt: number;
   updatedAt: number;
 }

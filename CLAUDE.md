@@ -44,9 +44,11 @@ server/src   plain Node, run through --experimental-strip-types (no build step)
 web/src      Vite + React 19 + Tailwind v4 + shadcn/ui + zustand
   store.ts       the single client store; applyEvent folds server events into it
   lib/api.ts     every server call, one method each
+  lib/layout.ts  the editor's group model — split, move, close, and the drop-zone geometry
   lib/utils.ts   cn() — clsx + tailwind-merge
   components/ui  shadcn/ui, generated — don't hand-edit, re-add instead
   components/ui.tsx  app-level wrappers over shadcn (Dialog, Menu, Chip) + lucide icon aliases
+  components/EditorGroups.tsx  the editor grid: per-group tab strips, sashes, drop overlay
 desktop      Electron shell — a window over the ordinary server, nothing app-specific in it
   main.js    resolves the login shell's PATH, spawns the server, opens the window
   payload.mjs collects web/dist + a symlink-free server copy into desktop/payload

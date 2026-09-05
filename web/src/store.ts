@@ -11,6 +11,7 @@ import type {
   AppState,
   ApprovalDecision,
   Branch,
+  EditorLayout,
   Effort,
   GitSnapshot,
   Message,
@@ -136,6 +137,7 @@ interface Store extends AppState {
   renameThread: (id: string, title: string) => Promise<void>;
   forkThread: (id: string) => Promise<void>;
   setArchived: (id: string, archived: boolean) => Promise<void>;
+  setLayout: (id: string, layout: EditorLayout) => void;
   removeThread: (id: string) => Promise<void>;
   send: (text: string) => Promise<void>;
   interrupt: () => Promise<void>;
@@ -328,6 +330,11 @@ function bumpFs(threadId: string, set: (partial: (state: Store) => Partial<Store
     }, FS_SETTLE_MS),
   );
 }
+
+// A sash drag would otherwise write once per pointer move. The trailing edge is enough because the
+// optimistic update has already painted; only the server needs to wait for the gesture to settle.
+const LAYOUT_SETTLE_MS = 250;
+const layoutWrites = new Map<string, number>();
 
 function upsertThread(threads: Thread[], thread: Thread): Thread[] {
   const next = threads.filter((item) => item.id !== thread.id);
@@ -574,6 +581,19 @@ export const useStore = create<Store>((set, get) => ({
     } catch (error) {
       set({ error: (error as Error).message });
     }
+  },
+
+  setLayout: (id, layout) => {
+    const current = get().threads.find((thread) => thread.id === id);
+    if (current) set((state) => ({ threads: upsertThread(state.threads, { ...current, layout }) }));
+    window.clearTimeout(layoutWrites.get(id));
+    layoutWrites.set(
+      id,
+      window.setTimeout(() => {
+        layoutWrites.delete(id);
+        api.setThreadLayout(id, layout).catch((error: Error) => set({ error: error.message }));
+      }, LAYOUT_SETTLE_MS),
+    );
   },
 
   removeThread: async (id) => {

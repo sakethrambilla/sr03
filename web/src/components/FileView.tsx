@@ -199,6 +199,7 @@ export const FileView = memo(function FileView({
   path,
   active,
   onClose,
+  onMissing,
   onDirtyChange,
   onSaved,
   registerSave,
@@ -209,6 +210,7 @@ export const FileView = memo(function FileView({
   path: string;
   active: boolean;
   onClose: (path: string) => void;
+  onMissing: (path: string) => void;
   onDirtyChange: (path: string, dirty: boolean) => void;
   onSaved: () => void;
   registerSave: (path: string, save: (() => Promise<boolean>) | null) => void;
@@ -284,13 +286,20 @@ export const FileView = memo(function FileView({
           source.current = next.text;
         }
       })
-      .catch((cause: Error) => {
-        if (!cancelled) setError(cause.message);
+      .catch((cause: Error & { status?: number }) => {
+        if (cancelled) return;
+        // a tab restored from a stored layout may name a file that has since been deleted; it
+        // closes itself rather than sitting there showing an error
+        if (cause.status === 404) {
+          onMissing(path);
+          return;
+        }
+        setError(cause.message);
       });
     return () => {
       cancelled = true;
     };
-  }, [thread.id, path, fsTick]);
+  }, [thread.id, path, fsTick, onMissing]);
 
   useEffect(() => onDirtyChange(path, dirty), [path, dirty, onDirtyChange]);
 
