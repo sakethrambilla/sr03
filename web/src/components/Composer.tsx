@@ -5,16 +5,29 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { api } from "../lib/api.ts";
-import type { Effort, PendingApproval, PermissionMode, SlashCommand, Thread } from "../lib/types.ts";
-import { useStore } from "../store.ts";
+import type {
+  Effort,
+  EffortOption,
+  ModelOption,
+  PendingApproval,
+  PendingQuestion,
+  PermissionMode,
+  ProviderId,
+  Question,
+  SlashCommand,
+  Thread,
+} from "../lib/types.ts";
+import { commandKey, EMPTY_PROVIDER, useStore } from "../store.ts";
 import { UsageMeter } from "./UsageMeter.tsx";
 import { Button } from "@/components/ui/button";
-import { Command, CommandItem, CommandList } from "@/components/ui/command";
+import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import { Toggle } from "@/components/ui/toggle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
+  CheckIcon,
   CloseIcon,
   Menu,
   MicIcon,
@@ -25,6 +38,7 @@ import {
 } from "./ui.tsx";
 
 const NO_APPROVALS: PendingApproval[] = [];
+const NO_QUESTIONS: PendingQuestion[] = [];
 const NO_COMMANDS: SlashCommand[] = [];
 
 interface Recognizer {
@@ -44,8 +58,15 @@ const speech = window as unknown as {
 };
 const Dictation = speech.SpeechRecognition ?? speech.webkitSpeechRecognition;
 
-function EffortPicker({ effort, onPick }: { effort: Effort; onPick: (effort: Effort) => void }) {
-  const levels = useStore((state) => state.effortLevels);
+function EffortPicker({
+  effort,
+  levels,
+  onPick,
+}: {
+  effort: Effort;
+  levels: EffortOption[];
+  onPick: (effort: Effort) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [dragging, setDragging] = useState<number | null>(null);
   const trackRef = useRef<HTMLDivElement>(null);
@@ -152,6 +173,68 @@ function EffortPicker({ effort, onPick }: { effort: Effort; onPick: (effort: Eff
   );
 }
 
+function ModelPicker({
+  model,
+  models,
+  disabled,
+  title,
+  onPick,
+}: {
+  model: string;
+  models: ModelOption[];
+  disabled?: boolean;
+  title: string;
+  onPick: (model: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = models.find((option) => option.slug === model || option.resolved === model);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={disabled}
+          title={title}
+          className="h-7 max-w-44 px-1.5 text-[12.5px] text-muted-foreground"
+        >
+          <span className="truncate">{selected?.label ?? model}</span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" side="top" className="w-72 p-0">
+        <Command>
+          {models.length > 8 ? <CommandInput placeholder="Search models…" /> : null}
+          <CommandList className="max-h-80 p-1">
+            <CommandEmpty className="py-4 text-center text-[12px] text-faint">No models</CommandEmpty>
+            {models.map((option) => (
+              <CommandItem
+                key={option.slug}
+                value={`${option.label} ${option.slug} ${option.hint}`}
+                onSelect={() => {
+                  onPick(option.slug);
+                  setOpen(false);
+                }}
+                className="gap-3"
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px]">{option.label}</span>
+                  {option.hint ? (
+                    <span className="block truncate text-[11px] text-faint">{option.hint}</span>
+                  ) : null}
+                </span>
+                {option.slug === model || option.resolved === model ? (
+                  <CheckIcon className="text-primary" />
+                ) : null}
+              </CommandItem>
+            ))}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 interface Attachment {
   id: string;
   name: string;
@@ -231,6 +314,7 @@ export function Composer({
   chips,
   above,
   cwd,
+  providerId,
   model,
   permissionMode,
   effort,
@@ -247,6 +331,7 @@ export function Composer({
   chips?: ReactNode;
   above?: ReactNode;
   cwd?: string;
+  providerId: ProviderId;
   model: string;
   permissionMode: PermissionMode;
   effort: Effort;
@@ -260,12 +345,15 @@ export function Composer({
   blocked?: boolean;
   restore?: { text: string; key: number } | null;
 }) {
-  const models = useStore((state) => state.models);
-  const permissionModes = useStore((state) => state.permissionModes);
+  const provider = useStore(
+    (state) => state.providers.find((entry) => entry.id === providerId) ?? EMPTY_PROVIDER,
+  );
+  const { models, permissionModes, effortLevels, capabilities } = provider;
   const setError = useStore((state) => state.setError);
   const loadCommands = useStore((state) => state.loadCommands);
-  const commands = useStore((state) => (cwd ? state.commandsByCwd[cwd] : null) ?? NO_COMMANDS);
-  const commandsLoaded = useStore((state) => (cwd ? state.commandsByCwd[cwd] !== undefined : false));
+  const key = cwd ? commandKey(providerId, cwd) : null;
+  const commands = useStore((state) => (key ? state.commandsByCwd[key] : null) ?? NO_COMMANDS);
+  const commandsLoaded = useStore((state) => (key ? state.commandsByCwd[key] !== undefined : false));
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false);
@@ -288,14 +376,14 @@ export function Composer({
   }, [restore?.key]);
 
   // the menu only stands in for the command name, so it goes away as soon as arguments start
-  const typing = /^\/(\S*)$/.exec(text)?.[1] ?? null;
+  const typing = capabilities.slashCommands ? (/^\/(\S*)$/.exec(text)?.[1] ?? null) : null;
   const slashing = typing !== null;
 
   // a cold read spawns a CLI of its own, so the list is asked for on the first "/" rather than
   // on every mount — most sessions never type one
   useEffect(() => {
-    if (cwd && slashing) void loadCommands(cwd);
-  }, [cwd, slashing, loadCommands]);
+    if (cwd && slashing) void loadCommands(providerId, cwd);
+  }, [providerId, cwd, slashing, loadCommands]);
 
   const matches = useMemo(() => {
     if (typing === null) return NO_COMMANDS;
@@ -328,7 +416,7 @@ export function Composer({
     inputRef.current?.focus();
   };
 
-  // dropped files land in the data dir; the message carries their paths so Claude can read them
+  // Dropped files land in the data dir; the message carries their paths so the provider can read them.
   const addFiles = async (files: File[]) => {
     for (const file of files) {
       try {
@@ -537,18 +625,28 @@ export function Composer({
         </div>
 
         <div className="mt-1.5 flex items-center gap-0.5 px-1">
-          <Menu
-            title="Permission mode"
-            heading="Mode"
-            trigger={permissionModes.find((mode) => mode.value === permissionMode)?.label ?? permissionMode}
-            items={permissionModes.map((mode) => ({
-              id: mode.value,
-              label: mode.label,
-              hint: mode.hint,
-              selected: mode.value === permissionMode,
-            }))}
-            onPick={(id) => onPermissionMode(id as PermissionMode)}
-          />
+          {permissionModes.length > 0 ? (
+            <Menu
+              title={
+                running && !capabilities.livePermissionModeSwitch
+                  ? "Permission mode can change after this turn"
+                  : "Permission mode"
+              }
+              heading="Mode"
+              trigger={
+                permissionModes.find((mode) => mode.value === permissionMode)?.label ??
+                permissionMode
+              }
+              items={permissionModes.map((mode) => ({
+                id: mode.value,
+                label: mode.label,
+                hint: mode.hint,
+                selected: mode.value === permissionMode,
+              }))}
+              onPick={(id) => onPermissionMode(id as PermissionMode)}
+              disabled={Boolean(running && !capabilities.livePermissionModeSwitch)}
+            />
+          ) : null}
           <Button
             variant="ghost"
             size="icon"
@@ -570,21 +668,21 @@ export function Composer({
             </Toggle>
           ) : null}
           <div className="flex-1" />
-          <Menu
-            align="end"
-            title="Model"
-            heading="Models"
-            trigger={models.find((option) => option.slug === model || option.resolved === model)?.label ?? model}
-            items={models.map((option) => ({
-              id: option.slug,
-              label: option.label,
-              hint: option.hint,
-              selected: option.slug === model,
-            }))}
+          <ModelPicker
+            model={model}
+            models={models}
+            title={
+              running && !capabilities.liveModelSwitch
+                ? "Model can change after this turn"
+                : "Model"
+            }
             onPick={onModel}
+            disabled={Boolean(running && !capabilities.liveModelSwitch)}
           />
-          <EffortPicker effort={effort} onPick={onEffort} />
-          <UsageMeter />
+          {capabilities.effort && effortLevels.length > 0 ? (
+            <EffortPicker effort={effort} levels={effortLevels} onPick={onEffort} />
+          ) : null}
+          <UsageMeter showProviderUsage={capabilities.usage} />
         </div>
       </div>
 
@@ -610,16 +708,278 @@ function ApprovalPanel({ approval }: { approval: PendingApproval }) {
       </p>
       <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">{detail}</p>
       <div className="mt-2 flex gap-2">
-        <Button variant="default" onClick={() => void respond(approval.id, "allow")}>
-          Allow once
-        </Button>
-        <Button onClick={() => void respond(approval.id, "always")}>Always allow</Button>
-        <Button variant="destructive" onClick={() => void respond(approval.id, "deny")}>
-          Deny
+        {approval.decisions.includes("allow") ? (
+          <Button variant="default" onClick={() => void respond(approval, "allow")}>
+            Allow once
+          </Button>
+        ) : null}
+        {approval.decisions.includes("always") ? (
+          <Button onClick={() => void respond(approval, "always")}>Always allow</Button>
+        ) : null}
+        {approval.decisions.includes("deny") ? (
+          <Button variant="destructive" onClick={() => void respond(approval, "deny")}>
+            Deny
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function CursorQuestionPanel({ request }: { request: PendingQuestion }) {
+  const answerQuestion = useStore((state) => state.answerQuestion);
+  const [answers, setAnswers] = useState<Record<string, string[]>>({});
+  const complete = request.questions.every((question) => (answers[question.id]?.length ?? 0) > 0);
+
+  const pick = (questionId: string, optionId: string, multiple: boolean) => {
+    setAnswers((current) => {
+      if (!multiple) return { ...current, [questionId]: [optionId] };
+      const selected = current[questionId] ?? [];
+      return {
+        ...current,
+        [questionId]: selected.includes(optionId)
+          ? selected.filter((id) => id !== optionId)
+          : [...selected, optionId],
+      };
+    });
+  };
+
+  return (
+    <div className="mb-2 rounded-lg border border-primary/50 bg-primary/10 px-3 py-2.5">
+      {request.title ? <p className="text-[13px] font-medium">{request.title}</p> : null}
+      <div className="mt-1.5 flex flex-col gap-3">
+        {request.questions.map((question) => (
+          <div key={question.id}>
+            <p className="text-[12.5px] text-foreground">{question.prompt}</p>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {question.options.map((option) => {
+                const selected = answers[question.id]?.includes(option.id) ?? false;
+                return (
+                  <Button
+                    key={option.id}
+                    variant={selected ? "default" : "outline"}
+                    onClick={() => pick(question.id, option.id, question.allowMultiple)}
+                  >
+                    {option.label}
+                  </Button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+      <Button
+        className="mt-3"
+        disabled={!complete}
+        onClick={() => void answerQuestion(request.id, answers)}
+      >
+        Submit
+      </Button>
+    </div>
+  );
+}
+
+interface Draft {
+  selected: string[];
+  custom: string;
+}
+
+const EMPTY_DRAFT: Draft = { selected: [], custom: "" };
+
+// a typed answer wins over the options, so "Other" and a selection can never both be live;
+// multi-select answers travel comma-separated, which is the shape the CLI reads them back in
+function answerOf(draft: Draft): string {
+  return draft.custom.trim() || draft.selected.join(", ");
+}
+
+// AskUserQuestion arrives through the same approval channel as any other tool, but it is answered
+// rather than allowed — one question at a time, with the options as rows and a free-text way out
+function QuestionPanel({ approval }: { approval: PendingApproval }) {
+  const respond = useStore((state) => state.respond);
+  const questions = approval.questions ?? [];
+  const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  const [at, setAt] = useState(0);
+  const [otherFor, setOtherFor] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  const index = Math.min(at, questions.length - 1);
+  const question = questions[index] as Question | undefined;
+  const last = index === questions.length - 1;
+
+  // the digit shortcuts only reach the panel if the composer does not hold the caret
+  useEffect(() => panelRef.current?.focus(), []);
+
+  const draft = (question && drafts[question.question]) ?? EMPTY_DRAFT;
+  const answer = answerOf(draft);
+  const otherOpen = question !== undefined && otherFor === question.question;
+
+  const setDraft = (next: Draft) => {
+    if (!question) return;
+    setDrafts((current) => ({ ...current, [question.question]: next }));
+  };
+
+  const send = async (answers: Record<string, string>) => {
+    setBusy(true);
+    await respond(approval, { answers });
+  };
+
+  const advance = (answers: Record<string, string>) => {
+    if (last) return void send(answers);
+    setAt(index + 1);
+    setOtherFor(null);
+  };
+
+  const pick = (label: string) => {
+    if (!question || busy) return;
+    const selected = question.multiSelect
+      ? draft.selected.includes(label)
+        ? draft.selected.filter((entry) => entry !== label)
+        : [...draft.selected, label]
+      : [label];
+    setDraft({ selected, custom: "" });
+    setOtherFor(null);
+    // one choice is the whole answer, so a single-select question needs no confirm step
+    if (!question.multiSelect) {
+      advance({ ...collect(drafts, questions, index), [question.question]: label });
+    }
+  };
+
+  const confirm = () => {
+    if (!question || !answer || busy) return;
+    advance({ ...collect(drafts, questions, index), [question.question]: answer });
+  };
+
+  if (!question) return null;
+
+  return (
+    <div
+      ref={panelRef}
+      tabIndex={-1}
+      onKeyDown={(event) => {
+        if (event.metaKey || event.ctrlKey || event.altKey) return;
+        const target = event.target;
+        if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
+        const digit = Number(event.key);
+        if (!Number.isInteger(digit) || digit < 1 || digit > question.options.length) return;
+        event.preventDefault();
+        pick(question.options[digit - 1]!.label);
+      }}
+      className="mb-2 rounded-lg border border-primary/50 bg-primary/10 px-3 py-2.5 outline-none"
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] font-medium text-primary">{question.header}</span>
+        <div className="flex-1" />
+        {questions.length > 1 ? (
+          <span className="text-[11px] tabular-nums text-faint">
+            {index + 1}/{questions.length}
+          </span>
+        ) : null}
+      </div>
+      <p className="mt-1 text-[13px] font-medium">{question.question}</p>
+      {question.multiSelect ? (
+        <p className="mt-0.5 text-[11px] text-faint">Pick one or more.</p>
+      ) : null}
+
+      <div className="mt-2 space-y-0.5">
+        {question.options.map((option, position) => {
+          const chosen = !draft.custom.trim() && draft.selected.includes(option.label);
+          return (
+            <button
+              key={`${position}:${option.label}`}
+              type="button"
+              disabled={busy}
+              onClick={() => pick(option.label)}
+              className={cn(
+                "flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors",
+                chosen ? "bg-accent text-foreground" : "hover:bg-accent/50",
+                busy && "opacity-50",
+              )}
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13px]">{option.label}</span>
+                {option.description && option.description !== option.label ? (
+                  <span className="block truncate text-[11px] text-faint">{option.description}</span>
+                ) : null}
+              </span>
+              {chosen ? (
+                <CheckIcon className="size-3.5 text-primary" />
+              ) : position < 9 ? (
+                <kbd className="text-[10px] tabular-nums text-faint">{position + 1}</kbd>
+              ) : null}
+            </button>
+          );
+        })}
+
+        {otherOpen ? (
+          <Input
+            autoFocus
+            value={draft.custom}
+            onChange={(event) => setDraft({ selected: [], custom: event.target.value })}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                confirm();
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setDraft({ ...draft, custom: "" });
+                setOtherFor(null);
+                panelRef.current?.focus();
+              }
+            }}
+            placeholder="Your own answer…"
+            className="h-8 text-[13px]"
+          />
+        ) : (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => setOtherFor(question.question)}
+            className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] text-muted-foreground transition-colors hover:bg-accent/50"
+          >
+            <PlusIcon className="size-3" />
+            Other…
+          </button>
+        )}
+      </div>
+
+      <div className="mt-2 flex gap-2">
+        {question.multiSelect || otherOpen ? (
+          <Button variant="default" disabled={!answer || busy} onClick={confirm}>
+            {last ? "Send" : "Next"}
+          </Button>
+        ) : null}
+        {index > 0 ? (
+          <Button
+            disabled={busy}
+            onClick={() => {
+              setAt(index - 1);
+              setOtherFor(null);
+            }}
+          >
+            Back
+          </Button>
+        ) : null}
+        <Button disabled={busy} onClick={() => void respond(approval, "deny")}>
+          Dismiss
         </Button>
       </div>
     </div>
   );
+}
+
+// every question before the current one is already answered, and they all travel together
+function collect(
+  drafts: Record<string, Draft>,
+  questions: Question[],
+  upTo: number,
+): Record<string, string> {
+  const answers: Record<string, string> = {};
+  for (const question of questions.slice(0, upTo)) {
+    answers[question.question] = answerOf(drafts[question.question] ?? EMPTY_DRAFT);
+  }
+  return answers;
 }
 
 export function ThreadComposer({
@@ -633,21 +993,40 @@ export function ThreadComposer({
   const interrupt = useStore((state) => state.interrupt);
   const patchActive = useStore((state) => state.patchActive);
   const approvals = useStore((state) => state.approvalsByThread[thread.id] ?? NO_APPROVALS);
+  const questions = useStore((state) => state.questionsByThread[thread.id] ?? NO_QUESTIONS);
+  const provider = useStore(
+    (state) => state.providers.find((entry) => entry.id === thread.providerId) ?? EMPTY_PROVIDER,
+  );
   const running = thread.status === "running";
+  const name = thread.providerId === "cursor" ? "Cursor" : "Claude";
 
   return (
     <Composer
-      above={approvals.map((approval) => (
-        <ApprovalPanel key={approval.id} approval={approval} />
-      ))}
+      above={
+        <>
+          {approvals.map((approval) =>
+            approval.questions ? (
+              <QuestionPanel key={approval.id} approval={approval} />
+            ) : (
+              <ApprovalPanel key={approval.id} approval={approval} />
+            ),
+          )}
+          {provider.capabilities.questions
+            ? questions.map((question) => (
+                <CursorQuestionPanel key={question.id} request={question} />
+              ))
+            : null}
+        </>
+      }
       cwd={thread.cwd}
+      providerId={thread.providerId}
       model={thread.model}
       permissionMode={thread.permissionMode}
       effort={thread.effort}
       onModel={(model) => void patchActive({ model })}
       onPermissionMode={(permissionMode) => void patchActive({ permissionMode })}
       onEffort={(effort) => void patchActive({ effort })}
-      placeholder={running ? "Claude is working…" : "Ask Claude to change something…"}
+      placeholder={running ? `${name} is working…` : `Ask ${name} to change something…`}
       onSubmit={(text) => send(text)}
       running={running}
       onInterrupt={() => void interrupt()}

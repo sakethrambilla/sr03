@@ -6,7 +6,7 @@ import fs from "node:fs";
 import { promisify } from "node:util";
 
 import { publish } from "./bus.ts";
-import { liveThreads } from "./claude.ts";
+import { liveThreads } from "./agents/runtime.ts";
 import { threads as threadStore } from "./db.ts";
 import { sessionPids } from "./pty.ts";
 import type { ResourceGroup, Resources } from "./types.ts";

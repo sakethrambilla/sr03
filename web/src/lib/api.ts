@@ -2,6 +2,7 @@
 // response throws with the server's own message, which is what the toast shows.
 import type {
   AppState,
+  ApprovalDecision,
   ChangedFile,
   DirListing,
   Effort,
@@ -9,6 +10,7 @@ import type {
   Message,
   PermissionMode,
   Project,
+  ProviderId,
   ProviderStatus,
   SlashCommand,
   TableFilter,
@@ -75,6 +77,8 @@ export const api = {
   git: (projectId: string) => call<GitSnapshot>(`/api/projects/${projectId}/git`),
   addWorktree: (projectId: string, input: { branch: string; createBranch: boolean; base?: string }) =>
     post<Worktree>(`/api/projects/${projectId}/worktrees`, input),
+  checkout: (projectId: string, input: { branch: string; createBranch: boolean; base?: string }) =>
+    post<{ branch: string }>(`/api/projects/${projectId}/checkout`, input),
   removeWorktree: (projectId: string, path: string, force = false) =>
     call<{ ok: true }>(`/api/projects/${projectId}/worktrees`, {
       method: "DELETE",
@@ -83,6 +87,7 @@ export const api = {
     }),
   createThread: (input: {
     projectId: string;
+    providerId: ProviderId;
     cwd?: string;
     model?: string;
     permissionMode?: PermissionMode;
@@ -91,8 +96,10 @@ export const api = {
   }) => post<Thread>("/api/threads", input),
   thread: (id: string) =>
     call<{ thread: Thread; messages: Message[]; tasks: ThreadTask[] }>(`/api/threads/${id}`),
-  commands: (cwd: string) =>
-    call<{ commands: SlashCommand[] }>(`/api/commands?cwd=${encodeURIComponent(cwd)}`),
+  commands: (providerId: ProviderId, cwd: string) =>
+    call<{ commands: SlashCommand[] }>(
+      `/api/commands?provider=${encodeURIComponent(providerId)}&cwd=${encodeURIComponent(cwd)}`,
+    ),
   usage: (threadId?: string | null) =>
     call<Usage>(`/api/usage${threadId ? `?thread=${encodeURIComponent(threadId)}` : ""}`),
   threadGit: (id: string) =>
@@ -126,6 +133,12 @@ export const api = {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ key, value }),
+    }),
+  saveDefaults: (patch: { permissionMode: PermissionMode }) =>
+    call<{ defaults: AppState["defaults"] }>("/api/defaults", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
     }),
   files: (id: string) => call<{ files: string[] }>(`/api/threads/${id}/files`),
   searchText: (id: string, query: string) =>
@@ -188,6 +201,14 @@ export const api = {
   rewind: (id: string, messageId: string) =>
     post<{ text: string }>(`/api/threads/${id}/rewind`, { messageId }),
   interrupt: (id: string) => post<{ ok: true }>(`/api/threads/${id}/interrupt`),
-  respondToApproval: (threadId: string, approvalId: string, decision: "allow" | "always" | "deny") =>
-    post<{ ok: true }>(`/api/threads/${threadId}/approvals/${approvalId}`, { decision }),
+  respondToApproval: (threadId: string, approvalId: string, decision: ApprovalDecision) =>
+    post<{ ok: true }>(
+      `/api/threads/${threadId}/approvals/${approvalId}`,
+      typeof decision === "string" ? { decision } : decision,
+    ),
+  respondToQuestion: (
+    threadId: string,
+    questionId: string,
+    answers: Record<string, string[]>,
+  ) => post<{ ok: true }>(`/api/threads/${threadId}/questions/${questionId}`, { answers }),
 };
