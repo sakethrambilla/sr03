@@ -108,7 +108,7 @@ const TASK_STATUS: Record<string, ThreadTask["status"]> = {
   completed: "done",
   failed: "failed",
   killed: "failed",
-  stopped: "failed",
+  stopped: "stopped",
 };
 
 function saveTask(session: ClaudeSession, task: ThreadTask): void {
@@ -127,6 +127,7 @@ function trackTask(session: ClaudeSession, message: SystemMessage): void {
         id: message.task_id,
         description: message.description,
         agentType: message.subagent_type ?? null,
+        model: null,
         status: "running",
         tokens: 0,
         toolUses: 0,
@@ -144,6 +145,7 @@ function trackTask(session: ClaudeSession, message: SystemMessage): void {
         ...task,
         description: message.description || task.description,
         agentType: message.subagent_type ?? task.agentType,
+        model: null,
         tokens: message.usage.total_tokens,
         toolUses: message.usage.tool_uses,
         lastTool: message.last_tool_name ?? task.lastTool,

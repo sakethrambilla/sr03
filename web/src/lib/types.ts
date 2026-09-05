@@ -116,7 +116,8 @@ export interface ThreadTask {
   id: string;
   description: string;
   agentType: string | null;
-  status: "running" | "done" | "failed";
+  model: string | null;
+  status: "running" | "done" | "failed" | "stopped";
   tokens: number;
   toolUses: number;
   lastTool: string | null;
@@ -167,6 +168,8 @@ export interface ProviderCapabilities {
   slashCommands: boolean;
   usage: boolean;
   tasks: boolean;
+  subagentTranscripts: boolean;
+  stopSubagents: boolean;
   fork: boolean;
   questions: boolean;
   liveModelSwitch: boolean;

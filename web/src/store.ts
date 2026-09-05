@@ -185,6 +185,8 @@ export const EMPTY_PROVIDER: ProviderCatalog = {
     slashCommands: false,
     usage: false,
     tasks: false,
+    subagentTranscripts: false,
+    stopSubagents: false,
     fork: false,
     questions: false,
     liveModelSwitch: false,
