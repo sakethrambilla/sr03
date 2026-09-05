@@ -112,7 +112,7 @@ installed CLI version before trusting these field names if that version has move
 | `server/src/agents/cursor.test.ts` | Modify | Coverage for both framings and for the upsert |
 | `server/src/agents/types.ts` | Modify | Optional `taskId` on five `AgentEvent` variants; `stopTask` on `AgentSession` |
 | `server/src/agents/claude.ts` | Modify | `forwardSubagentText`; two correlation maps; per-case stamping; `stopTask`; `"stopped"` |
-| `server/src/agents/runtime.ts` | Modify | Route stamped events; end task deltas on turn end; publish `thread.tasks` on rewind; export `stopTask` |
+| `server/src/agents/runtime.ts` | Modify | Route stamped events; end task deltas on turn end; export `stopTask` |
 | `server/src/api.ts` | Modify | `POST /api/threads/:id/tasks/:taskId/stop` |
 | `web/src/lib/types.ts` | Modify | Mirror of all of the above; `EditorTab` gains `subagent` |
 | `web/src/lib/layout.ts` | Modify | `tabKey`, `persistable`, `subagentTabs` |
@@ -120,11 +120,10 @@ installed CLI version before trusting these field names if that version has move
 | `web/src/lib/api.ts` | Modify | `stopTask(threadId, taskId)` |
 | `web/src/store.ts` | Modify | `streamByTask`; the two task delta events; strip on write |
 | `web/src/components/EditorGroups.tsx` | Modify | `onClose` takes a tab; subagent chip fed by a `labels` prop |
-| `web/src/components/FileView.tsx` | Modify | `onClose` / `onMissing` take a tab, not a path |
-| `web/src/components/ChatView.tsx` | Modify | Retargeted close path; prune tabs for vanished tasks; open a subagent |
+| `web/src/components/ChatView.tsx` | Modify | Dispatching close path; prune tabs for vanished tasks; open a subagent |
 | `web/src/components/SubagentView.tsx` | Create | The tab body: transcript for Claude, card for Cursor |
 | `web/src/components/Timeline.tsx` | Modify | Optional `taskId` scope; filter the main transcript; clickable delegation row |
-| `web/src/components/AgentsPanel.tsx` | Modify | Rows open a tab; stop control; `model`; parked rows |
+| `web/src/components/AgentsPanel.tsx` | Modify | Rows open a tab; stop control; `model`; stale rows |
 | `CLAUDE.md` | Modify | One Layout line; one Cursor gotcha |
 
 ## Tasks
@@ -166,7 +165,12 @@ where any of this is visible.
   `durationMs` while the start does not. Upsert by `toolCallId` and derive the row `id` from
   `toolCallId` alone — deriving it from `agentId` when present makes the row's identity change
   between the two notifications and closes any tab already open on it.
-- **`EditorGroups.onClose` is path-keyed, and so is a chain behind it.** `FileView.onClose`,
+- **`EditorGroups.onClose` is path-keyed, and a long chain behind it is too.** `FileView.onClose`,
   `FileView.onMissing`, `ChatView`'s `pendingClose`, `saveAndClose`, `closeFile`, `promptNextDirty`
-  and the `⌘W` handler at `ChatView.tsx:509` all pass a `string`. Widening to `EditorTab` is one
-  connected change; doing half of it typechecks in neither direction.
+  and the `⌘W` handler at `ChatView.tsx:509` all pass a `string`. Task 4 widens only the tab
+  strip's callback and dispatches on `kind` at the ChatView boundary; widening the whole chain
+  would drag the unsaved-changes prompt into a change that has nothing to do with it.
+- **Cursor's `cursor/task` is unverified against a live subagent.** No sr03 session has ever seen
+  one, and the payload comes from reading a shipped bundle. Task 1's test proves the adapter
+  matches the *assumption*; only task 5 step 14 proves the assumption. If it turns out wrong, the
+  fix is confined to one handler and its test.

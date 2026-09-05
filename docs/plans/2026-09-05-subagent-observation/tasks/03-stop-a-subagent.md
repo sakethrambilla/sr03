@@ -60,14 +60,20 @@ this server does not own, and a session that exists but whose `handle` is still 
       {
         method: "POST",
         pattern: /^\/api\/threads\/([^/]+)\/tasks\/([^/]+)\/stop$/,
-        handler: async ({ params }) => { ... },
+        handler: async ({ params }) => {
+          const thread = requireThread(params[0]!);
+          const outcome = await agents.stopTask(thread.id, params[1]!);
+          if (outcome === "unowned") {
+            throw new HttpError(409, "This server does not own the running session");
+          }
+          if (outcome === "unavailable") throw new HttpError(409, "This session is still starting");
+          if (outcome === "unsupported") {
+            throw new HttpError(501, "This provider cannot stop a single subagent");
+          }
+          return { ok: true };
+        },
       }
       ```
-      `requireThread(params[0]!)`, call `agents.stopTask(thread.id, params[1]!)`, and map:
-      `"unowned"` → `HttpError(409, "This server does not own the running session")`;
-      `"unavailable"` → `HttpError(409, "This session is still starting")`;
-      `"unsupported"` → `HttpError(501, "This provider cannot stop a single subagent")`;
-      `"ok"` → `{ ok: true }`.
 
 - [ ] 5. Run `pnpm typecheck && pnpm test`. Expect: both pass.
 
