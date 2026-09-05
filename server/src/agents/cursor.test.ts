@@ -221,6 +221,7 @@ test("normalizes Cursor ACP setup and interactive events", async (context) => {
     sessionId: null,
     status: "idle",
     archived: false,
+  layout: null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
@@ -438,6 +439,7 @@ test("tunes effort and fast for the selected model", async (context) => {
     sessionId: null,
     status: "idle",
     archived: false,
+  layout: null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
@@ -503,6 +505,7 @@ test("asserts fast even when it is off", async (context) => {
     sessionId: null,
     status: "idle",
     archived: false,
+  layout: null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };

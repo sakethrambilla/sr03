@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "node --watch --experimental-strip-types src/index.ts",
     "start": "node --experimental-strip-types src/index.ts",
-    "test": "node --experimental-strip-types --test src/agents/*.test.ts",
+    "test": "node --experimental-strip-types --test src/*.test.ts src/agents/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

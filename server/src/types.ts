@@ -23,6 +23,22 @@ export interface Project {
   createdAt: number;
 }
 
+// The editor area as a flat row or column of one to three groups. `tabs` holds workspace-relative
+// file paths plus the literal "chat"; `sizes` is one fraction per group, parallel to `groups`.
+export type LayoutAxis = "horizontal" | "vertical";
+
+export interface EditorGroup {
+  id: string;
+  tabs: string[];
+  active: string | null;
+}
+
+export interface EditorLayout {
+  axis: LayoutAxis;
+  groups: EditorGroup[];
+  sizes: number[];
+}
+
 export interface Thread {
   id: string;
   projectId: string;
@@ -38,6 +54,7 @@ export interface Thread {
   sessionId: string | null;
   status: ThreadStatus;
   archived: boolean;
+  layout: EditorLayout | null;
   createdAt: number;
   updatedAt: number;
 }
