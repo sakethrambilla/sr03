@@ -3,9 +3,10 @@
 import { useEffect, useState } from "react";
 
 import type { Thread, ThreadTask } from "../lib/types.ts";
-import { useStore } from "../store.ts";
+import { EMPTY_PROVIDER, useStore } from "../store.ts";
+import { api } from "../lib/api.ts";
 import { Button } from "@/components/ui/button";
-import { CloseIcon, StatusDot, cn } from "./ui.tsx";
+import { CloseIcon, StatusDot, StopIcon, cn } from "./ui.tsx";
 
 const NO_TASKS: ThreadTask[] = [];
 
@@ -32,52 +33,112 @@ function useClock(live: boolean): number {
   return now;
 }
 
-function TaskRow({ task, now }: { task: ThreadTask; now: number }) {
+function TaskRow({
+  task,
+  now,
+  stale,
+  canStop,
+  onOpen,
+  onStop,
+}: {
+  task: ThreadTask;
+  now: number;
+  stale: boolean;
+  canStop: boolean;
+  onOpen: (taskId: string) => void;
+  onStop: (taskId: string) => void;
+}) {
   const trailer = task.error ?? task.lastTool;
+  const status = stale
+    ? "idle"
+    : task.status === "failed"
+      ? "error"
+      : task.status === "running"
+        ? "running"
+        : "idle";
 
   return (
     <div
       style={{ paddingLeft: 12 + (task.depth - 1) * 12 }}
-      className="flex flex-col gap-0.5 py-1.5 pr-3"
+      className="group flex items-start gap-1 py-1.5 pr-2"
     >
-      <div className="flex items-center gap-2">
-        <StatusDot
-          status={task.status === "failed" ? "error" : task.status === "running" ? "running" : "idle"}
-          done={task.status === "done"}
-        />
-        <span className="min-w-0 flex-1 truncate text-[12.5px]" title={task.description}>
-          {task.description}
-        </span>
-        <span className="shrink-0 font-mono text-[10.5px] text-faint">
-          {formatDuration((task.endedAt ?? now) - task.startedAt)}
-        </span>
-      </div>
+      <button
+        type="button"
+        onClick={() => onOpen(task.id)}
+        className="flex min-w-0 flex-1 flex-col gap-0.5 rounded-md px-1 py-0.5 text-left transition hover:bg-accent/60"
+      >
+        <div className="flex items-center gap-2">
+          <StatusDot status={status} done={task.status === "done"} />
+          <span className="min-w-0 flex-1 truncate text-[12.5px]" title={task.description}>
+            {task.description}
+          </span>
+          <span className="shrink-0 font-mono text-[10.5px] text-faint">
+            {stale ? "parked" : formatDuration((task.endedAt ?? now) - task.startedAt)}
+          </span>
+          {task.status === "stopped" ? (
+            <span className="shrink-0 font-mono text-[10.5px] text-faint">stopped</span>
+          ) : null}
+          {task.status === "failed" ? (
+            <span className="shrink-0 font-mono text-[10.5px] text-destructive">failed</span>
+          ) : null}
+        </div>
 
-      <div className="flex items-center gap-1.5 pl-[15px] font-mono text-[10.5px] text-faint">
-        {task.agentType ? (
-          <span className="max-w-24 truncate text-muted-foreground">{task.agentType}</span>
+        <div className="flex items-center gap-1.5 pl-[15px] font-mono text-[10.5px] text-faint">
+          {task.agentType ? (
+            <span className="max-w-24 truncate text-muted-foreground">{task.agentType}</span>
+          ) : null}
+          {task.model ? <span className="max-w-24 truncate">{task.model}</span> : null}
+          <span>{formatTokens(task.tokens)}</span>
+          <span>
+            · {task.toolUses} {task.toolUses === 1 ? "tool" : "tools"}
+          </span>
+        </div>
+
+        {trailer ? (
+          <p
+            title={trailer}
+            className={cn("truncate pl-[15px] text-[11px]", task.error ? "text-destructive" : "text-faint")}
+          >
+            {trailer}
+          </p>
         ) : null}
-        <span>{formatTokens(task.tokens)}</span>
-        <span>· {task.toolUses} {task.toolUses === 1 ? "tool" : "tools"}</span>
-      </div>
-
-      {trailer ? (
-        <p
-          title={trailer}
-          className={cn("truncate pl-[15px] text-[11px]", task.error ? "text-destructive" : "text-faint")}
+      </button>
+      {canStop ? (
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Stop subagent"
+          onClick={() => onStop(task.id)}
+          className="mt-0.5 size-6 shrink-0 opacity-0 group-hover:opacity-100"
         >
-          {trailer}
-        </p>
+          <StopIcon className="size-3" />
+        </Button>
       ) : null}
     </div>
   );
 }
 
-export function AgentsPanel({ thread, onClose }: { thread: Thread; onClose: () => void }) {
+export function AgentsPanel({
+  thread,
+  onClose,
+  onOpen,
+}: {
+  thread: Thread;
+  onClose: () => void;
+  onOpen: (taskId: string) => void;
+}) {
   const tasks = useStore((state) => state.tasksByThread[thread.id] ?? NO_TASKS);
+  const setError = useStore((state) => state.setError);
+  const provider = useStore(
+    (state) => state.providers.find((entry) => entry.id === thread.providerId) ?? EMPTY_PROVIDER,
+  );
   const running = tasks.filter((task) => task.status === "running").length;
   const now = useClock(running > 0);
   const tokens = tasks.reduce((total, task) => total + task.tokens, 0);
+
+  const onStop = (taskId: string) => {
+    void api.stopTask(thread.id, taskId).catch((error: Error) => setError(error.message));
+  };
 
   return (
     <aside className="flex h-full w-[260px] shrink-0 flex-col border-l border-border/60 bg-card">
@@ -97,7 +158,20 @@ export function AgentsPanel({ thread, onClose }: { thread: Thread; onClose: () =
             Subagents this session spawns show up here while they work.
           </p>
         ) : (
-          tasks.map((task) => <TaskRow key={task.id} task={task} now={now} />)
+          tasks.map((task) => {
+            const stale = task.status === "running" && thread.status !== "running";
+            return (
+              <TaskRow
+                key={task.id}
+                task={task}
+                now={now}
+                stale={stale}
+                canStop={task.status === "running" && !stale && provider.capabilities.stopSubagents}
+                onOpen={onOpen}
+                onStop={onStop}
+              />
+            );
+          })
         )}
       </div>
 

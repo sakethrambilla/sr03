@@ -15,6 +15,7 @@ import type {
   PermissionMode,
   SlashCommand,
   Thread,
+  ThreadTask,
   Usage,
 } from "../types.ts";
 import {
@@ -110,6 +111,7 @@ interface CursorNativeSession {
   questions: Map<string, NativeQuestion>;
   tools: Map<string, CursorTool>;
   completedTools: Set<string>;
+  tasks: Map<string, ThreadTask>;
   replayGate: ReplayGate | null;
   closeTimer: NodeJS.Timeout | null;
 }
@@ -703,6 +705,45 @@ function handleCreatePlan(
   return { accepted: true };
 }
 
+function handleTaskNotification(
+  session: CursorNativeSession,
+  params: unknown,
+): Record<string, never> {
+  if (!isRecord(params)) return {};
+  const toolCallId = stringValue(params.toolCallId);
+  if (!toolCallId) return {};
+  const description = stringValue(params.description);
+  const prompt = stringValue(params.prompt);
+  const subagentType = stringValue(params.subagentType);
+  const model = stringValue(params.model);
+  const durationMs =
+    typeof params.durationMs === "number" && Number.isFinite(params.durationMs)
+      ? params.durationMs
+      : null;
+  const existing = session.tasks.get(toolCallId);
+  const startedAt = existing?.startedAt ?? Date.now();
+  // Cursor repeats this notification per tool-call update and only the completing one carries a
+  // duration, so a settled row keeps its outcome rather than being pulled back to running
+  const settled = existing !== undefined && existing.status !== "running";
+  session.tasks.set(toolCallId, {
+    id: toolCallId,
+    description: description ?? prompt ?? existing?.description ?? "Subagent task",
+    agentType: subagentType ?? existing?.agentType ?? null,
+    model: model ?? existing?.model ?? null,
+    status: settled ? existing.status : durationMs !== null ? "done" : "running",
+    tokens: existing?.tokens ?? 0,
+    toolUses: existing?.toolUses ?? 0,
+    lastTool: existing?.lastTool ?? null,
+    error: existing?.error ?? null,
+    depth: existing?.depth ?? 1,
+    startedAt,
+    endedAt: settled ? existing.endedAt : durationMs !== null ? startedAt + durationMs : null,
+    toolUseId: toolCallId,
+  });
+  session.emit({ type: "tasks.changed", tasks: [...session.tasks.values()] });
+  return {};
+}
+
 function settleApproval(pending: NativeApproval, response: PermissionResponse): void {
   if (pending.settled) return;
   pending.settled = true;
@@ -780,6 +821,12 @@ function registerHandlers(session: CursorNativeSession): void {
   session.connection.registerRequestHandler("cursor/create_plan", (params) =>
     handleCreatePlan(session, params),
   );
+  session.connection.registerRequestHandler("cursor/task", (params) =>
+    handleTaskNotification(session, params),
+  );
+  session.connection.registerNotificationHandler("cursor/task", (params) => {
+    handleTaskNotification(session, params);
+  });
 }
 
 function wait(milliseconds: number): Promise<void> {
@@ -1183,6 +1230,7 @@ async function open(
     questions: new Map(),
     tools: new Map(),
     completedTools: new Set(),
+    tasks: new Map(),
     replayGate: null,
     closeTimer: null,
   };

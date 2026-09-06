@@ -5,6 +5,7 @@
 import { create } from "zustand";
 
 import { api } from "./lib/api.ts";
+import { persistable } from "./lib/layout.ts";
 import { applyAppearance, loadAppearance, saveAppearance } from "./lib/appearance.ts";
 import type { Appearance } from "./lib/appearance.ts";
 import type {
@@ -103,6 +104,7 @@ interface Store extends AppState {
   draft: Draft | null;
   messagesByThread: Record<string, Message[]>;
   streamByThread: Record<string, string>;
+  streamByTask: Record<string, Record<string, string>>;
   approvalsByThread: Record<string, PendingApproval[]>;
   questionsByThread: Record<string, PendingQuestion[]>;
   tasksByThread: Record<string, ThreadTask[]>;
@@ -185,6 +187,8 @@ export const EMPTY_PROVIDER: ProviderCatalog = {
     slashCommands: false,
     usage: false,
     tasks: false,
+    subagentTranscripts: false,
+    stopSubagents: false,
     fork: false,
     questions: false,
     liveModelSwitch: false,
@@ -357,6 +361,7 @@ export const useStore = create<Store>((set, get) => ({
   draft: null,
   messagesByThread: {},
   streamByThread: {},
+  streamByTask: {},
   approvalsByThread: {},
   questionsByThread: {},
   tasksByThread: {},
@@ -591,7 +596,7 @@ export const useStore = create<Store>((set, get) => ({
       id,
       window.setTimeout(() => {
         layoutWrites.delete(id);
-        api.setThreadLayout(id, layout).catch((error: Error) => set({ error: error.message }));
+        api.setThreadLayout(id, persistable(layout)).catch((error: Error) => set({ error: error.message }));
       }, LAYOUT_SETTLE_MS),
     );
   },
@@ -796,6 +801,7 @@ export const useStore = create<Store>((set, get) => ({
             ),
           },
           streamByThread: { ...state.streamByThread, [event.threadId]: "" },
+          streamByTask: { ...state.streamByTask, [event.threadId]: {} },
           tasksByThread: { ...state.tasksByThread, [event.threadId]: [] },
           approvalsByThread: { ...state.approvalsByThread, [event.threadId]: [] },
           questionsByThread: { ...state.questionsByThread, [event.threadId]: [] },
@@ -812,6 +818,29 @@ export const useStore = create<Store>((set, get) => ({
         set((state) => ({
           streamByThread: { ...state.streamByThread, [event.threadId]: "" },
         }));
+        return;
+      }
+      case "thread.task.delta": {
+        set((state) => {
+          const byThread = state.streamByTask[event.threadId] ?? {};
+          return {
+            streamByTask: {
+              ...state.streamByTask,
+              [event.threadId]: {
+                ...byThread,
+                [event.taskId]: (byThread[event.taskId] ?? "") + event.text,
+              },
+            },
+          };
+        });
+        return;
+      }
+      case "thread.task.delta.end": {
+        set((state) => {
+          const byThread = { ...(state.streamByTask[event.threadId] ?? {}) };
+          delete byThread[event.taskId];
+          return { streamByTask: { ...state.streamByTask, [event.threadId]: byThread } };
+        });
         return;
       }
       case "thread.status": {

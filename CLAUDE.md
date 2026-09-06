@@ -49,6 +49,7 @@ web/src      Vite + React 19 + Tailwind v4 + shadcn/ui + zustand
   components/ui  shadcn/ui, generated — don't hand-edit, re-add instead
   components/ui.tsx  app-level wrappers over shadcn (Dialog, Menu, Chip) + lucide icon aliases
   components/EditorGroups.tsx  the editor grid: per-group tab strips, sashes, drop overlay
+  components/SubagentView.tsx  one subagent's tab body — transcript or Cursor card
 desktop      Electron shell — a window over the ordinary server, nothing app-specific in it
   main.js    resolves the login shell's PATH, spawns the server, opens the window
   payload.mjs collects web/dist + a symlink-free server copy into desktop/payload
@@ -133,6 +134,9 @@ the worktree still ships without those paths.
   which is on for some models.
 - ACP request-permission options are provider supplied. Only decisions present in that request may
   be returned, and `cursor/ask_question` stays pending until the web client answers it.
+- `cursor/task` arrives on both the request and notification paths. It carries description, prompt,
+  subagent type, model, agent id and duration, and nothing else — there is no child transcript to
+  render.
 
 ## Desktop shell
 

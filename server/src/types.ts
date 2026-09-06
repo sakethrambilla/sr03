@@ -121,7 +121,8 @@ export interface ThreadTask {
   id: string;
   description: string;
   agentType: string | null;
-  status: "running" | "done" | "failed";
+  model: string | null;
+  status: "running" | "done" | "failed" | "stopped";
   tokens: number;
   toolUses: number;
   lastTool: string | null;
@@ -129,6 +130,8 @@ export interface ThreadTask {
   depth: number;
   startedAt: number;
   endedAt: number | null;
+  // Agent/Task tool_use_id that spawned this row; Claude's id is the SDK task_id, which differs
+  toolUseId: string | null;
 }
 
 // one row of the CLI's slash-command list: built-ins, skills, and the folder's own commands
@@ -174,6 +177,8 @@ export interface ProviderCapabilities {
   slashCommands: boolean;
   usage: boolean;
   tasks: boolean;
+  subagentTranscripts: boolean;
+  stopSubagents: boolean;
   fork: boolean;
   questions: boolean;
   liveModelSwitch: boolean;
@@ -254,6 +259,8 @@ export type ServerEvent =
   | { type: "thread.truncated"; threadId: string; seq: number }
   | { type: "thread.delta"; threadId: string; text: string }
   | { type: "thread.delta.end"; threadId: string }
+  | { type: "thread.task.delta"; threadId: string; taskId: string; text: string }
+  | { type: "thread.task.delta.end"; threadId: string; taskId: string }
   | { type: "thread.approval"; approval: PendingApproval }
   | { type: "thread.approval.resolved"; threadId: string; approvalId: string }
   | { type: "thread.approvals"; approvals: PendingApproval[] }

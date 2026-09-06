@@ -130,6 +130,17 @@ for await (const line of lines) {
         ]
       }
     });
+    send({
+      jsonrpc: "2.0",
+      id: "task-req-1",
+      method: "cursor/task",
+      params: {
+        toolCallId: "task-1",
+        description: "Audit the config",
+        subagentType: "explore",
+        model: "composer-2.5"
+      }
+    });
   } else if (message.id === "permission-1") {
     send({
       jsonrpc: "2.0",
@@ -165,6 +176,17 @@ for await (const line of lines) {
       }
     });
   } else if (message.id === "question-1") {
+    send({
+      jsonrpc: "2.0",
+      method: "cursor/task",
+      params: { toolCallId: "task-1", durationMs: 4200 }
+    });
+    // a trailing update with no duration must not pull the settled row back to running
+    send({
+      jsonrpc: "2.0",
+      method: "cursor/task",
+      params: { toolCallId: "task-1", description: "Audit the config" }
+    });
     send({ jsonrpc: "2.0", id: promptId, result: { stopReason: "end_turn" } });
   }
 }
@@ -579,4 +601,82 @@ test("falls back to no commands when Cursor errors", async (context) => {
 
   const { cursorProvider } = await import("./cursor.ts");
   assert.deepEqual(await cursorProvider.listCommands(directory), []);
+});
+
+test("emits one task row for a Cursor subagent", async (context) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "sr03-cursor-task-"));
+  const binary = path.join(directory, "cursor-agent");
+  const logPath = path.join(directory, "messages.ndjson");
+  await fs.writeFile(binary, MOCK_AGENT, { mode: 0o755 });
+
+  const previousPath = process.env.PATH;
+  const previousData = process.env.SR03_DATA_DIR;
+  const previousLog = process.env.MOCK_CURSOR_LOG;
+  process.env.PATH = `${directory}${path.delimiter}${previousPath ?? ""}`;
+  process.env.SR03_DATA_DIR = path.join(directory, "data");
+  process.env.MOCK_CURSOR_LOG = logPath;
+  context.after(async () => {
+    process.env.PATH = previousPath;
+    if (previousData === undefined) delete process.env.SR03_DATA_DIR;
+    else process.env.SR03_DATA_DIR = previousData;
+    if (previousLog === undefined) delete process.env.MOCK_CURSOR_LOG;
+    else process.env.MOCK_CURSOR_LOG = previousLog;
+    await fs.rm(directory, { recursive: true, force: true });
+  });
+
+  const { cursorProvider } = await import("./cursor.ts");
+  const events: AgentEvent[] = [];
+  let resolveApproval = (_value: PendingApproval) => {};
+  let resolveQuestion = (_value: PendingQuestion) => {};
+  const approvalReady = waitFor<PendingApproval>((resolve) => {
+    resolveApproval = resolve;
+  });
+  const questionReady = waitFor<PendingQuestion>((resolve) => {
+    resolveQuestion = resolve;
+  });
+  const thread: Thread = {
+    id: "cursor-task-test",
+    projectId: "project",
+    providerId: "cursor",
+    title: "Test",
+    cwd: directory,
+    branch: null,
+    isWorktree: false,
+    model: "auto",
+    permissionMode: "ask",
+    effort: "high",
+    fast: false,
+    sessionId: null,
+    status: "idle",
+    archived: false,
+    layout: null,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  const session = await cursorProvider.open(
+    thread,
+    (event) => {
+      events.push(event);
+      if (event.type === "approval.requested") resolveApproval(event.approval);
+      if (event.type === "question.requested") resolveQuestion(event.question);
+    },
+    new AbortController().signal,
+  );
+  context.after(() => session.close());
+
+  const turn = session.send("Run the mock flow");
+  const approval = await approvalReady;
+  assert.equal(await session.respondToApproval(approval.id, "deny"), true);
+  const question = await questionReady;
+  assert.equal(await session.respondToQuestion(question.id, { color: ["blue"] }), true);
+  await turn;
+
+  const last = events.findLast((event) => event.type === "tasks.changed");
+  const task = last?.type === "tasks.changed" ? last.tasks[0] : undefined;
+  assert.equal(last?.type === "tasks.changed" ? last.tasks.length : 0, 1);
+  assert.equal(task?.description, "Audit the config");
+  assert.equal(task?.agentType, "explore");
+  assert.equal(task?.model, "composer-2.5");
+  assert.equal(task?.status, "done");
+  assert.ok(task?.endedAt !== null && task.endedAt - task.startedAt === 4200);
 });

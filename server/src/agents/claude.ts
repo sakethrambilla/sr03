@@ -64,6 +64,7 @@ interface ClaudeSession {
   interrupted: boolean;
   stopped: boolean;
   busy: boolean;
+  subagentTasks: Map<string, string>;
 }
 
 function createInputQueue(): InputQueue {
@@ -108,8 +109,19 @@ const TASK_STATUS: Record<string, ThreadTask["status"]> = {
   completed: "done",
   failed: "failed",
   killed: "failed",
-  stopped: "failed",
+  stopped: "stopped",
 };
+
+// A task that has already settled keeps its outcome. Parking a thread closes the CLI, which
+// reports every still-registered background task as stopped on the way down — without this, a
+// subagent that finished minutes earlier is relabelled `stopped` when the session is parked.
+function nextStatus(
+  task: ThreadTask,
+  incoming: ThreadTask["status"] | undefined,
+): ThreadTask["status"] {
+  if (!incoming) return task.status;
+  return task.status === "running" ? incoming : task.status;
+}
 
 function saveTask(session: ClaudeSession, task: ThreadTask): void {
   const tasks = tasksByThread.get(session.threadId) ?? new Map<string, ThreadTask>();
@@ -123,10 +135,14 @@ function trackTask(session: ClaudeSession, message: SystemMessage): void {
   switch (message.subtype) {
     case "task_started":
       if (message.ambient || (!message.subagent_type && message.task_type !== "local_agent")) return;
+      if (typeof message.tool_use_id === "string") {
+        session.subagentTasks.set(message.tool_use_id, message.task_id);
+      }
       saveTask(session, {
         id: message.task_id,
         description: message.description,
         agentType: message.subagent_type ?? null,
+        model: null,
         status: "running",
         tokens: 0,
         toolUses: 0,
@@ -135,6 +151,7 @@ function trackTask(session: ClaudeSession, message: SystemMessage): void {
         depth: message.spawn_depth ?? 1,
         startedAt: Date.now(),
         endedAt: null,
+        toolUseId: typeof message.tool_use_id === "string" ? message.tool_use_id : null,
       });
       return;
     case "task_progress": {
@@ -142,8 +159,11 @@ function trackTask(session: ClaudeSession, message: SystemMessage): void {
       if (!task) return;
       saveTask(session, {
         ...task,
-        description: message.description || task.description,
+        // this description narrates the step in flight ("Running <tool>…"), where the one from
+        // task_started names the task; the name wins, and lastTool already carries the step
+        description: task.description || message.description,
         agentType: message.subagent_type ?? task.agentType,
+        model: null,
         tokens: message.usage.total_tokens,
         toolUses: message.usage.tool_uses,
         lastTool: message.last_tool_name ?? task.lastTool,
@@ -153,13 +173,16 @@ function trackTask(session: ClaudeSession, message: SystemMessage): void {
     case "task_updated": {
       const task = known(message.task_id);
       if (!task) return;
-      const status = message.patch.status ? TASK_STATUS[message.patch.status] : task.status;
+      const status = nextStatus(
+        task,
+        message.patch.status ? TASK_STATUS[message.patch.status] : undefined,
+      );
       saveTask(session, {
         ...task,
-        status: status ?? task.status,
+        status,
         description: message.patch.description ?? task.description,
         error: message.patch.error ?? task.error,
-        endedAt: status === "running" ? null : (message.patch.end_time ?? task.endedAt ?? Date.now()),
+        endedAt: status === "running" ? null : (task.endedAt ?? message.patch.end_time ?? Date.now()),
       });
       return;
     }
@@ -168,7 +191,7 @@ function trackTask(session: ClaudeSession, message: SystemMessage): void {
       if (task) {
         saveTask(session, {
           ...task,
-          status: TASK_STATUS[message.status] ?? task.status,
+          status: nextStatus(task, TASK_STATUS[message.status]),
           tokens: message.usage?.total_tokens ?? task.tokens,
           toolUses: message.usage?.tool_uses ?? task.toolUses,
           endedAt: task.endedAt ?? Date.now(),
@@ -180,6 +203,13 @@ function trackTask(session: ClaudeSession, message: SystemMessage): void {
     default:
       return;
   }
+}
+
+function taskOf(
+  session: ClaudeSession,
+  parentToolUseId: string | null | undefined,
+): string | undefined {
+  return parentToolUseId ? session.subagentTasks.get(parentToolUseId) : undefined;
 }
 
 // the CLI backgrounds a task and lets the turn end right away — its result lands as a
@@ -513,7 +543,10 @@ function toolResultText(content: unknown): string {
 }
 
 function handleMessage(session: ClaudeSession, message: SDKMessage): void {
-  if (message.type === "stream_event" || message.type === "assistant") {
+  if (
+    (message.type === "stream_event" || message.type === "assistant") &&
+    !("parent_tool_use_id" in message && message.parent_tool_use_id)
+  ) {
     session.emit({ type: "turn.active" });
   }
   switch (message.type) {
@@ -531,34 +564,43 @@ function handleMessage(session: ClaudeSession, message: SDKMessage): void {
       }
       return;
     case "stream_event": {
+      const taskId = taskOf(session, message.parent_tool_use_id);
+      const scoped = taskId ? { taskId } : {};
       const event = message.event;
       if (event.type === "content_block_start") {
         const block = event.content_block;
-        if (block.type === "thinking") session.emit({ type: "phase", phase: { kind: "thinking" } });
+        if (block.type === "thinking")
+          session.emit({ type: "phase", phase: { kind: "thinking" }, ...scoped });
         else if (block.type === "tool_use")
-          session.emit({ type: "phase", phase: { kind: "tool", name: block.name } });
-        else if (block.type === "text") session.emit({ type: "phase", phase: null });
+          session.emit({ type: "phase", phase: { kind: "tool", name: block.name }, ...scoped });
+        else if (block.type === "text") session.emit({ type: "phase", phase: null, ...scoped });
       } else if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-        session.emit({ type: "assistant.delta", text: event.delta.text });
+        session.emit({ type: "assistant.delta", text: event.delta.text, ...scoped });
       }
       return;
     }
-    case "assistant":
+    case "assistant": {
+      const taskId = taskOf(session, message.parent_tool_use_id);
+      const scoped = taskId ? { taskId } : {};
       for (const block of message.message.content) {
         if (block.type === "text" && block.text.trim()) {
-          session.emit({ type: "assistant.complete", text: block.text });
+          session.emit({ type: "assistant.complete", text: block.text, ...scoped });
         } else if (block.type === "tool_use") {
           session.emit({
             type: "tool.started",
             callId: block.id,
             name: block.name,
             input: block.input,
+            ...scoped,
           });
         }
       }
       return;
-    case "user":
+    }
+    case "user": {
       if (typeof message.message.content === "string") return;
+      const taskId = taskOf(session, message.parent_tool_use_id);
+      const scoped = taskId ? { taskId } : {};
       for (const block of message.message.content) {
         if (block.type !== "tool_result") continue;
         session.emit({
@@ -566,9 +608,11 @@ function handleMessage(session: ClaudeSession, message: SDKMessage): void {
           callId: block.tool_use_id,
           result: toolResultText(block.content),
           isError: block.is_error === true,
+          ...scoped,
         });
       }
       return;
+    }
     case "rate_limit_event":
       foldRateLimit(session, message.rate_limit_info);
       return;
@@ -638,6 +682,7 @@ async function open(
     interrupted: false,
     stopped: false,
     busy: false,
+    subagentTasks: new Map(),
     query: undefined as unknown as Query,
   };
   const effort = claudeEffort(thread.effort);
@@ -649,6 +694,7 @@ async function open(
       permissionMode: thread.permissionMode as ClaudePermissionMode,
       ...(effort ? { effort } : {}),
       includePartialMessages: true,
+      forwardSubagentText: true,
       abortController: abort,
       systemPrompt: { type: "preset", preset: "claude_code" },
       settingSources: ["user", "project", "local"],
@@ -686,6 +732,9 @@ async function open(
       } catch {
         session.abort.abort();
       }
+    },
+    async stopTask(taskId) {
+      await session.query.stopTask(taskId);
     },
     async respondToApproval(id, decision) {
       const pending = session.approvals.get(id);

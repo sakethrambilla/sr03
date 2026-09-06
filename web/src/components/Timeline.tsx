@@ -5,7 +5,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, ReactNode } from "react";
 
 import type { FileLinks } from "../lib/fileref.ts";
-import type { Message, ThreadPhase } from "../lib/types.ts";
+import type { Message, ThreadPhase, ThreadTask } from "../lib/types.ts";
 import { useStore } from "../store.ts";
 import { Markdown } from "./Markdown.tsx";
 import { ChevronIcon, CopyButton, RewindIcon, cn } from "./ui.tsx";
@@ -26,6 +26,7 @@ const TOOL_PHRASES: Record<string, { verb: string; noun: string }> = {
   WebFetch: { verb: "Fetched", noun: "pages" },
   WebSearch: { verb: "Ran", noun: "searches" },
   Task: { verb: "Launched", noun: "agents" },
+  Agent: { verb: "Launched", noun: "agents" },
   TodoWrite: { verb: "Updated", noun: "todos" },
   ExitPlanMode: { verb: "Presented", noun: "plans" },
   AskUserQuestion: { verb: "Asked", noun: "questions" },
@@ -68,6 +69,24 @@ function toolLine(message: Message): string {
   const phrase = TOOL_PHRASES[name];
   if (!phrase) return target ? `${name} ${target}` : name;
   return target ? `${phrase.verb} ${target}` : `${phrase.verb} ${phrase.noun}`;
+}
+
+// Cursor keys the row by the tool call; Claude's task id is the SDK task_id, so a unique
+// description is the fallback when the ids are different names for the same spawn
+function taskForDelegation(message: Message, tasks: ThreadTask[]): ThreadTask | undefined {
+  const name = toolName(message);
+  if (name !== "Task" && name !== "Agent") return undefined;
+  const useId = message.meta?.toolUseId;
+  if (typeof useId === "string") {
+    const byCall = tasks.find((task) => task.id === useId || task.toolUseId === useId);
+    if (byCall) return byCall;
+  }
+  const description = typeof toolInput(message).description === "string"
+    ? (toolInput(message).description as string).trim()
+    : "";
+  if (!description) return undefined;
+  const matches = tasks.filter((task) => task.description === description);
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 function groupLine(messages: Message[]): string {
@@ -115,16 +134,18 @@ function ToolRow({
   message,
   open,
   onToggle,
+  onOpenSubagent,
 }: {
   message: Message;
   open: boolean;
   onToggle: () => void;
+  onOpenSubagent?: () => void;
 }) {
   return (
     <div className="min-w-0">
       <button
         type="button"
-        onClick={onToggle}
+        onClick={onOpenSubagent ?? onToggle}
         className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left transition hover:bg-accent/60"
       >
         <span
@@ -135,7 +156,9 @@ function ToolRow({
         >
           {toolLine(message)}
         </span>
-        <ChevronIcon className={cn("size-3 text-faint transition-transform", open ? "" : "-rotate-90")} />
+        {onOpenSubagent ? null : (
+          <ChevronIcon className={cn("size-3 text-faint transition-transform", open ? "" : "-rotate-90")} />
+        )}
       </button>
       {open ? (
         <div className="pb-1">
@@ -146,39 +169,55 @@ function ToolRow({
   );
 }
 
-const ToolGroup = memo(function ToolGroup({ messages }: { messages: Message[] }) {
+const ToolGroup = memo(function ToolGroup({
+  messages,
+  tasks,
+  onOpenSubagent,
+}: {
+  messages: Message[];
+  tasks: ThreadTask[];
+  onOpenSubagent?: (taskId: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [openRow, setOpenRow] = useState<string | null>(null);
   const single = messages.length === 1 ? messages[0] : null;
+  const match = single ? taskForDelegation(single, tasks) : undefined;
+  const openMatched = match && onOpenSubagent ? () => onOpenSubagent(match.id) : undefined;
 
   return (
     <div className="flex min-w-0 flex-col gap-1">
       <button
         type="button"
-        onClick={() => setOpen(!open)}
+        onClick={openMatched ?? (() => setOpen(!open))}
         className={cn(
           "flex w-fit max-w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-[12.5px] transition hover:bg-accent hover:text-foreground",
           messages.some(toolFailed) ? "text-destructive" : "text-muted-foreground",
         )}
       >
         <span className="min-w-0 truncate">{single ? toolLine(single) : groupLine(messages)}</span>
-        <ChevronIcon
-          className={cn("size-3 shrink-0 text-faint transition-transform", open ? "" : "-rotate-90")}
-        />
+        {openMatched ? null : (
+          <ChevronIcon
+            className={cn("size-3 shrink-0 text-faint transition-transform", open ? "" : "-rotate-90")}
+          />
+        )}
       </button>
-      {open ? (
+      {open && !openMatched ? (
         <div className="min-w-0 rounded-lg border border-border/70 bg-card/50 p-1">
           {single ? (
             <ToolDetail message={single} />
           ) : (
-            messages.map((message) => (
-              <ToolRow
-                key={message.id}
-                message={message}
-                open={openRow === message.id}
-                onToggle={() => setOpenRow(openRow === message.id ? null : message.id)}
-              />
-            ))
+            messages.map((message) => {
+              const row = taskForDelegation(message, tasks);
+              return (
+                <ToolRow
+                  key={message.id}
+                  message={message}
+                  open={openRow === message.id}
+                  onToggle={() => setOpenRow(openRow === message.id ? null : message.id)}
+                  onOpenSubagent={row && onOpenSubagent ? () => onOpenSubagent(row.id) : undefined}
+                />
+              );
+            })
           )}
         </div>
       ) : null}
@@ -227,7 +266,7 @@ const Bubble = memo(function Bubble({
   copyable: boolean;
   files: FileLinks;
   onRun: (command: string) => void;
-  onRewind: (message: Message) => void;
+  onRewind?: (message: Message) => void;
 }) {
   if (message.role === "system") {
     return <p className="text-center text-[11px] text-faint">{message.text}</p>;
@@ -242,16 +281,18 @@ const Bubble = memo(function Bubble({
         </div>
         <MessageActions>
           {copyable ? <CopyButton text={message.text} /> : null}
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Rewind to here"
-            title="Rewind to here"
-            onClick={() => onRewind(message)}
-            className="size-6 text-faint hover:text-foreground"
-          >
-            <RewindIcon className="size-3" />
-          </Button>
+          {onRewind ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Rewind to here"
+              title="Rewind to here"
+              onClick={() => onRewind(message)}
+              className="size-6 text-faint hover:text-foreground"
+            >
+              <RewindIcon className="size-3" />
+            </Button>
+          ) : null}
         </MessageActions>
       </div>
     );
@@ -553,6 +594,7 @@ function toRows(messages: Message[]): Row[] {
 }
 
 const NO_MESSAGES: Message[] = [];
+const NO_TASKS: ThreadTask[] = [];
 
 function StreamingReply({
   text,
@@ -588,21 +630,37 @@ function StreamingReply({
 // transcript and nothing around it
 export function Timeline({
   threadId,
+  taskId,
   running,
   files,
   onRun,
   onRewind,
+  onOpenSubagent,
 }: {
   threadId: string;
+  taskId?: string;
   running: boolean;
   files: FileLinks;
   onRun: (command: string) => void;
-  onRewind: (message: Message) => void;
+  onRewind?: (message: Message) => void;
+  onOpenSubagent?: (taskId: string) => void;
 }) {
-  const messages = useStore((state) => state.messagesByThread[threadId] ?? NO_MESSAGES);
+  const allMessages = useStore((state) => state.messagesByThread[threadId] ?? NO_MESSAGES);
+  const tasks = useStore((state) => state.tasksByThread[threadId] ?? NO_TASKS);
   const loaded = useStore((state) => Boolean(state.loadedThreads[threadId]));
-  const streaming = useStore((state) => state.streamByThread[threadId] ?? "");
-  const phase = useStore((state) => state.phaseByThread[threadId] ?? null);
+  const streaming = useStore((state) =>
+    taskId
+      ? (state.streamByTask[threadId]?.[taskId] ?? "")
+      : (state.streamByThread[threadId] ?? ""),
+  );
+  const phase = useStore((state) => (taskId ? null : (state.phaseByThread[threadId] ?? null)));
+  const messages = useMemo(
+    () =>
+      taskId
+        ? allMessages.filter((message) => message.meta?.taskId === taskId)
+        : allMessages.filter((message) => typeof message.meta?.taskId !== "string"),
+    [allMessages, taskId],
+  );
   const scroller = useRef<HTMLDivElement>(null);
   const opened = useRef<string | null>(null);
   const rows = useMemo(() => toRows(messages), [messages]);
@@ -709,7 +767,7 @@ export function Timeline({
   // that has messages coming just renders nothing until they land instead of claiming it's new
   if (!loaded) return null;
 
-  if (empty) {
+  if (empty && !taskId) {
     return (
       <div className="flex flex-1 items-center justify-center">
         <p className="text-[13px] text-faint">Send a message to start this thread.</p>
@@ -735,7 +793,12 @@ export function Timeline({
         <div className="mx-auto flex max-w-3xl flex-col gap-4 px-5 py-6">
           {rows.map((row) =>
             "tools" in row ? (
-              <ToolGroup key={row.id} messages={row.tools} />
+              <ToolGroup
+                key={row.id}
+                messages={row.tools}
+                tasks={tasks}
+                onOpenSubagent={onOpenSubagent}
+              />
             ) : (
               <Bubble
                 key={row.id}
@@ -754,13 +817,15 @@ export function Timeline({
           ) : null}
         </div>
       </div>
-      <TurnRail
-        items={railItems}
-        stripWidth={rail.stripWidth}
-        persistent={rail.persistent}
-        onSelect={jumpToMessage}
-        registerTick={registerTick}
-      />
+      {taskId ? null : (
+        <TurnRail
+          items={railItems}
+          stripWidth={rail.stripWidth}
+          persistent={rail.persistent}
+          onSelect={jumpToMessage}
+          registerTick={registerTick}
+        />
+      )}
     </div>
   );
 }

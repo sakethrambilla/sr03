@@ -27,7 +27,12 @@ export interface Project {
 // `groups`.
 export type LayoutAxis = "horizontal" | "vertical";
 
-export type EditorTab = { kind: "chat" } | { kind: "file"; path: string };
+// the subagent variant is client-only and deliberately absent from server/src/types.ts —
+// the server's layout guard should keep rejecting it
+export type EditorTab =
+  | { kind: "chat" }
+  | { kind: "file"; path: string }
+  | { kind: "subagent"; taskId: string };
 
 export interface EditorGroup {
   id: string;
@@ -116,7 +121,8 @@ export interface ThreadTask {
   id: string;
   description: string;
   agentType: string | null;
-  status: "running" | "done" | "failed";
+  model: string | null;
+  status: "running" | "done" | "failed" | "stopped";
   tokens: number;
   toolUses: number;
   lastTool: string | null;
@@ -124,6 +130,8 @@ export interface ThreadTask {
   depth: number;
   startedAt: number;
   endedAt: number | null;
+  // Agent/Task tool_use_id that spawned this row; Claude's id is the SDK task_id, which differs
+  toolUseId: string | null;
 }
 
 export interface ModelOption {
@@ -167,6 +175,8 @@ export interface ProviderCapabilities {
   slashCommands: boolean;
   usage: boolean;
   tasks: boolean;
+  subagentTranscripts: boolean;
+  stopSubagents: boolean;
   fork: boolean;
   questions: boolean;
   liveModelSwitch: boolean;
@@ -287,6 +297,8 @@ export type ServerEvent =
   | { type: "thread.truncated"; threadId: string; seq: number }
   | { type: "thread.delta"; threadId: string; text: string }
   | { type: "thread.delta.end"; threadId: string }
+  | { type: "thread.task.delta"; threadId: string; taskId: string; text: string }
+  | { type: "thread.task.delta.end"; threadId: string; taskId: string }
   | { type: "thread.approval"; approval: PendingApproval }
   | { type: "thread.approval.resolved"; threadId: string; approvalId: string }
   | { type: "thread.approvals"; approvals: PendingApproval[] }

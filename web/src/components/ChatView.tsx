@@ -31,6 +31,7 @@ import { FileView } from "./FileView.tsx";
 import { SearchPalette } from "./SearchPalette.tsx";
 import type { PaletteMode } from "./SearchPalette.tsx";
 import { Timeline } from "./Timeline.tsx";
+import { SubagentView } from "./SubagentView.tsx";
 import { SidebarToggle } from "./Sidebar.tsx";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -216,6 +217,11 @@ export function ChatView({ thread }: { thread: Thread }) {
     (state) => state.providers.find((entry) => entry.id === thread.providerId) ?? EMPTY_PROVIDER,
   );
   const tasks = useStore((state) => state.tasksByThread[thread.id] ?? NO_TASKS);
+  const labels = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const task of tasks) map[task.id] = task.description;
+    return map;
+  }, [tasks]);
   const workspace = useStore((state) => state.filesByCwd[thread.cwd] ?? NO_FILES);
   const loadFiles = useStore((state) => state.loadFiles);
   const fsTick = useStore((state) => state.fsVersionByThread[thread.id] ?? 0);
@@ -295,6 +301,22 @@ export function ChatView({ thread }: { thread: Thread }) {
     [setLayout, thread.id],
   );
 
+  const openSubagent = (taskId: string) =>
+    commit(openTab(layoutRef.current, { kind: "subagent", taskId }, focusedRef.current));
+
+  useEffect(() => {
+    const known = new Set(tasks.map((task) => task.id));
+    let next = layoutRef.current;
+    let changed = false;
+    for (const tab of allTabs(next)) {
+      if (tab.kind === "subagent" && !known.has(tab.taskId)) {
+        next = closeTab(next, tab);
+        changed = true;
+      }
+    }
+    if (changed) commit(next);
+  }, [tasks, commit]);
+
   const openFile = useCallback(
     (path: string, line?: number) => {
       commit(openTab(layoutRef.current, { kind: "file", path }, focusedRef.current));
@@ -324,6 +346,11 @@ export function ChatView({ thread }: { thread: Thread }) {
   const requestClose = (path: string) => {
     if (dirty.has(path)) setPendingClose(path);
     else closeFile(path);
+  };
+
+  const closeTabRequest = (tab: EditorTab) => {
+    if (tab.kind === "file") requestClose(tab.path);
+    else if (tab.kind === "subagent") commit(closeTab(layoutRef.current, tab));
   };
 
   // every mounted file view gets the same function objects, so a streaming frame that
@@ -504,15 +531,15 @@ export function ChatView({ thread }: { thread: Thread }) {
         splitFocused();
         return;
       }
-      // the chat tab is pinned, so cmd+w only ever closes a file — and only in the focused group
+      // the chat tab is pinned, so cmd+w only ever closes a file or subagent — and only in the focused group
       if (key === "w" && !event.shiftKey) {
         event.preventDefault();
-        if (active) requestClose(active);
+        closeTabRequest(focusedTab);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [active, treeOpen, terminalOpen, agentsOpen, openFiles, dirty, layout, focused, provider.capabilities.tasks]);
+  }, [active, focusedTab, treeOpen, terminalOpen, agentsOpen, openFiles, dirty, layout, focused, provider.capabilities.tasks]);
 
   const renamed = (from: string, to: string) => {
     const moved = (path: string) =>
@@ -581,6 +608,7 @@ export function ChatView({ thread }: { thread: Thread }) {
             focused={focusedRef.current}
             title={thread.title}
             dirty={dirty}
+            labels={labels}
             onFocusGroup={setFocused}
             onResize={(sashIndex, fractions) =>
               commit(resizeGroups(layoutRef.current, sashIndex, fractions))
@@ -592,7 +620,7 @@ export function ChatView({ thread }: { thread: Thread }) {
               })
             }
             onSelect={selectTab}
-            onClose={requestClose}
+            onClose={closeTabRequest}
             onDrop={(tab, target) => commit(moveTab(layoutRef.current, tab, target))}
           >
             {/* One flat list, every entry a direct child of the grid and keyed by its tab, so a tab
@@ -621,9 +649,17 @@ export function ChatView({ thread }: { thread: Thread }) {
                           files={links}
                           onRun={runCommand}
                           onRewind={setPendingRewind}
+                          onOpenSubagent={openSubagent}
                         />
                         <ThreadComposer thread={thread} restore={restore} />
                       </>
+                    ) : tab.kind === "subagent" ? (
+                      <SubagentView
+                        thread={thread}
+                        taskId={tab.taskId}
+                        files={links}
+                        onRun={runCommand}
+                      />
                     ) : (
                       <FileView
                         thread={thread}
@@ -663,7 +699,7 @@ export function ChatView({ thread }: { thread: Thread }) {
         ) : null}
       </main>
       {agentsOpen && provider.capabilities.tasks ? (
-        <AgentsPanel thread={thread} onClose={() => setAgentsOpen(false)} />
+        <AgentsPanel thread={thread} onClose={() => setAgentsOpen(false)} onOpen={openSubagent} />
       ) : null}
       {treeOpen ? (
         <FileTree
