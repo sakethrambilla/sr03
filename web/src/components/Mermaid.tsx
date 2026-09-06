@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { Mermaid as MermaidApi } from "mermaid";
 
+import { resolveDark, systemPrefersDark } from "../lib/appearance.ts";
 import { useStore } from "../store.ts";
 import { cn } from "./ui.tsx";
 
@@ -30,12 +31,13 @@ function toRgb(color: string): string {
   return `rgb(${r}, ${g}, ${b})`;
 }
 
-// sr03 has no light theme (see index.html's fixed `class="dark"`), so this only has to track
-// the current accent — read straight off the live tokens rather than hand-maintaining a palette.
-// cached per theme id so retyping a diagram doesn't re-rasterize seven colors on every keystroke
-let cache: { theme: string; variables: Record<string, string> } | null = null;
-function themeVariables(theme: string): Record<string, string> {
-  if (cache?.theme === theme) return cache.variables;
+// read straight off the live tokens rather than hand-maintaining a palette, so this tracks
+// both the current theme's accent and, now that themes have a light half, the active mode.
+// cached per theme+mode so retyping a diagram doesn't re-rasterize seven colors on every
+// keystroke
+let cache: { key: string; variables: Record<string, string> } | null = null;
+function themeVariables(key: string): Record<string, string> {
+  if (cache?.key === key) return cache.variables;
   const style = getComputedStyle(document.documentElement);
   const token = (name: string) => toRgb(style.getPropertyValue(name).trim());
   const variables = {
@@ -54,7 +56,7 @@ function themeVariables(theme: string): Record<string, string> {
     errorTextColor: token("--destructive-foreground"),
     fontFamily: style.getPropertyValue("--font-mono").trim() || "monospace",
   };
-  cache = { theme, variables };
+  cache = { key, variables };
   return variables;
 }
 
@@ -62,8 +64,14 @@ export function Mermaid({ source, className }: { source: string; className?: str
   const [svg, setSvg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // an already-rendered diagram has no other reason to re-run once its source stops changing,
-  // so a theme/accent switch needs to be its own dependency to ever repaint it
-  const theme = useStore((state) => state.appearance.theme);
+  // so a theme/mode switch needs to be its own dependency to ever repaint it. selecting the
+  // whole appearance object rather than picking .mode out of it is what catches an OS flip
+  // under System mode too — store.ts's watchSystemMode wiring re-sets `appearance` to a new
+  // object on every such flip without the mode string itself ever changing, and only a
+  // whole-object selector (same as TerminalPanel's) observes that
+  const appearance = useStore((state) => state.appearance);
+  const theme = appearance.theme;
+  const dark = resolveDark(appearance.mode, systemPrefersDark());
 
   useEffect(() => {
     const controller = new AbortController();
@@ -83,7 +91,7 @@ export function Mermaid({ source, className }: { source: string; className?: str
             suppressErrorRendering: true,
             securityLevel: "strict",
             theme: "base",
-            themeVariables: themeVariables(theme),
+            themeVariables: themeVariables(`${theme}:${dark}`),
           });
           await mermaid.parse(trimmed);
           if (controller.signal.aborted) return;
@@ -102,7 +110,7 @@ export function Mermaid({ source, className }: { source: string; className?: str
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [source, theme]);
+  }, [source, theme, dark]);
 
   if (!svg && !error) {
     return <p className={cn("text-[12px] text-faint", className)}>Nothing to render yet.</p>;
