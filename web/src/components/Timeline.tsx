@@ -8,7 +8,7 @@ import type { FileLinks } from "../lib/fileref.ts";
 import type { Message, ThreadPhase, ThreadTask } from "../lib/types.ts";
 import { useStore } from "../store.ts";
 import { Markdown } from "./Markdown.tsx";
-import { ChevronIcon, CopyButton, RewindIcon, cn } from "./ui.tsx";
+import { AgentIcon, ChevronIcon, CopyButton, RewindIcon, cn } from "./ui.tsx";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 
@@ -71,11 +71,15 @@ function toolLine(message: Message): string {
   return target ? `${phrase.verb} ${target}` : `${phrase.verb} ${phrase.noun}`;
 }
 
+function isDelegation(message: Message): boolean {
+  const name = toolName(message);
+  return name === "Task" || name === "Agent";
+}
+
 // Cursor keys the row by the tool call; Claude's task id is the SDK task_id, so a unique
 // description is the fallback when the ids are different names for the same spawn
 function taskForDelegation(message: Message, tasks: ThreadTask[]): ThreadTask | undefined {
-  const name = toolName(message);
-  if (name !== "Task" && name !== "Agent") return undefined;
+  if (!isDelegation(message)) return undefined;
   const useId = message.meta?.toolUseId;
   if (typeof useId === "string") {
     const byCall = tasks.find((task) => task.id === useId || task.toolUseId === useId);
@@ -133,11 +137,13 @@ function ToolDetail({ message }: { message: Message }) {
 function ToolRow({
   message,
   open,
+  delegation,
   onToggle,
   onOpenSubagent,
 }: {
   message: Message;
   open: boolean;
+  delegation: boolean;
   onToggle: () => void;
   onOpenSubagent?: () => void;
 }) {
@@ -148,6 +154,7 @@ function ToolRow({
         onClick={onOpenSubagent ?? onToggle}
         className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left transition hover:bg-accent/60"
       >
+        {delegation ? <AgentIcon className="size-3.5 shrink-0 text-primary" /> : null}
         <span
           className={cn(
             "min-w-0 flex-1 truncate text-[12.5px]",
@@ -183,9 +190,10 @@ const ToolGroup = memo(function ToolGroup({
   const single = messages.length === 1 ? messages[0] : null;
   const match = single ? taskForDelegation(single, tasks) : undefined;
   const openMatched = match && onOpenSubagent ? () => onOpenSubagent(match.id) : undefined;
+  const delegation = messages.length > 0 && messages.every(isDelegation);
 
   return (
-    <div className="flex min-w-0 flex-col gap-1">
+    <div className={cn("flex min-w-0 flex-col gap-1", delegation && "border-l border-primary/40 pl-2")}>
       <button
         type="button"
         onClick={openMatched ?? (() => setOpen(!open))}
@@ -194,6 +202,7 @@ const ToolGroup = memo(function ToolGroup({
           messages.some(toolFailed) ? "text-destructive" : "text-muted-foreground",
         )}
       >
+        {delegation ? <AgentIcon className="size-3.5 shrink-0 text-primary" /> : null}
         <span className="min-w-0 truncate">{single ? toolLine(single) : groupLine(messages)}</span>
         {openMatched ? null : (
           <ChevronIcon
@@ -213,6 +222,7 @@ const ToolGroup = memo(function ToolGroup({
                   key={message.id}
                   message={message}
                   open={openRow === message.id}
+                  delegation={isDelegation(message)}
                   onToggle={() => setOpenRow(openRow === message.id ? null : message.id)}
                   onOpenSubagent={row && onOpenSubagent ? () => onOpenSubagent(row.id) : undefined}
                 />
@@ -328,13 +338,16 @@ const Bubble = memo(function Bubble({
 // the model spends whole seconds thinking or running a tool with nothing on screen, so the
 // wait is named — and timed once it stops being short
 function Activity({ phase }: { phase: ThreadPhase | null }) {
+  const delegation = phase?.kind === "tool" && (phase.name === "Task" || phase.name === "Agent");
   const label =
     phase?.kind === "starting"
       ? "Starting session…"
       : phase?.kind === "thinking"
         ? "Thinking…"
         : phase?.kind === "tool"
-          ? `Running ${phase.name}…`
+          ? delegation
+            ? "Running subagent…"
+            : `Running ${phase.name}…`
           : "Working…";
   const [seconds, setSeconds] = useState(0);
 
@@ -345,7 +358,8 @@ function Activity({ phase }: { phase: ThreadPhase | null }) {
   }, [label]);
 
   return (
-    <p className="text-[12px] text-faint">
+    <p className="flex items-center gap-1.5 text-[12px] text-faint">
+      {delegation ? <AgentIcon className="size-3.5 shrink-0 text-primary" /> : null}
       {label}
       {seconds >= 3 ? <span className="ml-1.5 tabular-nums">{seconds}s</span> : null}
     </p>
