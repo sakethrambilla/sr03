@@ -44,6 +44,9 @@ pnpm dmg         # desktop/dist/sr03-<version>-arm64.dmg (macOS arm64, ad-hoc si
 pnpm exe         # desktop/dist/sr03-<version>-x64-setup.exe (Windows x64 NSIS, unsigned)
 ```
 
+Building and installing the packaged desktop app — including the Gatekeeper/SmartScreen prompts an
+unsigned build triggers — is covered in [INSTALL.md](INSTALL.md).
+
 ## Configuration
 
 | Variable | Default | What it does |
