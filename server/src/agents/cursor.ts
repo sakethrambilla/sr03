@@ -722,19 +722,22 @@ function handleTaskNotification(
       : null;
   const existing = session.tasks.get(toolCallId);
   const startedAt = existing?.startedAt ?? Date.now();
+  // Cursor repeats this notification per tool-call update and only the completing one carries a
+  // duration, so a settled row keeps its outcome rather than being pulled back to running
+  const settled = existing !== undefined && existing.status !== "running";
   session.tasks.set(toolCallId, {
     id: toolCallId,
     description: description ?? prompt ?? existing?.description ?? "Subagent task",
     agentType: subagentType ?? existing?.agentType ?? null,
     model: model ?? existing?.model ?? null,
-    status: durationMs !== null ? "done" : "running",
+    status: settled ? existing.status : durationMs !== null ? "done" : "running",
     tokens: existing?.tokens ?? 0,
     toolUses: existing?.toolUses ?? 0,
     lastTool: existing?.lastTool ?? null,
     error: existing?.error ?? null,
     depth: existing?.depth ?? 1,
     startedAt,
-    endedAt: durationMs !== null ? startedAt + durationMs : null,
+    endedAt: settled ? existing.endedAt : durationMs !== null ? startedAt + durationMs : null,
     toolUseId: toolCallId,
   });
   session.emit({ type: "tasks.changed", tasks: [...session.tasks.values()] });

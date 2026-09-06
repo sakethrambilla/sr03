@@ -181,6 +181,12 @@ for await (const line of lines) {
       method: "cursor/task",
       params: { toolCallId: "task-1", durationMs: 4200 }
     });
+    // a trailing update with no duration must not pull the settled row back to running
+    send({
+      jsonrpc: "2.0",
+      method: "cursor/task",
+      params: { toolCallId: "task-1", description: "Audit the config" }
+    });
     send({ jsonrpc: "2.0", id: promptId, result: { stopReason: "end_turn" } });
   }
 }

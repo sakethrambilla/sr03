@@ -112,6 +112,17 @@ const TASK_STATUS: Record<string, ThreadTask["status"]> = {
   stopped: "stopped",
 };
 
+// A task that has already settled keeps its outcome. Parking a thread closes the CLI, which
+// reports every still-registered background task as stopped on the way down — without this, a
+// subagent that finished minutes earlier is relabelled `stopped` when the session is parked.
+function nextStatus(
+  task: ThreadTask,
+  incoming: ThreadTask["status"] | undefined,
+): ThreadTask["status"] {
+  if (!incoming) return task.status;
+  return task.status === "running" ? incoming : task.status;
+}
+
 function saveTask(session: ClaudeSession, task: ThreadTask): void {
   const tasks = tasksByThread.get(session.threadId) ?? new Map<string, ThreadTask>();
   tasks.set(task.id, task);
@@ -160,13 +171,16 @@ function trackTask(session: ClaudeSession, message: SystemMessage): void {
     case "task_updated": {
       const task = known(message.task_id);
       if (!task) return;
-      const status = message.patch.status ? TASK_STATUS[message.patch.status] : task.status;
+      const status = nextStatus(
+        task,
+        message.patch.status ? TASK_STATUS[message.patch.status] : undefined,
+      );
       saveTask(session, {
         ...task,
-        status: status ?? task.status,
+        status,
         description: message.patch.description ?? task.description,
         error: message.patch.error ?? task.error,
-        endedAt: status === "running" ? null : (message.patch.end_time ?? task.endedAt ?? Date.now()),
+        endedAt: status === "running" ? null : (task.endedAt ?? message.patch.end_time ?? Date.now()),
       });
       return;
     }
@@ -175,7 +189,7 @@ function trackTask(session: ClaudeSession, message: SystemMessage): void {
       if (task) {
         saveTask(session, {
           ...task,
-          status: TASK_STATUS[message.status] ?? task.status,
+          status: nextStatus(task, TASK_STATUS[message.status]),
           tokens: message.usage?.total_tokens ?? task.tokens,
           toolUses: message.usage?.tool_uses ?? task.toolUses,
           endedAt: task.endedAt ?? Date.now(),

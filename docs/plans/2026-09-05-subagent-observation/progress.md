@@ -45,5 +45,45 @@ depends on that one's tagged `EditorTab` and the editor grid, which are not on `
   produced the same stale condition (`running` task, idle thread): panel `parked`, tab
   `no longer live`.
 
+## Follow-up verification — 2026-09-06
+The two criteria the execution log left unconfirmed are now checked live against `/tmp/sr03-repo`.
+
+- **Criterion 7 (a failed subagent) — confirmed.** A real failure was forced by starting the
+  server with `CLAUDE_CODE_SUBAGENT_MODEL=claude-not-a-real-model` and
+  `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`; sr03 passes no `env` to the SDK, so the CLI inherits both.
+  The row went `failed` with a red dot and the error trailer, and the tab header read `failed`
+  above the full text in `text-destructive`: *"Agent terminated early due to an API error … (error
+  type model_not_found, HTTP 404 …)"*. This is a better trigger than the plan's `exit 9`, which
+  makes the subagent *succeed* at running a failing command.
+- **Criterion 12 (parked) — confirmed, including a real park.** The park timer was observed
+  firing: with `SR03_IDLE_PARK_MS=20000`, the `claude` child count dropped 6 → 5 about twenty
+  seconds after the thread went idle. Park routes through `stopSession`, which — unlike
+  `closeSession` — never touches `tasksByThread` and publishes no `thread.tasks`, so rows survive
+  a park by construction. The stale UI was then produced by interrupting mid-subagent (the same
+  `stopSession` path): panel row read `parked`, the tab header read `no longer live`, captured
+  content was preserved, and nothing errored.
+
+## Defect found and fixed — 2026-09-06
+**A settled subagent row was relabelled by a later status.** A task read `done` through the whole
+idle window and then flipped to `stopped` once the session parked and the next turn resumed it: the
+shutting-down CLI reports its still-registered background tasks as stopped, and `trackTask` applied
+that to tasks that had already finished. Neither the `task_updated` nor the `task_notification`
+branch guarded a terminal → terminal transition. It contradicted spec criterion 4.
+
+Fixed with `nextStatus` in `claude.ts`, applied in both branches: an incoming status is ignored
+unless the stored task is still `running`. `endedAt` follows the same rule, so a settled row keeps
+its original finish time. The Cursor adapter had the mirror of the same defect — its handler
+derived status purely from whether the current payload carried `durationMs`, so any later
+`cursor/task` update without one pulled a `done` row back to `running`; it now keeps a settled
+row's status and `endedAt`.
+
+Covered by the existing `emits one task row for a Cursor subagent` test, which now sends a trailing
+duration-less `cursor/task`. Confirmed the test is wired to the behaviour: reverting the Cursor
+guard fails it with `actual: 'running', expected: 'done'`.
+
+Re-verified live with `SR03_IDLE_PARK_MS=20000`: the subagent settled `done` at t+18s, the park
+fired at ~t+40s (CLI child count 1 → 0), and the row stayed `done` across the park and across the
+resume that the next turn triggered.
+
 ## Blocked / needs a decision
 - (none)
