@@ -159,7 +159,9 @@ function trackTask(session: ClaudeSession, message: SystemMessage): void {
       if (!task) return;
       saveTask(session, {
         ...task,
-        description: message.description || task.description,
+        // this description narrates the step in flight ("Running <tool>…"), where the one from
+        // task_started names the task; the name wins, and lastTool already carries the step
+        description: task.description || message.description,
         agentType: message.subagent_type ?? task.agentType,
         model: null,
         tokens: message.usage.total_tokens,

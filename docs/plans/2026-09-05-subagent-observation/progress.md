@@ -85,5 +85,20 @@ Re-verified live with `SR03_IDLE_PARK_MS=20000`: the subagent settled `done` at 
 fired at ~t+40s (CLI child count 1 → 0), and the row stayed `done` across the park and across the
 resume that the next turn triggered.
 
+## Second defect found and fixed — 2026-09-06
+**A subagent row lost its name to its current step.** `task_progress.description` narrates the step
+in flight ("Running <tool>…") while `task_started.description` names the task, and the progress
+branch preferred the incoming value — so a row that started as `Count lines in README.md` became
+`Running Count lines and …` seconds later, and the panel never showed what the subagent had been
+asked to do. The precedence is now reversed: the stored name wins, and the incoming value is used
+only to fill a task that started without one. `lastTool` already carries the step, so nothing is
+lost.
+
+Left the Cursor adapter alone here — its `cursor/task` description is the task's name, not a step
+narration, so overwriting is correct there.
+
+Verified live: across a four-file summarising subagent the row held `Summarize every repo file`
+through every progress event while its trailer moved to `Bash`.
+
 ## Blocked / needs a decision
 - (none)
