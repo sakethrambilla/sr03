@@ -64,6 +64,13 @@ lockfile, so an ordinary `pnpm install` never pulls Electron's ~200M. `pnpm dmg`
 REST for commands, WebSocket (`/ws`) for everything the server pushes back. Wire event types live in
 `server/src/types.ts` and are mirrored in `web/src/lib/types.ts` — change both together.
 
+A repo may carry a `.worktreeinclude` at its root — one path per line, relative to the root, `#`
+comments allowed — naming gitignored paths (`.env`, `node_modules`) that a new worktree still needs.
+`addWorktree` copies them in after `git worktree add`. Plain paths, not gitignore patterns: a
+malformed pathspec resolves to "match everything", so `git check-ignore` gates each entry instead,
+and anything tracked or outside the root is skipped. Best-effort — a skip or a failure is logged and
+the worktree still ships without those paths.
+
 ## Conventions
 
 - Server side: no frameworks, no ORM, no Effect. Node built-ins and the Agent SDK are the
