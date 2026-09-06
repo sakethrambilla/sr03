@@ -279,21 +279,23 @@ const Bubble = memo(function Bubble({
         <div className="max-w-[85%] rounded-lg bg-accent px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap break-words text-foreground">
           {message.text}
         </div>
-        <MessageActions>
-          {copyable ? <CopyButton text={message.text} /> : null}
-          {onRewind ? (
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Rewind to here"
-              title="Rewind to here"
-              onClick={() => onRewind(message)}
-              className="size-6 text-faint hover:text-foreground"
-            >
-              <RewindIcon className="size-3" />
-            </Button>
-          ) : null}
-        </MessageActions>
+        {copyable || onRewind ? (
+          <MessageActions>
+            {copyable ? <CopyButton text={message.text} /> : null}
+            {onRewind ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Rewind to here"
+                title="Rewind to here"
+                onClick={() => onRewind(message)}
+                className="size-6 text-faint hover:text-foreground"
+              >
+                <RewindIcon className="size-3" />
+              </Button>
+            ) : null}
+          </MessageActions>
+        ) : null}
       </div>
     );
   }
@@ -352,10 +354,11 @@ function Activity({ phase }: { phase: ThreadPhase | null }) {
 
 // copying is offered on the reply that ends a turn, not on the commentary the model writes
 // between tool calls — walking back from the newest, the first model message after each user
-// message is that turn's last word
-function finalReplies(messages: Message[]): Set<string> {
+// message is that turn's last word. While a turn is still running its last word isn't written
+// yet, so the turn in flight gets no button until it finishes.
+function finalReplies(messages: Message[], running: boolean): Set<string> {
   const ids = new Set<string>();
-  let pending = true;
+  let pending = !running;
   for (let at = messages.length - 1; at >= 0; at -= 1) {
     const { id, role } = messages[at];
     if (role === "user") {
@@ -664,7 +667,7 @@ export function Timeline({
   const scroller = useRef<HTMLDivElement>(null);
   const opened = useRef<string | null>(null);
   const rows = useMemo(() => toRows(messages), [messages]);
-  const copyable = useMemo(() => finalReplies(messages), [messages]);
+  const copyable = useMemo(() => finalReplies(messages, running), [messages, running]);
   const railItems = useMemo(() => toRailItems(messages), [messages]);
   const [pinned, setPinned] = useState(true);
   const [rail, setRail] = useState({ stripWidth: 0, persistent: false });
