@@ -1,9 +1,12 @@
 // The theme and font choice behind the appearance panel: the lists it offers, a canvas probe for
 // which faces the machine actually has, and applying the pick to the document root.
+export type ThemeMode = "light" | "dark" | "system";
+
 export interface Appearance {
   theme: string;
   uiFont: string;
   codeFont: string;
+  mode: ThemeMode;
 }
 
 export interface Theme {
@@ -27,6 +30,23 @@ export const THEMES: Theme[] = [
   { id: "yellow", label: "Yellow" },
   { id: "violet", label: "Violet" },
 ];
+
+// pure: takes the OS preference as a value rather than reading matchMedia itself, so it's
+// unit-testable without a DOM
+export function resolveDark(mode: ThemeMode, systemPrefersDark: boolean): boolean {
+  if (mode === "system") return systemPrefersDark;
+  return mode === "dark";
+}
+
+export function systemPrefersDark(): boolean {
+  return window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+
+// fires on every OS light/dark flip, regardless of sr03's own mode — the caller decides
+// whether that flip is worth reacting to
+export function watchSystemMode(onChange: () => void): void {
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", onChange);
+}
 
 const UI_FONTS = [
   "Inter",
@@ -100,10 +120,11 @@ export function availableFonts(): { ui: string[]; code: string[] } {
   return cache;
 }
 
-export function applyAppearance({ theme, uiFont, codeFont }: Appearance): void {
+export function applyAppearance({ theme, uiFont, codeFont, mode }: Appearance): void {
   const root = document.documentElement;
   if (theme && theme !== "sr03") root.setAttribute("data-theme", theme);
   else root.removeAttribute("data-theme");
+  root.classList.toggle("dark", resolveDark(mode, systemPrefersDark()));
 
   // clearing an override drops back to the stack the stylesheet defines
   if (uiFont) root.style.setProperty("--font-sans", `"${uiFont}", ${SANS_TAIL}`);
@@ -113,7 +134,7 @@ export function applyAppearance({ theme, uiFont, codeFont }: Appearance): void {
 }
 
 const KEY = "sr03:appearance";
-const DEFAULTS: Appearance = { theme: "sr03", uiFont: "", codeFont: "" };
+const DEFAULTS: Appearance = { theme: "sr03", uiFont: "", codeFont: "", mode: "dark" };
 
 export function loadAppearance(): Appearance {
   try {

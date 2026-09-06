@@ -1,13 +1,43 @@
-/* The one stylesheet: the shadcn token set carrying sr03's palette, the extra token families
-   the app adds (git decorations, syntax, file icons), the shipped shadcn themes the picker
-   offers, and the few base rules Tailwind utilities can't express. */
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* Tailwind v4's default `dark:` variant is `prefers-color-scheme`; sr03 has its own
+   Light/Dark/System picker instead (web/src/lib/appearance.ts), so `dark:` needs to track
+   the `.dark` class that picker toggles on <html>, not the OS setting directly */
+@custom-variant dark (&:is(.dark *));
+
 /* shadcn's semantic tokens, carrying sr03's palette. the attribute selector is what lets the
-   theme picker preview sr03 itself while another theme is the one in force */
+   theme picker preview sr03 itself while another theme is the one in force. this is the
+   light half — proposed, see this task's file for the rationale */
 :root,
 [data-theme="sr03"] {
+  /* proposed */
+  --background: oklch(0.98 0.004 75);
+  --foreground: oklch(0.23 0.006 75);
+  --card: oklch(0.955 0.005 75);
+  --card-foreground: oklch(0.23 0.006 75);
+  --popover: oklch(0.955 0.005 75);
+  --popover-foreground: oklch(0.23 0.006 75);
+  --primary: oklch(0.6 0.14 41);
+  --primary-foreground: oklch(0.99 0.008 60);
+  --secondary: oklch(0.91 0.006 75);
+  --secondary-foreground: oklch(0.23 0.006 75);
+  --muted: oklch(0.91 0.006 75);
+  --muted-foreground: oklch(0.48 0.006 75);
+  --accent: oklch(0.91 0.006 75);
+  --accent-foreground: oklch(0.23 0.006 75);
+  --destructive: oklch(0.55 0.2 22);
+  --destructive-foreground: oklch(0.99 0.008 60);
+  --border: oklch(0.86 0.006 75);
+  --input: oklch(0.86 0.006 75);
+  --ring: oklch(0.6 0.14 41);
+  --faint: oklch(0.63 0.006 75);
+  --radius: 0.375rem;
+}
+
+/* sr03's original palette, unchanged from before mode existed */
+:root.dark,
+[data-theme="sr03"]:is(.dark, .dark *) {
   --background: oklch(0.235 0.004 75);
   --foreground: oklch(0.95 0.003 75);
   --card: oklch(0.2 0.004 75);
@@ -28,32 +58,6 @@
   --input: oklch(0.33 0.005 75);
   --ring: oklch(0.66 0.12 41);
   --faint: oklch(0.57 0.006 75);
-  /* a turn that has finished, as opposed to one still running */
-  --status-done: oklch(0.82 0.11 85);
-  /* VS Code's own gitDecoration.* dark defaults, so the file tree reads the way the editor does */
-  --git-added: #81b88b;
-  --git-modified: #e2c08d;
-  --git-deleted: #c74e39;
-  --git-untracked: #73c991;
-  --git-ignored: #8c8c8c;
-  /* token hues from VS Code's Dark+ theme */
-  --code-comment: #6a9955;
-  --code-string: #ce9178;
-  --code-keyword: #569cd6;
-  --code-control: #c586c0;
-  --code-number: #b5cea8;
-  --code-type: #4ec9b0;
-  --code-function: #dcdcaa;
-  --code-property: #9cdcfe;
-  /* prose code, which is a chip in running text rather than a token in a listing */
-  --code-inline: oklch(0.74 0.12 28);
-  /* file-type icon hues, in the spirit of VS Code's Seti theme */
-  --file-code: #519aba;
-  --file-data: #cbcb41;
-  --file-style: #a074c4;
-  --file-shell: #8dc149;
-  --file-doc: #6d8086;
-  --radius: 0.375rem;
 }
 
 @theme inline {
@@ -112,10 +116,81 @@
   --font-mono: ui-monospace, "SF Mono", Menlo, "JetBrains Mono", monospace;
 }
 
+/* editor semantics: git decorations, syntax hues, prose-code chip, file-type icon colors.
+   constant across all 13 themes in a given mode — only mode changes them, not theme. this is
+   the light half; git and syntax colors are VS Code's own Light+ defaults, --code-inline is
+   proposed (see this task's file), --file-* are deliberately identical to the dark half */
+:root {
+  --status-done: oklch(0.82 0.11 85);
+  --git-added: #587c0c;
+  --git-modified: #895503;
+  --git-deleted: #ad0707;
+  --git-untracked: #007100;
+  --git-ignored: #a1a1a1;
+  --code-comment: #008000;
+  --code-string: #a31515;
+  --code-keyword: #0000ff;
+  --code-control: #af00db;
+  --code-number: #098658;
+  --code-type: #267f99;
+  --code-function: #795e26;
+  --code-property: #001080;
+  /* proposed */
+  --code-inline: oklch(0.5 0.16 28);
+  --file-code: #519aba;
+  --file-data: #cbcb41;
+  --file-style: #a074c4;
+  --file-shell: #8dc149;
+  --file-doc: #6d8086;
+}
+
+/* VS Code's own gitDecoration.* and token.* Dark+ defaults, so the file tree and code blocks
+   read the way the editor does */
+:root.dark {
+  --git-added: #81b88b;
+  --git-modified: #e2c08d;
+  --git-deleted: #c74e39;
+  --git-untracked: #73c991;
+  --git-ignored: #8c8c8c;
+  --code-comment: #6a9955;
+  --code-string: #ce9178;
+  --code-keyword: #569cd6;
+  --code-control: #c586c0;
+  --code-number: #b5cea8;
+  --code-type: #4ec9b0;
+  --code-function: #dcdcaa;
+  --code-property: #9cdcfe;
+  --code-inline: oklch(0.74 0.12 28);
+}
+
 /* the shadcn theme set, built on Tailwind's own palette. only the chrome moves — the git,
-   syntax and file-icon hues above are editor semantics and stay put across every theme */
+   syntax and file-icon hues above are editor semantics and stay put across every theme.
+   light half first, then its .dark override, per theme */
 
 [data-theme="zinc"] {
+  --background: oklch(1 0 0);
+  --foreground: oklch(14.1% 0.005 285.823);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(14.1% 0.005 285.823);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(14.1% 0.005 285.823);
+  --primary: oklch(21% 0.006 285.885);
+  --primary-foreground: oklch(98.5% 0 0);
+  --secondary: oklch(96.7% 0.001 286.375);
+  --secondary-foreground: oklch(21% 0.006 285.885);
+  --muted: oklch(96.7% 0.001 286.375);
+  --muted-foreground: oklch(55.2% 0.016 285.938);
+  --accent: oklch(96.7% 0.001 286.375);
+  --accent-foreground: oklch(21% 0.006 285.885);
+  --destructive: oklch(57.7% 0.245 27.325);
+  --destructive-foreground: oklch(98.5% 0 0);
+  --border: oklch(92% 0.004 286.32);
+  --input: oklch(92% 0.004 286.32);
+  --ring: oklch(70.5% 0.015 286.067);
+  --faint: oklch(70.5% 0.015 286.067);
+}
+
+[data-theme="zinc"]:is(.dark, .dark *) {
   --background: oklch(14.1% 0.005 285.823);
   --foreground: oklch(98.5% 0 0);
   --card: oklch(21% 0.006 285.885);
@@ -139,6 +214,29 @@
 }
 
 [data-theme="slate"] {
+  --background: oklch(1 0 0);
+  --foreground: oklch(12.9% 0.042 264.695);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(12.9% 0.042 264.695);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(12.9% 0.042 264.695);
+  --primary: oklch(20.8% 0.042 265.755);
+  --primary-foreground: oklch(98.4% 0.003 247.858);
+  --secondary: oklch(96.8% 0.007 247.896);
+  --secondary-foreground: oklch(20.8% 0.042 265.755);
+  --muted: oklch(96.8% 0.007 247.896);
+  --muted-foreground: oklch(55.4% 0.046 257.417);
+  --accent: oklch(96.8% 0.007 247.896);
+  --accent-foreground: oklch(20.8% 0.042 265.755);
+  --destructive: oklch(57.7% 0.245 27.325);
+  --destructive-foreground: oklch(98.4% 0.003 247.858);
+  --border: oklch(92.9% 0.013 255.508);
+  --input: oklch(92.9% 0.013 255.508);
+  --ring: oklch(70.4% 0.04 256.788);
+  --faint: oklch(70.4% 0.04 256.788);
+}
+
+[data-theme="slate"]:is(.dark, .dark *) {
   --background: oklch(12.9% 0.042 264.695);
   --foreground: oklch(98.4% 0.003 247.858);
   --card: oklch(20.8% 0.042 265.755);
@@ -162,6 +260,29 @@
 }
 
 [data-theme="stone"] {
+  --background: oklch(1 0 0);
+  --foreground: oklch(14.7% 0.004 49.25);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(14.7% 0.004 49.25);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(14.7% 0.004 49.25);
+  --primary: oklch(21.6% 0.006 56.043);
+  --primary-foreground: oklch(98.5% 0.001 106.423);
+  --secondary: oklch(97% 0.001 106.424);
+  --secondary-foreground: oklch(21.6% 0.006 56.043);
+  --muted: oklch(97% 0.001 106.424);
+  --muted-foreground: oklch(55.3% 0.013 58.071);
+  --accent: oklch(97% 0.001 106.424);
+  --accent-foreground: oklch(21.6% 0.006 56.043);
+  --destructive: oklch(57.7% 0.245 27.325);
+  --destructive-foreground: oklch(98.5% 0.001 106.423);
+  --border: oklch(92.3% 0.003 48.717);
+  --input: oklch(92.3% 0.003 48.717);
+  --ring: oklch(70.9% 0.01 56.259);
+  --faint: oklch(70.9% 0.01 56.259);
+}
+
+[data-theme="stone"]:is(.dark, .dark *) {
   --background: oklch(14.7% 0.004 49.25);
   --foreground: oklch(98.5% 0.001 106.423);
   --card: oklch(21.6% 0.006 56.043);
@@ -185,6 +306,29 @@
 }
 
 [data-theme="gray"] {
+  --background: oklch(1 0 0);
+  --foreground: oklch(13% 0.028 261.692);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(13% 0.028 261.692);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(13% 0.028 261.692);
+  --primary: oklch(21% 0.034 264.665);
+  --primary-foreground: oklch(98.5% 0.002 247.839);
+  --secondary: oklch(96.7% 0.003 264.542);
+  --secondary-foreground: oklch(21% 0.034 264.665);
+  --muted: oklch(96.7% 0.003 264.542);
+  --muted-foreground: oklch(55.1% 0.027 264.364);
+  --accent: oklch(96.7% 0.003 264.542);
+  --accent-foreground: oklch(21% 0.034 264.665);
+  --destructive: oklch(57.7% 0.245 27.325);
+  --destructive-foreground: oklch(98.5% 0.002 247.839);
+  --border: oklch(92.8% 0.006 264.531);
+  --input: oklch(92.8% 0.006 264.531);
+  --ring: oklch(70.7% 0.022 261.325);
+  --faint: oklch(70.7% 0.022 261.325);
+}
+
+[data-theme="gray"]:is(.dark, .dark *) {
   --background: oklch(13% 0.028 261.692);
   --foreground: oklch(98.5% 0.002 247.839);
   --card: oklch(21% 0.034 264.665);
@@ -208,6 +352,29 @@
 }
 
 [data-theme="neutral"] {
+  --background: oklch(1 0 0);
+  --foreground: oklch(14.5% 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(14.5% 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(14.5% 0 0);
+  --primary: oklch(20.5% 0 0);
+  --primary-foreground: oklch(98.5% 0 0);
+  --secondary: oklch(97% 0 0);
+  --secondary-foreground: oklch(20.5% 0 0);
+  --muted: oklch(97% 0 0);
+  --muted-foreground: oklch(55.6% 0 0);
+  --accent: oklch(97% 0 0);
+  --accent-foreground: oklch(20.5% 0 0);
+  --destructive: oklch(57.7% 0.245 27.325);
+  --destructive-foreground: oklch(98.5% 0 0);
+  --border: oklch(92.2% 0 0);
+  --input: oklch(92.2% 0 0);
+  --ring: oklch(70.8% 0 0);
+  --faint: oklch(70.8% 0 0);
+}
+
+[data-theme="neutral"]:is(.dark, .dark *) {
   --background: oklch(14.5% 0 0);
   --foreground: oklch(98.5% 0 0);
   --card: oklch(20.5% 0 0);
@@ -231,6 +398,29 @@
 }
 
 [data-theme="red"] {
+  --background: oklch(1 0 0);
+  --foreground: oklch(14.1% 0.005 285.823);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(14.1% 0.005 285.823);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(14.1% 0.005 285.823);
+  --primary: oklch(57.7% 0.245 27.325);
+  --primary-foreground: oklch(98.5% 0 0);
+  --secondary: oklch(96.7% 0.001 286.375);
+  --secondary-foreground: oklch(14.1% 0.005 285.823);
+  --muted: oklch(96.7% 0.001 286.375);
+  --muted-foreground: oklch(55.2% 0.016 285.938);
+  --accent: oklch(96.7% 0.001 286.375);
+  --accent-foreground: oklch(14.1% 0.005 285.823);
+  --destructive: oklch(57.7% 0.245 27.325);
+  --destructive-foreground: oklch(98.5% 0 0);
+  --border: oklch(92% 0.004 286.32);
+  --input: oklch(92% 0.004 286.32);
+  --ring: oklch(57.7% 0.245 27.325);
+  --faint: oklch(70.5% 0.015 286.067);
+}
+
+[data-theme="red"]:is(.dark, .dark *) {
   --background: oklch(14.1% 0.005 285.823);
   --foreground: oklch(98.5% 0 0);
   --card: oklch(21% 0.006 285.885);
@@ -254,6 +444,29 @@
 }
 
 [data-theme="rose"] {
+  --background: oklch(1 0 0);
+  --foreground: oklch(14.1% 0.005 285.823);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(14.1% 0.005 285.823);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(14.1% 0.005 285.823);
+  --primary: oklch(58.6% 0.253 17.585);
+  --primary-foreground: oklch(98.5% 0 0);
+  --secondary: oklch(96.7% 0.001 286.375);
+  --secondary-foreground: oklch(14.1% 0.005 285.823);
+  --muted: oklch(96.7% 0.001 286.375);
+  --muted-foreground: oklch(55.2% 0.016 285.938);
+  --accent: oklch(96.7% 0.001 286.375);
+  --accent-foreground: oklch(14.1% 0.005 285.823);
+  --destructive: oklch(57.7% 0.245 27.325);
+  --destructive-foreground: oklch(98.5% 0 0);
+  --border: oklch(92% 0.004 286.32);
+  --input: oklch(92% 0.004 286.32);
+  --ring: oklch(58.6% 0.253 17.585);
+  --faint: oklch(70.5% 0.015 286.067);
+}
+
+[data-theme="rose"]:is(.dark, .dark *) {
   --background: oklch(14.1% 0.005 285.823);
   --foreground: oklch(98.5% 0 0);
   --card: oklch(21% 0.006 285.885);
@@ -277,6 +490,29 @@
 }
 
 [data-theme="orange"] {
+  --background: oklch(1 0 0);
+  --foreground: oklch(14.1% 0.005 285.823);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(14.1% 0.005 285.823);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(14.1% 0.005 285.823);
+  --primary: oklch(64.6% 0.222 41.116);
+  --primary-foreground: oklch(26.6% 0.079 36.259);
+  --secondary: oklch(96.7% 0.001 286.375);
+  --secondary-foreground: oklch(14.1% 0.005 285.823);
+  --muted: oklch(96.7% 0.001 286.375);
+  --muted-foreground: oklch(55.2% 0.016 285.938);
+  --accent: oklch(96.7% 0.001 286.375);
+  --accent-foreground: oklch(14.1% 0.005 285.823);
+  --destructive: oklch(57.7% 0.245 27.325);
+  --destructive-foreground: oklch(98.5% 0 0);
+  --border: oklch(92% 0.004 286.32);
+  --input: oklch(92% 0.004 286.32);
+  --ring: oklch(64.6% 0.222 41.116);
+  --faint: oklch(70.5% 0.015 286.067);
+}
+
+[data-theme="orange"]:is(.dark, .dark *) {
   --background: oklch(14.1% 0.005 285.823);
   --foreground: oklch(98.5% 0 0);
   --card: oklch(21% 0.006 285.885);
@@ -300,6 +536,29 @@
 }
 
 [data-theme="green"] {
+  --background: oklch(1 0 0);
+  --foreground: oklch(14.1% 0.005 285.823);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(14.1% 0.005 285.823);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(14.1% 0.005 285.823);
+  --primary: oklch(62.7% 0.194 149.214);
+  --primary-foreground: oklch(26.6% 0.065 152.934);
+  --secondary: oklch(96.7% 0.001 286.375);
+  --secondary-foreground: oklch(14.1% 0.005 285.823);
+  --muted: oklch(96.7% 0.001 286.375);
+  --muted-foreground: oklch(55.2% 0.016 285.938);
+  --accent: oklch(96.7% 0.001 286.375);
+  --accent-foreground: oklch(14.1% 0.005 285.823);
+  --destructive: oklch(57.7% 0.245 27.325);
+  --destructive-foreground: oklch(98.5% 0 0);
+  --border: oklch(92% 0.004 286.32);
+  --input: oklch(92% 0.004 286.32);
+  --ring: oklch(62.7% 0.194 149.214);
+  --faint: oklch(70.5% 0.015 286.067);
+}
+
+[data-theme="green"]:is(.dark, .dark *) {
   --background: oklch(14.1% 0.005 285.823);
   --foreground: oklch(98.5% 0 0);
   --card: oklch(21% 0.006 285.885);
@@ -323,6 +582,29 @@
 }
 
 [data-theme="blue"] {
+  --background: oklch(1 0 0);
+  --foreground: oklch(14.1% 0.005 285.823);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(14.1% 0.005 285.823);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(14.1% 0.005 285.823);
+  --primary: oklch(54.6% 0.245 262.881);
+  --primary-foreground: oklch(98.5% 0 0);
+  --secondary: oklch(96.7% 0.001 286.375);
+  --secondary-foreground: oklch(14.1% 0.005 285.823);
+  --muted: oklch(96.7% 0.001 286.375);
+  --muted-foreground: oklch(55.2% 0.016 285.938);
+  --accent: oklch(96.7% 0.001 286.375);
+  --accent-foreground: oklch(14.1% 0.005 285.823);
+  --destructive: oklch(57.7% 0.245 27.325);
+  --destructive-foreground: oklch(98.5% 0 0);
+  --border: oklch(92% 0.004 286.32);
+  --input: oklch(92% 0.004 286.32);
+  --ring: oklch(54.6% 0.245 262.881);
+  --faint: oklch(70.5% 0.015 286.067);
+}
+
+[data-theme="blue"]:is(.dark, .dark *) {
   --background: oklch(14.1% 0.005 285.823);
   --foreground: oklch(98.5% 0 0);
   --card: oklch(21% 0.006 285.885);
@@ -346,6 +628,29 @@
 }
 
 [data-theme="yellow"] {
+  --background: oklch(1 0 0);
+  --foreground: oklch(14.1% 0.005 285.823);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(14.1% 0.005 285.823);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(14.1% 0.005 285.823);
+  --primary: oklch(68.1% 0.162 75.834);
+  --primary-foreground: oklch(28.6% 0.066 53.813);
+  --secondary: oklch(96.7% 0.001 286.375);
+  --secondary-foreground: oklch(14.1% 0.005 285.823);
+  --muted: oklch(96.7% 0.001 286.375);
+  --muted-foreground: oklch(55.2% 0.016 285.938);
+  --accent: oklch(96.7% 0.001 286.375);
+  --accent-foreground: oklch(14.1% 0.005 285.823);
+  --destructive: oklch(57.7% 0.245 27.325);
+  --destructive-foreground: oklch(98.5% 0 0);
+  --border: oklch(92% 0.004 286.32);
+  --input: oklch(92% 0.004 286.32);
+  --ring: oklch(68.1% 0.162 75.834);
+  --faint: oklch(70.5% 0.015 286.067);
+}
+
+[data-theme="yellow"]:is(.dark, .dark *) {
   --background: oklch(14.1% 0.005 285.823);
   --foreground: oklch(98.5% 0 0);
   --card: oklch(21% 0.006 285.885);
@@ -369,6 +674,29 @@
 }
 
 [data-theme="violet"] {
+  --background: oklch(1 0 0);
+  --foreground: oklch(14.1% 0.005 285.823);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(14.1% 0.005 285.823);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(14.1% 0.005 285.823);
+  --primary: oklch(54.1% 0.281 293.009);
+  --primary-foreground: oklch(98.5% 0 0);
+  --secondary: oklch(96.7% 0.001 286.375);
+  --secondary-foreground: oklch(14.1% 0.005 285.823);
+  --muted: oklch(96.7% 0.001 286.375);
+  --muted-foreground: oklch(55.2% 0.016 285.938);
+  --accent: oklch(96.7% 0.001 286.375);
+  --accent-foreground: oklch(14.1% 0.005 285.823);
+  --destructive: oklch(57.7% 0.245 27.325);
+  --destructive-foreground: oklch(98.5% 0 0);
+  --border: oklch(92% 0.004 286.32);
+  --input: oklch(92% 0.004 286.32);
+  --ring: oklch(54.1% 0.281 293.009);
+  --faint: oklch(70.5% 0.015 286.067);
+}
+
+[data-theme="violet"]:is(.dark, .dark *) {
   --background: oklch(14.1% 0.005 285.823);
   --foreground: oklch(98.5% 0 0);
   --card: oklch(21% 0.006 285.885);

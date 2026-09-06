@@ -6,7 +6,7 @@ import { create } from "zustand";
 
 import { api } from "./lib/api.ts";
 import { persistable } from "./lib/layout.ts";
-import { applyAppearance, loadAppearance, saveAppearance } from "./lib/appearance.ts";
+import { applyAppearance, loadAppearance, saveAppearance, watchSystemMode } from "./lib/appearance.ts";
 import type { Appearance } from "./lib/appearance.ts";
 import type {
   AppState,
@@ -980,6 +980,18 @@ export const useStore = create<Store>((set, get) => ({
     }
   },
 }));
+
+// System mode has to react to the OS flipping underneath it with no user action of its own —
+// this is the one path that changes what's rendered without a setAppearance call. Re-running
+// applyAppearance recomputes the .dark class; re-setting `appearance` to a fresh reference is
+// what makes every component reading it (Mermaid, Excalidraw, the terminal) re-render, since
+// the persisted `mode` string itself never changes
+watchSystemMode(() => {
+  const { appearance } = useStore.getState();
+  if (appearance.mode !== "system") return;
+  applyAppearance(appearance);
+  useStore.setState({ appearance: { ...appearance } });
+});
 
 export function useActiveThread(): Thread | null {
   return useStore((state) => state.threads.find((thread) => thread.id === state.activeThreadId) ?? null);

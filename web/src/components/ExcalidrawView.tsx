@@ -8,6 +8,9 @@ import type {
   ExcalidrawInitialDataState,
 } from "@excalidraw/excalidraw/types";
 
+import { resolveDark, systemPrefersDark } from "../lib/appearance.ts";
+import { useStore } from "../store.ts";
+
 // EXCALIDRAW_ASSET_PATH is read once, at module load, by the excalidraw bundle itself to
 // resolve its canvas fonts (Virgil, Excalifont, …) — set it before that bundle is imported, or
 // it falls back to fetching them from esm.sh, which fails offline and isn't on the CDN allowlist
@@ -67,6 +70,10 @@ export function ExcalidrawView({
   onFlush: (flush: (() => boolean) | null) => void;
 }) {
   const api = useRef<ExcalidrawImperativeAPI | null>(null);
+  // whole-object selector, not just .mode — see the matching comment in Mermaid.tsx for why
+  // (an OS flip under System mode changes the object reference but not the mode string)
+  const appearance = useStore((state) => state.appearance);
+  const dark = resolveDark(appearance.mode, systemPrefersDark());
   const initialData = useRef<ExcalidrawInitialDataState | null>(null);
   initialData.current ??= parseScene(text);
   const timer = useRef<number | null>(null);
@@ -148,7 +155,7 @@ export function ExcalidrawView({
             api.current = instance;
           }}
           initialData={initialData.current}
-          theme="dark"
+          theme={dark ? "dark" : "light"}
           UIOptions={{
             canvasActions: { saveToActiveFile: false, loadScene: false, toggleTheme: false },
           }}

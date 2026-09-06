@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { api } from "../lib/api.ts";
 import { THEMES, availableFonts } from "../lib/appearance.ts";
+import type { ThemeMode } from "../lib/appearance.ts";
 import type { PermissionMode, ProviderStatus } from "../lib/types.ts";
 import { useStore } from "../store.ts";
 import { SidebarToggle } from "./Sidebar.tsx";
@@ -327,6 +328,25 @@ function AppearancePanel() {
             every one.
           </p>
         </header>
+        <div className="flex items-center gap-4 border-b border-border/60 px-4 py-4">
+          <div className="min-w-0 flex-1">
+            <p className="text-[13px] text-foreground">Mode</p>
+            <p className="text-[11.5px] text-faint">Light, dark, or match the system setting</p>
+          </div>
+          <Select
+            value={appearance.mode}
+            onValueChange={(next) => setAppearance({ mode: next as ThemeMode })}
+          >
+            <SelectTrigger className="w-56 shrink-0">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="light">Light</SelectItem>
+              <SelectItem value="dark">Dark</SelectItem>
+              <SelectItem value="system">System</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <div className="grid grid-cols-4 gap-2.5 px-4 py-4">
           {THEMES.map((theme) => (
             <ThemeSwatch
