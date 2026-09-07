@@ -766,6 +766,7 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
         model,
         permissionMode: body.permissionMode ?? defaults.permissionMode,
       });
+      agents.warmCommands(providerId, cwd);
       publish({ type: "thread.updated", thread });
       return thread;
     },

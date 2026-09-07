@@ -144,6 +144,7 @@ function DraftChips({
       createBranch: false,
       worktree: false,
       worktreePath: null,
+      locked: false,
     });
     await refreshState();
   };
@@ -195,14 +196,25 @@ function DraftChips({
       />
       <Chip
         icon={<FolderIcon />}
-        onClick={() => void chooseFolder()}
-        title="Choose the folder this session runs in"
-        className={project ? undefined : "border-primary/60 text-primary"}
+        onClick={draft.locked ? undefined : () => void chooseFolder()}
+        title={draft.locked ? "Already decided from the worktree panel" : "Choose the folder this session runs in"}
+        className={draft.locked ? "cursor-default" : project ? undefined : "border-primary/60 text-primary"}
       >
         {choosing ? "Choosing…" : (project?.name ?? "Choose folder")}
       </Chip>
 
-      {snapshot?.isGit ? (
+      {snapshot?.isGit && draft.locked ? (
+        <div
+          className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border/70 bg-accent/40 px-2 text-[12px] text-muted-foreground"
+          title="Already decided from the worktree panel"
+        >
+          <BranchIcon />
+          <span className="max-w-40 truncate font-mono">{selected ?? "detached"}</span>
+          {draft.worktree ? <WorktreeIcon className="size-3 text-primary" /> : null}
+        </div>
+      ) : null}
+
+      {snapshot?.isGit && !draft.locked ? (
         <div className="inline-flex">
           <div className="inline-flex h-7 items-center overflow-hidden rounded-md border border-border/70 bg-accent/40 text-[12px] text-muted-foreground">
             <Popover open={menuOpen} onOpenChange={setMenuOpen}>

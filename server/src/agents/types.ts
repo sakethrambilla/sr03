@@ -63,6 +63,7 @@ export interface AgentProvider {
   id: ProviderId;
   open(thread: Thread, emit: AgentEventSink, signal: AbortSignal): Promise<AgentSession>;
   listCommands(cwd: string): Promise<SlashCommand[]>;
+  warmCommands?(cwd: string): void;
   readUsage(threadId: string | null): Promise<Usage>;
   forkSession?(sessionId: string, cwd: string): Promise<string>;
   forgetThread?(threadId: string): void;

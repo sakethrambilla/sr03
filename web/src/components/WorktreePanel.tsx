@@ -1,7 +1,7 @@
-// A project's worktrees: which exist, adding one on a new or existing branch, and managing
-// their lifecycle — lock/unlock, move, fetch/pull/push, favorites, and bulk-removing every
-// worktree whose branch is already merged into the main worktree's branch. A worktree lives
-// under the data dir, not inside the repo.
+// A project's worktrees: which exist, and managing their lifecycle — lock/unlock, move,
+// fetch/pull/push, favorites, and bulk-removing every worktree whose branch is already merged
+// into the main worktree's branch. Creating one happens from the composer's own worktree
+// checkbox + branch picker, which already covers picking a base and naming a branch.
 import { useEffect, useState } from "react";
 
 import { api } from "../lib/api.ts";
@@ -10,7 +10,6 @@ import { useStore } from "../store.ts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  CheckIcon,
   Dialog,
   FavoriteIcon,
   LockIcon,
@@ -19,15 +18,12 @@ import {
   PushIcon,
   RefreshIcon,
   UnlockIcon,
-  WorktreeIcon,
 } from "./ui.tsx";
 import { cn } from "@/lib/utils";
 
 export function WorktreePanel({ project, onClose }: { project: Project; onClose: () => void }) {
   const startDraft = useStore((state) => state.startDraft);
   const [snapshot, setSnapshot] = useState<GitSnapshot | null>(null);
-  const [branch, setBranch] = useState("");
-  const [base, setBase] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [moving, setMoving] = useState<string | null>(null);
@@ -37,10 +33,7 @@ export function WorktreePanel({ project, onClose }: { project: Project; onClose:
   const load = () => {
     api
       .git(project.id)
-      .then((next) => {
-        setSnapshot(next);
-        setBase((current) => current || next.branch || "HEAD");
-      })
+      .then(setSnapshot)
       .catch((cause: Error) => setError(cause.message));
   };
 
@@ -58,23 +51,6 @@ export function WorktreePanel({ project, onClose }: { project: Project; onClose:
       setBusy(false);
     }
   };
-
-  const create = () =>
-    run(async () => {
-      const existing = snapshot?.branches.find((item) => item.name === branch.trim());
-      const worktree = await api.addWorktree(project.id, {
-        branch: branch.trim(),
-        createBranch: !existing,
-        ...(existing ? {} : { base: base.trim() || "HEAD" }),
-      });
-      setBranch("");
-      startDraft({
-        projectId: project.id,
-        ...(worktree.branch ? { branch: worktree.branch } : {}),
-        worktreePath: worktree.path,
-      });
-      onClose();
-    });
 
   const loadCandidates = () =>
     run(async () => {
@@ -108,36 +84,7 @@ export function WorktreePanel({ project, onClose }: { project: Project; onClose:
     <Dialog title={`${project.name} · worktrees`} onClose={onClose} wide>
       {error ? <p className="mb-3 text-xs text-destructive">{error}</p> : null}
 
-      <section className="mb-5 rounded-lg border border-border bg-background p-3">
-        <h3 className="mb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">New worktree</h3>
-        <div className="flex flex-wrap items-center gap-2">
-          <Input
-            value={branch}
-            onChange={(event) => setBranch(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && branch.trim()) void create();
-            }}
-            placeholder="feat/my-branch"
-            spellCheck={false}
-            className="h-8 min-w-52 flex-1 font-mono text-xs"
-          />
-          <span className="text-xs text-faint">from</span>
-          <Input
-            value={base}
-            onChange={(event) => setBase(event.target.value)}
-            spellCheck={false}
-            className="h-8 w-32 font-mono text-xs"
-          />
-          <Button variant="default" disabled={busy || !branch.trim()} onClick={() => void create()}>
-            Create + start session
-          </Button>
-        </div>
-        <p className="mt-2 text-[11px] text-faint">
-          An existing branch is checked out as-is; a new name is branched off the base ref.
-        </p>
-      </section>
-
-      <section className="mb-5">
+      <section>
         <div className="mb-2 flex items-center justify-between">
           <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
             Worktrees ({worktrees.length})
@@ -206,7 +153,7 @@ export function WorktreePanel({ project, onClose }: { project: Project; onClose:
                       </span>
                     ) : null}
                   </div>
-                  <p className="truncate font-mono text-[11px] text-faint">{worktree.path}</p>
+                  <p className="font-mono text-[11px] break-all text-faint">{worktree.path}</p>
                 </div>
                 <Button
                   disabled={busy}
@@ -215,6 +162,7 @@ export function WorktreePanel({ project, onClose }: { project: Project; onClose:
                       projectId: project.id,
                       ...(worktree.branch ? { branch: worktree.branch } : {}),
                       ...(worktree.isMain ? {} : { worktreePath: worktree.path }),
+                      locked: true,
                     });
                     onClose();
                   }}
@@ -315,24 +263,6 @@ export function WorktreePanel({ project, onClose }: { project: Project; onClose:
             </li>
           ))}
         </ul>
-      </section>
-
-      <section>
-        <h3 className="mb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">Branches</h3>
-        <div className="flex flex-wrap gap-1.5">
-          {snapshot?.branches.map((item) => (
-            <Button
-              key={item.name}
-              variant="outline"
-              onClick={() => setBranch(item.name)}
-              className="h-auto gap-1.5 bg-background px-2 py-0.5 font-mono text-[11px] font-normal text-muted-foreground"
-            >
-              {item.name}
-              {item.isCurrent ? <CheckIcon className="size-3 text-primary" /> : null}
-              {item.worktreePath ? <WorktreeIcon className="size-3" /> : null}
-            </Button>
-          ))}
-        </div>
       </section>
     </Dialog>
   );
