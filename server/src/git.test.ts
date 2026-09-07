@@ -134,3 +134,78 @@ test("commitFileDiff shows the added line for the root commit", () => {
     assert.match(diff, /\+one/);
   });
 });
+
+test("listWorktrees reports lock state and reason", () => {
+  const dir = makeRepo();
+  fs.writeFileSync(path.join(dir, "a.txt"), "one\n");
+  sh(dir, ["add", "."]);
+  sh(dir, ["commit", "-q", "-m", "first"]);
+  const wtDir = fs.mkdtempSync(path.join(os.tmpdir(), "sr03-git-wt-"));
+  fs.rmdirSync(wtDir);
+  sh(dir, ["worktree", "add", "-b", "feature", wtDir]);
+  return lockWorktree({ root: dir, path: wtDir, reason: "in use" })
+    .then(() => listWorktrees(dir))
+    .then((worktrees) => {
+      const locked = worktrees.find((worktree) => worktree.path === fs.realpathSync(wtDir));
+      assert.equal(locked?.locked, true);
+      assert.equal(locked?.lockReason, "in use");
+    });
+});
+
+test("unlockWorktree clears the lock", () => {
+  const dir = makeRepo();
+  fs.writeFileSync(path.join(dir, "a.txt"), "one\n");
+  sh(dir, ["add", "."]);
+  sh(dir, ["commit", "-q", "-m", "first"]);
+  const wtDir = fs.mkdtempSync(path.join(os.tmpdir(), "sr03-git-wt-"));
+  fs.rmdirSync(wtDir);
+  sh(dir, ["worktree", "add", "-b", "feature", wtDir]);
+  return lockWorktree({ root: dir, path: wtDir })
+    .then(() => unlockWorktree({ root: dir, path: wtDir }))
+    .then(() => listWorktrees(dir))
+    .then((worktrees) => {
+      const worktree = worktrees.find((entry) => entry.path === fs.realpathSync(wtDir));
+      assert.equal(worktree?.locked, false);
+    });
+});
+
+test("removeWorktree on a locked worktree throws", () => {
+  const dir = makeRepo();
+  fs.writeFileSync(path.join(dir, "a.txt"), "one\n");
+  sh(dir, ["add", "."]);
+  sh(dir, ["commit", "-q", "-m", "first"]);
+  const wtDir = fs.mkdtempSync(path.join(os.tmpdir(), "sr03-git-wt-"));
+  fs.rmdirSync(wtDir);
+  sh(dir, ["worktree", "add", "-b", "feature", wtDir]);
+  return lockWorktree({ root: dir, path: wtDir, reason: "busy" }).then(() =>
+    assert.rejects(() => removeWorktree({ root: dir, path: wtDir, force: false }), /busy/),
+  );
+});
+
+test("mergedBranches includes a branch with no new commits, excludes one with unmerged commits", () => {
+  const dir = makeRepo();
+  fs.writeFileSync(path.join(dir, "a.txt"), "one\n");
+  sh(dir, ["add", "."]);
+  sh(dir, ["commit", "-q", "-m", "first"]);
+  sh(dir, ["branch", "merged-branch"]);
+  sh(dir, ["checkout", "-q", "-b", "ahead-branch"]);
+  fs.writeFileSync(path.join(dir, "b.txt"), "two\n");
+  sh(dir, ["add", "."]);
+  sh(dir, ["commit", "-q", "-m", "second"]);
+  sh(dir, ["checkout", "-q", "main"]);
+  return mergedBranches(dir, "main").then((merged) => {
+    assert.equal(merged.has("merged-branch"), true);
+    assert.equal(merged.has("ahead-branch"), false);
+  });
+});
+
+test("fetchWorktree against an unreachable remote throws with git's own message", () => {
+  // a repo with zero remotes configured makes `git fetch` a silent no-op, not a failure —
+  // an unreachable remote is what actually reproduces git's own error text
+  const dir = makeRepo();
+  fs.writeFileSync(path.join(dir, "a.txt"), "one\n");
+  sh(dir, ["add", "."]);
+  sh(dir, ["commit", "-q", "-m", "first"]);
+  sh(dir, ["remote", "add", "origin", "/nonexistent/path/repo.git"]);
+  return assert.rejects(() => fetchWorktree(dir), /Could not read from remote repository/);
+});
