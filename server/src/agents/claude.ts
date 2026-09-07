@@ -1,6 +1,8 @@
 // Claude Code provider adapter. Agent SDK frames are normalized into AgentEvent values; the
 // provider-neutral runtime owns persistence, WebSocket projection, parking, and thread status.
 import { randomUUID } from "node:crypto";
+import os from "node:os";
+import path from "node:path";
 import {
   forkSession as forkClaudeSession,
   query,
@@ -14,7 +16,7 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 
-import { usage as usageStore } from "../db.ts";
+import { commandCache, usage as usageStore } from "../db.ts";
 import type {
   ApprovalDecision,
   Effort,
@@ -33,6 +35,7 @@ import type {
   AgentSession,
   AgentSettingsPatch,
 } from "./types.ts";
+import { dedupeByName, scanCommandFiles, scanSkillDirectories } from "./skillScan.ts";
 
 // `Effort` spans every provider's ladder; the SDK accepts only Claude Code's five rungs
 const CLAUDE_EFFORT_LEVELS = new Set<string>(["low", "medium", "high", "xhigh", "max"]);
@@ -411,7 +414,6 @@ function foldRateLimit(session: ClaudeSession, info: SDKRateLimitInfo): void {
 }
 
 const terminalOnly = new Set<string>();
-const commandsByCwd = new Map<string, Promise<SlashCommand[]>>();
 
 function toCommands(commands: SlashCommand[]): SlashCommand[] {
   return commands
@@ -436,22 +438,68 @@ async function readCommands(cwd: string): Promise<SlashCommand[]> {
   }
 }
 
-function cachedCommands(cwd: string): Promise<SlashCommand[]> {
-  const known = commandsByCwd.get(cwd);
-  if (known) return known;
-  const pending = readCommands(cwd).catch((error: Error) => {
-    console.error(`[commands:claude] ${error.message}`);
-    commandsByCwd.delete(cwd);
-    return [];
-  });
-  commandsByCwd.set(cwd, pending);
-  return pending;
+// Project-scope commands win a name collision; user-scope skills win one, matching how
+// Claude Code itself resolves a skill defined in both scopes.
+async function scanClaudeCommands(cwd: string): Promise<SlashCommand[]> {
+  const home = os.homedir();
+  const [projectCommands, userCommands, userSkills, projectSkills] = await Promise.all([
+    scanCommandFiles(path.join(cwd, ".claude", "commands")),
+    scanCommandFiles(path.join(home, ".claude", "commands")),
+    scanSkillDirectories(path.join(home, ".claude", "skills")),
+    scanSkillDirectories(path.join(cwd, ".claude", "skills")),
+  ]);
+  return dedupeByName([projectCommands, userCommands, userSkills, projectSkills]);
+}
+
+function commandCacheKey(cwd: string): string {
+  return `claude:${cwd}`;
+}
+
+function readCommandCache(cwd: string): SlashCommand[] | null {
+  const row = commandCache.get(commandCacheKey(cwd));
+  return row ? (JSON.parse(row.json) as SlashCommand[]) : null;
+}
+
+function writeCommandCache(cwd: string, commands: SlashCommand[]): void {
+  commandCache.set(commandCacheKey(cwd), JSON.stringify(commands));
+}
+
+// A cold live probe spawns a whole SDK session, so it always runs in the background and
+// merges into the cache rather than being awaited by a request. Claude's built-in commands
+// (/clear, /compact, ...) have no file to scan, so this is what supplies them.
+const liveRefreshes = new Map<string, Promise<void>>();
+function refreshLiveCommands(cwd: string): void {
+  if (liveRefreshes.has(cwd)) return;
+  const pending = readCommands(cwd)
+    .then((live) => writeCommandCache(cwd, dedupeByName([readCommandCache(cwd) ?? [], live])))
+    .catch((error: Error) => console.error(`[commands:claude] ${error.message}`))
+    .finally(() => liveRefreshes.delete(cwd));
+  liveRefreshes.set(cwd, pending);
+}
+
+// Populates the disk cache ahead of the first "/" — called when a thread is created.
+async function warmCommands(cwd: string): Promise<void> {
+  const scanned = await scanClaudeCommands(cwd);
+  if (scanned.length) writeCommandCache(cwd, dedupeByName([readCommandCache(cwd) ?? [], scanned]));
+  refreshLiveCommands(cwd);
+}
+
+async function listCommandsCold(cwd: string): Promise<SlashCommand[]> {
+  const cached = readCommandCache(cwd);
+  if (cached) {
+    refreshLiveCommands(cwd);
+    return cached;
+  }
+  const scanned = await scanClaudeCommands(cwd);
+  writeCommandCache(cwd, scanned);
+  refreshLiveCommands(cwd);
+  return scanned;
 }
 
 function listCommands(cwd: string): Promise<SlashCommand[]> {
   const live = [...sessions.values()].find((session) => session.cwd === cwd);
-  if (!live) return cachedCommands(cwd);
-  return live.query.supportedCommands().then(toCommands).catch(() => cachedCommands(cwd));
+  if (!live) return listCommandsCold(cwd);
+  return live.query.supportedCommands().then(toCommands).catch(() => listCommandsCold(cwd));
 }
 
 // the CLI routes this one through canUseTool in every permission mode, unlike every other tool —
@@ -765,6 +813,7 @@ export const claudeProvider: AgentProvider = {
   id: "claude",
   open,
   listCommands,
+  warmCommands,
   readUsage,
   async forkSession(sessionId, cwd) {
     const forked = await forkClaudeSession(sessionId, { dir: cwd });
