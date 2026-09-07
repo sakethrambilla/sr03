@@ -115,6 +115,18 @@ function fail(message) {
   app.exit(1);
 }
 
+// native traffic lights are a fixed 12px; the app header is h-13 (52px). x/y are DIP from the
+// window's top-left so they sit on that header's centre line with the same inset the sidebar
+// header uses, rather than hugging the corner the way the hidden-titlebar default does.
+// AppKit on recent macOS relayouts the titlebar container after show/load/restore and forgets
+// the constructor value, so placeTrafficLights re-asserts it.
+const TRAFFIC_LIGHTS = { x: 20, y: 20 };
+
+function placeTrafficLights(window) {
+  if (WINDOWS || window.isDestroyed()) return;
+  window.setWindowButtonPosition(TRAFFIC_LIGHTS);
+}
+
 function openWindow() {
   const window = new BrowserWindow({
     width: 1440,
@@ -122,13 +134,21 @@ function openWindow() {
     minWidth: 720,
     minHeight: 480,
     backgroundColor: "#1f1e1c",
-    // on macOS the app's own 60px header stands in for the title bar, so the traffic lights are
-    // placed on its centre line rather than left at the inset default, which sits ~10px higher.
     // Windows keeps its native frame — its controls sit on the right, where panes have no
     // reserved room for them
-    ...(WINDOWS ? {} : { titleBarStyle: "hidden", trafficLightPosition: { x: 20, y: 22 } }),
+    ...(WINDOWS ? {} : { titleBarStyle: "hidden", trafficLightPosition: TRAFFIC_LIGHTS }),
     title: "sr03",
   });
+  if (!WINDOWS) {
+    placeTrafficLights(window);
+    window.on("ready-to-show", () => placeTrafficLights(window));
+    window.on("restore", () => placeTrafficLights(window));
+    window.on("leave-full-screen", () => placeTrafficLights(window));
+    window.webContents.on("did-finish-load", () => {
+      placeTrafficLights(window);
+      setTimeout(() => placeTrafficLights(window), 50);
+    });
+  }
   window.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: "deny" };
