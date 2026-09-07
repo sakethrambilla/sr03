@@ -88,6 +88,11 @@ db.exec(`
     json TEXT NOT NULL,
     updated_at INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS command_cache (
+    id TEXT PRIMARY KEY,
+    json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS server_instances (
     id TEXT PRIMARY KEY,
     pid INTEGER NOT NULL,
@@ -277,6 +282,10 @@ const sql = {
     "INSERT INTO usage (id, json, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at",
   ),
   usageRemove: db.prepare("DELETE FROM usage WHERE id = ?"),
+  commandCacheGet: db.prepare("SELECT id, json, updated_at FROM command_cache WHERE id = ?"),
+  commandCacheSet: db.prepare(
+    "INSERT INTO command_cache (id, json, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at",
+  ),
   projectsList: db.prepare("SELECT * FROM projects ORDER BY created_at ASC"),
   projectById: db.prepare("SELECT * FROM projects WHERE id = ?"),
   projectByPath: db.prepare("SELECT * FROM projects WHERE path = ?"),
@@ -355,6 +364,21 @@ export const usage = {
 
   remove(id: string): void {
     sql.usageRemove.run(id);
+  },
+};
+
+// a scanned/probed command list keyed by "<providerId>:<cwd>", so a cold cwd answers
+// from disk instead of re-scanning or re-spawning a CLI after every restart
+export const commandCache = {
+  get(id: string): { id: string; json: string; updatedAt: number } | null {
+    const row = sql.commandCacheGet.get(id) as
+      | { id: string; json: string; updated_at: number }
+      | undefined;
+    return row ? { id: row.id, json: row.json, updatedAt: row.updated_at } : null;
+  },
+
+  set(id: string, json: string): void {
+    sql.commandCacheSet.run(id, json, Date.now());
   },
 };
 
