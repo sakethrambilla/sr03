@@ -764,8 +764,16 @@ select option {
   -webkit-app-region: no-drag;
 }
 
-/* the traffic lights run to roughly 78px in from the window's left corner, so whichever pane is
-   leftmost keeps its header clear of them — the sidebar, or the main pane once it is hidden */
+/* --traffic-lights-x/width match TRAFFIC_LIGHTS in desktop/main.js (native DIP, don't scale).
+   the gap is rem so it grows with the header/sidebar spacing. whichever pane is leftmost
+   keeps its header clear of them — the sidebar, or the main pane once it is hidden */
+.electron.mac {
+  --traffic-lights-x: 20px;
+  --traffic-lights-width: 58px;
+  --traffic-lights-gap: 0.75rem;
+}
 .electron.mac :is(aside, main):first-child > [data-titlebar] {
-  padding-left: 108px;
+  padding-left: calc(
+    var(--traffic-lights-x) + var(--traffic-lights-width) + var(--traffic-lights-gap)
+  );
 }

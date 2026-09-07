@@ -53,7 +53,7 @@ function SidebarButton() {
           size="icon"
           onClick={toggleSidebar}
           aria-label={label}
-          className="-ml-1.5 text-faint"
+          className="text-faint"
         >
           <SidebarIcon className="size-4" />
         </Button>
@@ -393,7 +393,7 @@ export function Sidebar() {
 
   return (
     <aside className="flex h-full w-72 shrink-0 flex-col border-r border-border/60 bg-card">
-      <header data-titlebar className="flex h-15 shrink-0 items-center gap-2 border-b border-border/60 px-4">
+      <header data-titlebar className="flex h-13 shrink-0 items-center gap-1 border-b border-border/60 px-3">
         <SidebarButton />
       </header>
 

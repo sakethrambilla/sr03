@@ -2,9 +2,12 @@
 // Cursor-extension messages are normalized into the provider-neutral runtime contract.
 import { randomUUID } from "node:crypto";
 import os from "node:os";
+import path from "node:path";
 
 import { EFFORT_ORDER, currentProvider, findModel } from "../models.ts";
 import { findCursor } from "../providers.ts";
+import { commandCache } from "../db.ts";
+import { dedupeByName, scanSkillDirectories } from "./skillScan.ts";
 import type {
   Effort,
   EffortOption,
@@ -489,6 +492,55 @@ function parseAvailableCommands(update: Record<string, unknown>): SlashCommand[]
     });
   }
   return commands.sort((left, right) => left.name.localeCompare(right.name));
+}
+
+// Cursor has no CLI-exposed "commands" directory distinct from skills: it invokes any of
+// these as `/name`. Same four root names t3.codes' CursorSkills driver scans, under both the
+// project cwd and the user's home directory.
+const CURSOR_SKILL_ROOTS = [".cursor/skills", ".agents/skills", ".codex/skills", ".claude/skills"];
+
+async function scanCursorCommands(cwd: string): Promise<SlashCommand[]> {
+  const home = os.homedir();
+  const roots = [
+    ...CURSOR_SKILL_ROOTS.map((relative) => path.join(cwd, ...relative.split("/"))),
+    ...CURSOR_SKILL_ROOTS.map((relative) => path.join(home, ...relative.split("/"))),
+  ];
+  const lists = await Promise.all(roots.map((root) => scanSkillDirectories(root)));
+  return dedupeByName(lists);
+}
+
+function commandCacheKey(cwd: string): string {
+  return `cursor:${cwd}`;
+}
+
+function readCommandCache(cwd: string): SlashCommand[] | null {
+  const row = commandCache.get(commandCacheKey(cwd));
+  return row ? (JSON.parse(row.json) as SlashCommand[]) : null;
+}
+
+function writeCommandCache(cwd: string, commands: SlashCommand[]): void {
+  commandCache.set(commandCacheKey(cwd), JSON.stringify(commands));
+}
+
+// A cold probe spawns the actual cursor-agent ACP process, so it always runs in the
+// background and merges into the cache rather than being awaited by a request.
+const liveRefreshes = new Map<string, Promise<void>>();
+function refreshLiveCommands(cwd: string): void {
+  if (liveRefreshes.has(cwd)) return;
+  const pending = probeCommands(cwd)
+    .then((live) => {
+      if (live.length) writeCommandCache(cwd, dedupeByName([readCommandCache(cwd) ?? [], live]));
+    })
+    .catch((error) => console.error(`[commands:cursor] ${errorMessage(error)}`))
+    .finally(() => liveRefreshes.delete(cwd));
+  liveRefreshes.set(cwd, pending);
+}
+
+// Populates the disk cache ahead of the first "/" — called when a thread is created.
+async function warmCommands(cwd: string): Promise<void> {
+  const scanned = await scanCursorCommands(cwd);
+  if (scanned.length) writeCommandCache(cwd, dedupeByName([readCommandCache(cwd) ?? [], scanned]));
+  refreshLiveCommands(cwd);
 }
 
 function handleSessionUpdate(session: CursorNativeSession, params: unknown): void {
@@ -1633,21 +1685,34 @@ const probesByCwd = new Map<string, Promise<SlashCommand[]>>();
 function listCommands(cwd: string): Promise<SlashCommand[]> {
   const pushed = commandsByCwd.get(cwd);
   if (pushed) return Promise.resolve(pushed);
+  const cached = readCommandCache(cwd);
+  if (cached) {
+    refreshLiveCommands(cwd);
+    return Promise.resolve(cached);
+  }
   const known = probesByCwd.get(cwd);
   if (known) return known;
-  // an empty result means the probe failed, so it is not cached and the next read retries
-  const pending = probeCommands(cwd).then((commands) => {
-    if (commands.length) commandsByCwd.set(cwd, commands);
-    else probesByCwd.delete(cwd);
-    return commands;
+  return scanCursorCommands(cwd).then((scanned) => {
+    if (scanned.length) {
+      writeCommandCache(cwd, scanned);
+      refreshLiveCommands(cwd);
+      return scanned;
+    }
+    // no filesystem match: fall back to the original synchronous live probe
+    const pending = probeCommands(cwd).then((commands) => {
+      if (commands.length) writeCommandCache(cwd, commands);
+      else probesByCwd.delete(cwd);
+      return commands;
+    });
+    probesByCwd.set(cwd, pending);
+    return pending;
   });
-  probesByCwd.set(cwd, pending);
-  return pending;
 }
 
 export const cursorProvider: AgentProvider = {
   id: "cursor",
   open,
   listCommands,
+  warmCommands,
   readUsage,
 };
