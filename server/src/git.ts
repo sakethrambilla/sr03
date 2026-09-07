@@ -48,18 +48,27 @@ export interface Worktree {
   path: string;
   branch: string | null;
   isMain: boolean;
+  locked: boolean;
+  lockReason: string | null;
 }
 
 export async function listWorktrees(root: string): Promise<Worktree[]> {
   const output = await git(root, ["worktree", "list", "--porcelain"]);
   const worktrees: Worktree[] = [];
-  let current: { path?: string; branch?: string | null } = {};
+  let current: {
+    path?: string;
+    branch?: string | null;
+    locked?: boolean;
+    lockReason?: string | null;
+  } = {};
   const flush = () => {
     if (current.path) {
       worktrees.push({
         path: path.resolve(current.path),
         branch: current.branch ?? null,
         isMain: worktrees.length === 0,
+        locked: current.locked ?? false,
+        lockReason: current.lockReason ?? null,
       });
     }
     current = {};
@@ -72,6 +81,9 @@ export async function listWorktrees(root: string): Promise<Worktree[]> {
       current.branch = line.slice("branch refs/heads/".length).trim();
     } else if (line.trim() === "detached") {
       current.branch = null;
+    } else if (line === "locked" || line.startsWith("locked ")) {
+      current.locked = true;
+      current.lockReason = line === "locked" ? null : line.slice("locked ".length).trim();
     }
   }
   flush();
@@ -103,6 +115,90 @@ export async function listBranches(root: string): Promise<Branch[]> {
         worktreePath: byBranch.get(name!.trim()) ?? null,
       };
     });
+}
+
+export interface Commit {
+  hash: string;
+  parents: string[];
+  authorName: string;
+  authorEmail: string;
+  authorDate: number; // unix seconds
+  message: string;    // subject line only
+}
+
+export interface Ref {
+  name: string;               // short name, e.g. "main", "origin/main", "v1.0.0"
+  kind: "head" | "tag" | "remote";
+  commit: string;              // hash it resolves to (tags: the tag's target, peeled)
+}
+
+export async function commitLog(
+  root: string,
+  input: { maxCount: number; skip: number; ref?: string },
+): Promise<{ commits: Commit[]; hasMore: boolean }> {
+  const FIELD = "\x1f";
+  const RECORD = "\x1e";
+  const format = `%H${FIELD}%P${FIELD}%an${FIELD}%ae${FIELD}%at${FIELD}%s${RECORD}`;
+  const fetchCount = input.maxCount + 1;
+  // a caller-supplied ref narrows history to one branch/tag instead of every ref; validated
+  // by the API route before it ever reaches here, but re-checked since this is exported
+  if (input.ref !== undefined && !/^[A-Za-z0-9._/-]+$/.test(input.ref)) {
+    throw new GitError(`Invalid ref: ${input.ref}`);
+  }
+  try {
+    const output = await git(root, [
+      "log",
+      "--date-order",
+      ...(input.ref ? [input.ref] : ["--all"]),
+      `--max-count=${fetchCount}`,
+      `--skip=${input.skip}`,
+      `--format=${format}`,
+    ]);
+    const records = output
+      .split(RECORD)
+      .map((record) => record.trim())
+      .filter((record) => record.length > 0);
+    const commits = records.slice(0, input.maxCount).map((record) => {
+      const [hash, parents, authorName, authorEmail, authorDate, message] = record.split(FIELD);
+      return {
+        hash: hash ?? "",
+        parents: (parents ?? "").split(" ").filter(Boolean),
+        authorName: authorName ?? "",
+        authorEmail: authorEmail ?? "",
+        authorDate: Number(authorDate) || 0,
+        message: message ?? "",
+      };
+    });
+    return { commits, hasMore: records.length > input.maxCount };
+  } catch {
+    // an empty repo ("does not have any commits yet") is an empty page, not a failure
+    return { commits: [], hasMore: false };
+  }
+}
+
+export async function listRefs(root: string): Promise<Ref[]> {
+  const output = await git(root, [
+    "for-each-ref",
+    "--format=%(refname)\x1f%(objectname)\x1f%(*objectname)",
+    "refs/heads",
+    "refs/tags",
+    "refs/remotes",
+  ]);
+  const refs: Ref[] = [];
+  for (const line of output.split("\n")) {
+    if (!line.trim()) continue;
+    const [refname, objectname, peeled] = line.split("\x1f");
+    if (!refname || !objectname) continue;
+    if (refname.startsWith("refs/heads/")) {
+      refs.push({ name: refname.slice("refs/heads/".length), kind: "head", commit: objectname });
+    } else if (refname.startsWith("refs/tags/")) {
+      const target = peeled && peeled.length > 0 ? peeled : objectname;
+      refs.push({ name: refname.slice("refs/tags/".length), kind: "tag", commit: target });
+    } else if (refname.startsWith("refs/remotes/")) {
+      refs.push({ name: refname.slice("refs/remotes/".length), kind: "remote", commit: objectname });
+    }
+  }
+  return refs;
 }
 
 function sanitizeSegment(value: string): string {
@@ -170,7 +266,7 @@ export async function addWorktree(input: {
   await copyIncludedPaths(input.root, target).catch((error: Error) =>
     console.error("[git] .worktreeinclude", error.message),
   );
-  return { path: target, branch: input.branch, isMain: false };
+  return { path: target, branch: input.branch, isMain: false, locked: false, lockReason: null };
 }
 
 export async function removeWorktree(input: {
@@ -185,6 +281,37 @@ export async function removeWorktree(input: {
 
 export async function pruneWorktrees(root: string): Promise<void> {
   await git(root, ["worktree", "prune"]);
+}
+
+export async function lockWorktree(input: { root: string; path: string; reason?: string }): Promise<void> {
+  const args = ["worktree", "lock", input.path];
+  if (input.reason?.trim()) args.push("--reason", input.reason.trim());
+  await git(input.root, args);
+}
+
+export async function unlockWorktree(input: { root: string; path: string }): Promise<void> {
+  await git(input.root, ["worktree", "unlock", input.path]);
+}
+
+export async function moveWorktree(input: { root: string; path: string; to: string }): Promise<void> {
+  await git(input.root, ["worktree", "move", input.path, input.to]);
+}
+
+export async function fetchWorktree(cwd: string): Promise<string> {
+  return git(cwd, ["fetch"]);
+}
+
+export async function pullWorktree(cwd: string): Promise<string> {
+  return git(cwd, ["pull"]);
+}
+
+export async function pushWorktree(cwd: string): Promise<string> {
+  return git(cwd, ["push"]);
+}
+
+export async function mergedBranches(root: string, target: string): Promise<Set<string>> {
+  const output = await git(root, ["branch", "--merged", target, "--format=%(refname:short)"]);
+  return new Set(output.split("\n").map((line) => line.trim()).filter(Boolean));
 }
 
 export async function switchBranch(input: {
@@ -228,6 +355,88 @@ async function diffText(cwd: string, args: string[]): Promise<string> {
     if (failure.stdout) return failure.stdout;
     throw new GitError(failure.stderr?.trim() || (error as Error).message);
   }
+}
+
+export interface CommitFile {
+  path: string;
+  status: "added" | "modified" | "deleted" | "renamed";
+  insertions: number;
+  deletions: number;
+  binary: boolean;
+}
+
+// the canonical empty tree — diffing a root commit against it is how you list "everything
+// this commit added" without diff-tree's separate --root flag and its different output shape
+const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+async function firstParentOrEmptyTree(cwd: string, hash: string): Promise<string> {
+  try {
+    return (await git(cwd, ["rev-parse", `${hash}^`])).trim();
+  } catch {
+    return EMPTY_TREE; // root commit has no parent
+  }
+}
+
+function classifyCommitStatus(code: string): CommitFile["status"] {
+  const letter = code[0] ?? "M";
+  if (letter === "A") return "added";
+  if (letter === "D") return "deleted";
+  if (letter === "R" || letter === "C") return "renamed";
+  return "modified";
+}
+
+// Two diffs of the same base..hash pair, walked in lockstep: --name-status for the status
+// letter, --numstat for line counts. Git walks the tree in the same order for both formats
+// given identical base/hash/pathspec, so the Nth record of one is the Nth of the other. A
+// rename/copy's record in both formats is [old path, new path] — the new path is what the
+// user acts on, so that one is kept.
+export async function commitFiles(cwd: string, hash: string): Promise<CommitFile[]> {
+  const base = await firstParentOrEmptyTree(cwd, hash);
+  const [statusRaw, numstatRaw] = await Promise.all([
+    git(cwd, ["-c", "core.quotepath=false", "diff", "--name-status", "-z", base, hash]),
+    git(cwd, ["-c", "core.quotepath=false", "diff", "--numstat", "-z", base, hash]),
+  ]);
+  const statusParts = statusRaw.split("\0").filter((part) => part.length > 0);
+  const statuses: Array<{ code: string; path: string }> = [];
+  for (let index = 0; index < statusParts.length; index += 1) {
+    const code = statusParts[index]!;
+    const isRenameOrCopy = code[0] === "R" || code[0] === "C";
+    const oldPath = statusParts[index + 1];
+    if (oldPath === undefined) break;
+    if (isRenameOrCopy) {
+      const newPath = statusParts[index + 2];
+      statuses.push({ code, path: newPath ?? oldPath });
+      index += 2;
+    } else {
+      statuses.push({ code, path: oldPath });
+      index += 1;
+    }
+  }
+  const numstatParts = numstatRaw.split("\0").filter((part) => part.length > 0);
+  const counts: Array<{ insertions: number; deletions: number; binary: boolean }> = [];
+  for (let index = 0; index < numstatParts.length; index += 1) {
+    const record = numstatParts[index]!;
+    const [insertions, deletions, name] = record.split("\t");
+    if (insertions === undefined || deletions === undefined) continue;
+    if (!name) index += 2; // rename/copy: name is empty, old and new paths follow as separate records
+    counts.push({
+      insertions: Number(insertions) || 0,
+      deletions: Number(deletions) || 0,
+      binary: insertions === "-",
+    });
+  }
+  return statuses.map((entry, index) => ({
+    path: entry.path,
+    status: classifyCommitStatus(entry.code),
+    insertions: counts[index]?.insertions ?? 0,
+    deletions: counts[index]?.deletions ?? 0,
+    binary: counts[index]?.binary ?? false,
+  }));
+}
+
+export async function commitFileDiff(cwd: string, hash: string, file: string): Promise<string> {
+  const base = await firstParentOrEmptyTree(cwd, hash);
+  return diffText(cwd, ["-c", "core.quotepath=false", "diff", base, hash, "--", file]);
 }
 
 export interface ChangedFile {
