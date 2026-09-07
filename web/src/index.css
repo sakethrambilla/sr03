@@ -32,6 +32,14 @@
   --input: oklch(0.86 0.006 75);
   --ring: oklch(0.6 0.14 41);
   --faint: oklch(0.63 0.006 75);
+  --graph-lane-1: oklch(0.6 0.14 41);
+  --graph-lane-2: oklch(0.6 0.14 145);
+  --graph-lane-3: oklch(0.6 0.14 250);
+  --graph-lane-4: oklch(0.6 0.14 300);
+  --graph-lane-5: oklch(0.6 0.14 15);
+  --graph-lane-6: oklch(0.6 0.14 190);
+  --graph-lane-7: oklch(0.6 0.14 90);
+  --graph-lane-8: oklch(0.6 0.14 340);
   --radius: 0.375rem;
 }
 
@@ -58,6 +66,14 @@
   --input: oklch(0.33 0.005 75);
   --ring: oklch(0.66 0.12 41);
   --faint: oklch(0.57 0.006 75);
+  --graph-lane-1: oklch(0.66 0.12 41);
+  --graph-lane-2: oklch(0.66 0.12 145);
+  --graph-lane-3: oklch(0.66 0.12 250);
+  --graph-lane-4: oklch(0.66 0.12 300);
+  --graph-lane-5: oklch(0.66 0.12 15);
+  --graph-lane-6: oklch(0.66 0.12 190);
+  --graph-lane-7: oklch(0.66 0.12 90);
+  --graph-lane-8: oklch(0.66 0.12 340);
 }
 
 @theme inline {
