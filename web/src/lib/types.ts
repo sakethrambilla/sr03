@@ -221,12 +221,38 @@ export interface Worktree {
   path: string;
   branch: string | null;
   isMain: boolean;
+  locked: boolean;
+  lockReason: string | null;
+  favorite: boolean;
 }
 
 export interface ChangedFile {
   path: string;
   status: "added" | "modified" | "deleted" | "renamed" | "untracked";
   staged: boolean;
+  insertions: number;
+  deletions: number;
+  binary: boolean;
+}
+
+export interface Commit {
+  hash: string;
+  parents: string[];
+  authorName: string;
+  authorEmail: string;
+  authorDate: number;
+  message: string;
+}
+
+export interface Ref {
+  name: string;
+  kind: "head" | "tag" | "remote";
+  commit: string;
+}
+
+export interface CommitFile {
+  path: string;
+  status: "added" | "modified" | "deleted" | "renamed";
   insertions: number;
   deletions: number;
   binary: boolean;
