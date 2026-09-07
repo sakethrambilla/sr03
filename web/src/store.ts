@@ -39,6 +39,9 @@ export interface Draft {
   // set only by the worktree panel, meaning "run in this one"; a branch pick clears it
   worktreePath: string | null;
   worktree: boolean;
+  // the worktree panel already decided branch + worktree for this draft — the composer shows
+  // them read-only instead of a picker; only the sidebar's plain "New" leaves this unset
+  locked: boolean;
   model: string;
   permissionMode: PermissionMode;
   effort: Effort;
@@ -53,11 +56,19 @@ export type DraftPlan =
   | { kind: "here"; path: string }
   | { kind: "blocked"; reason: string };
 
+// ai/<hex> mirrors the shape Claude Code itself uses for its own worktree branches. resolvePlan
+// runs on every render for display, so the name is cached per base branch rather than rerolled
+// each time — otherwise the plan chip's proposed name would change on every keystroke.
+const generatedBranchNames = new Map<string, string>();
+
 function unusedBranch(base: string, branches: Branch[]): string {
+  const cached = generatedBranchNames.get(base);
+  if (cached && !branches.some((branch) => branch.name === cached)) return cached;
+
   const taken = new Set(branches.map((branch) => branch.name));
-  let name = `${base}-wt`;
-  let counter = 2;
-  while (taken.has(name)) name = `${base}-wt${counter++}`;
+  let name = `ai/worktree-${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`;
+  while (taken.has(name)) name = `ai/worktree-${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`;
+  generatedBranchNames.set(base, name);
   return name;
 }
 
@@ -133,7 +144,7 @@ interface Store extends AppState {
   bootstrap: () => Promise<void>;
   refreshState: () => Promise<void>;
   openThread: (id: string) => Promise<void>;
-  startDraft: (input?: { projectId?: string; branch?: string; worktreePath?: string }) => void;
+  startDraft: (input?: { projectId?: string; branch?: string; worktreePath?: string; locked?: boolean }) => void;
   patchDraft: (patch: Partial<Draft>) => void;
   startFromDraft: (text: string) => Promise<void>;
   renameThread: (id: string, title: string) => Promise<void>;
@@ -475,6 +486,7 @@ export const useStore = create<Store>((set, get) => ({
         createBranch: false,
         worktreePath: input?.worktreePath ?? null,
         worktree: Boolean(input?.worktreePath),
+        locked: Boolean(input?.locked),
         model: provider.defaults.model,
         permissionMode,
         ...tuneForModel(provider, provider.defaults.model, provider.defaults.effort),
