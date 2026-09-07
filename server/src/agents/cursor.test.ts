@@ -555,15 +555,20 @@ test("reads Cursor commands without opening a thread", async (context) => {
   const previousPath = process.env.PATH;
   const previousData = process.env.SR03_DATA_DIR;
   const previousLog = process.env.MOCK_CURSOR_LOG;
+  const previousHome = process.env.HOME;
   process.env.PATH = `${directory}${path.delimiter}${previousPath ?? ""}`;
   process.env.SR03_DATA_DIR = path.join(directory, "data");
   process.env.MOCK_CURSOR_LOG = logPath;
+  // isolates scanCursorCommands' home-directory scan from this machine's real skill folders
+  process.env.HOME = directory;
   context.after(async () => {
     process.env.PATH = previousPath;
     if (previousData === undefined) delete process.env.SR03_DATA_DIR;
     else process.env.SR03_DATA_DIR = previousData;
     if (previousLog === undefined) delete process.env.MOCK_CURSOR_LOG;
     else process.env.MOCK_CURSOR_LOG = previousLog;
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
     await fs.rm(directory, { recursive: true, force: true });
   });
 
@@ -587,20 +592,61 @@ test("falls back to no commands when Cursor errors", async (context) => {
   const previousPath = process.env.PATH;
   const previousData = process.env.SR03_DATA_DIR;
   const previousLog = process.env.MOCK_CURSOR_LOG;
+  const previousHome = process.env.HOME;
   process.env.PATH = `${directory}${path.delimiter}${previousPath ?? ""}`;
   process.env.SR03_DATA_DIR = path.join(directory, "data");
   process.env.MOCK_CURSOR_LOG = logPath;
+  process.env.HOME = directory;
   context.after(async () => {
     process.env.PATH = previousPath;
     if (previousData === undefined) delete process.env.SR03_DATA_DIR;
     else process.env.SR03_DATA_DIR = previousData;
     if (previousLog === undefined) delete process.env.MOCK_CURSOR_LOG;
     else process.env.MOCK_CURSOR_LOG = previousLog;
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
     await fs.rm(directory, { recursive: true, force: true });
   });
 
   const { cursorProvider } = await import("./cursor.ts");
   assert.deepEqual(await cursorProvider.listCommands(directory), []);
+});
+
+test("reads Cursor commands from disk before any live probe", async (context) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "sr03-cursor-fs-"));
+  const binary = path.join(directory, "cursor-agent");
+  const logPath = path.join(directory, "messages.ndjson");
+  await fs.writeFile(binary, MOCK_AGENT, { mode: 0o755 });
+  await fs.mkdir(path.join(directory, ".cursor", "skills", "review"), { recursive: true });
+  await fs.writeFile(
+    path.join(directory, ".cursor", "skills", "review", "SKILL.md"),
+    "---\ndescription: Review a diff\n---\nbody",
+  );
+
+  const previousPath = process.env.PATH;
+  const previousData = process.env.SR03_DATA_DIR;
+  const previousLog = process.env.MOCK_CURSOR_LOG;
+  const previousHome = process.env.HOME;
+  process.env.PATH = `${directory}${path.delimiter}${previousPath ?? ""}`;
+  process.env.SR03_DATA_DIR = path.join(directory, "data");
+  process.env.MOCK_CURSOR_LOG = logPath;
+  process.env.HOME = directory;
+  context.after(async () => {
+    process.env.PATH = previousPath;
+    if (previousData === undefined) delete process.env.SR03_DATA_DIR;
+    else process.env.SR03_DATA_DIR = previousData;
+    if (previousLog === undefined) delete process.env.MOCK_CURSOR_LOG;
+    else process.env.MOCK_CURSOR_LOG = previousLog;
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    await fs.rm(directory, { recursive: true, force: true });
+  });
+
+  // the mock binary is on PATH ahead of any real cursor-agent, so this only ever talks to
+  // it — the scan result must still come back immediately, before that mock is ever spoken to
+  const { cursorProvider } = await import("./cursor.ts");
+  const commands = await cursorProvider.listCommands(directory);
+  assert.deepEqual(commands, [{ name: "review", description: "Review a diff", argumentHint: "" }]);
 });
 
 test("emits one task row for a Cursor subagent", async (context) => {

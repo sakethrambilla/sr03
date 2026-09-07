@@ -502,6 +502,10 @@ export function listCommands(providerId: ProviderId, cwd: string): Promise<Slash
   return providerFor(providerId).listCommands(cwd);
 }
 
+export function warmCommands(providerId: ProviderId, cwd: string): void {
+  providerFor(providerId).warmCommands?.(cwd);
+}
+
 export async function readUsage(threadId: string | null): Promise<Usage> {
   const thread = threadId ? threadStore.byId(threadId) : null;
   const provider = providerFor(thread?.providerId ?? "claude");
