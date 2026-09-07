@@ -30,6 +30,7 @@ import {
   DotsIcon,
   FilterIcon,
   FolderIcon,
+  HistoryIcon,
   PlusIcon,
   SettingsIcon,
   SidebarIcon,
@@ -38,6 +39,7 @@ import {
   cn,
   usePersistedState,
 } from "./ui.tsx";
+import { GitGraphPanel } from "./GitGraphPanel.tsx";
 import { WorktreePanel } from "./WorktreePanel.tsx";
 
 function SidebarButton() {
@@ -214,6 +216,28 @@ function WorktreeButton({
   );
 }
 
+function GraphButton({
+  project,
+  onOpen,
+  hover,
+}: {
+  project: Project;
+  onOpen: (project: Project) => void;
+  hover?: boolean;
+}) {
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={() => onOpen(project)}
+      aria-label="History"
+      className={cn("size-6 shrink-0 text-faint", hover && "opacity-0 group-hover:opacity-100")}
+    >
+      <HistoryIcon className="size-3.5" />
+    </Button>
+  );
+}
+
 function NewSessionButton({ project, hover }: { project: Project; hover?: boolean }) {
   const startDraft = useStore((state) => state.startDraft);
 
@@ -346,6 +370,7 @@ export function Sidebar() {
   const startDraft = useStore((state) => state.startDraft);
   const setSettingsOpen = useStore((state) => state.setSettingsOpen);
   const [worktreeProject, setWorktreeProject] = useState<Project | null>(null);
+  const [graphProject, setGraphProject] = useState<Project | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [projectFilter, setProjectFilter] = usePersistedState<string>("sidebar.project", ALL_PROJECTS);
   const [statusFilter, setStatusFilter] = usePersistedState<StatusFilter>("sidebar.status", "all");
@@ -421,6 +446,7 @@ export function Sidebar() {
         </div>
         <StatusFilterMenu value={statusFilter} onSelect={setStatusFilter} />
         {selected?.isGit ? <WorktreeButton project={selected} onOpen={setWorktreeProject} /> : null}
+        {selected?.isGit ? <GraphButton project={selected} onOpen={setGraphProject} /> : null}
         {selected ? <NewSessionButton project={selected} /> : null}
       </div>
 
@@ -460,6 +486,9 @@ export function Sidebar() {
                   </Button>
                   {project.isGit ? (
                     <WorktreeButton project={project} onOpen={setWorktreeProject} hover />
+                  ) : null}
+                  {project.isGit ? (
+                    <GraphButton project={project} onOpen={setGraphProject} hover />
                   ) : null}
                   <NewSessionButton project={project} />
                 </div>
@@ -517,6 +546,9 @@ export function Sidebar() {
 
       {worktreeProject ? (
         <WorktreePanel project={worktreeProject} onClose={() => setWorktreeProject(null)} />
+      ) : null}
+      {graphProject ? (
+        <GitGraphPanel project={graphProject} onClose={() => setGraphProject(null)} />
       ) : null}
     </aside>
   );

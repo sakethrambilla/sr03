@@ -29,7 +29,7 @@ import {
 } from "./fsbrowse.ts";
 import { readTable, readValues, tableKind, writeCell } from "./table.ts";
 import type { TableFilter, TableQuery } from "./table.ts";
-import { messages, projects, settings, threads } from "./db.ts";
+import { messages, projects, settings, threads, worktreeFavorites } from "./db.ts";
 import { parseLayout } from "./layout.ts";
 import {
   currentDefaults,
@@ -347,7 +347,90 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
         git.listBranches(info.root),
         git.listWorktrees(info.root),
       ]);
-      return { isGit: true, root: info.root, branch: info.branch, dirty: info.dirty, branches, worktrees };
+      const favorites = new Set(worktreeFavorites.list(project.id));
+      return {
+        isGit: true,
+        root: info.root,
+        branch: info.branch,
+        dirty: info.dirty,
+        branches,
+        worktrees: worktrees.map((worktree) => ({ ...worktree, favorite: favorites.has(worktree.path) })),
+      };
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/projects\/([^/]+)\/refs$/,
+    handler: async ({ params }) => {
+      const project = requireProject(params[0]!);
+      const info = await git.repoInfo(project.path);
+      if (!info.isGit || !info.root) return { refs: [] };
+      return { refs: await git.listRefs(info.root) };
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/projects\/([^/]+)\/log$/,
+    handler: async ({ params, url }) => {
+      const project = requireProject(params[0]!);
+      const info = await git.repoInfo(project.path);
+      if (!info.isGit || !info.root) return { commits: [], hasMore: false };
+      const maxCount = Math.min(Math.max(Number(url.searchParams.get("maxCount")) || 200, 1), 500);
+      const skip = Math.max(Number(url.searchParams.get("skip")) || 0, 0);
+      const ref = url.searchParams.get("ref")?.trim() || undefined;
+      if (ref !== undefined && !/^[A-Za-z0-9._/-]+$/.test(ref)) {
+        throw new HttpError(400, "Invalid ref");
+      }
+      return git.commitLog(info.root, { maxCount, skip, ref });
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/projects\/([^/]+)\/commits\/([0-9a-f]{40})\/files$/,
+    handler: async ({ params }) => {
+      const project = requireProject(params[0]!);
+      const info = await git.repoInfo(project.path);
+      if (!info.isGit || !info.root) throw new HttpError(400, "Project is not a git repository");
+      return { files: await git.commitFiles(info.root, params[1]!) };
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/projects\/([^/]+)\/commits\/([0-9a-f]{40})\/diff$/,
+    handler: async ({ params, url }) => {
+      const project = requireProject(params[0]!);
+      const info = await git.repoInfo(project.path);
+      if (!info.isGit || !info.root) throw new HttpError(400, "Project is not a git repository");
+      const file = url.searchParams.get("path")?.trim() ?? "";
+      if (!file || file.startsWith("-") || file.split("/").includes("..")) {
+        throw new HttpError(400, "`path` is required");
+      }
+      return { path: file, diff: await git.commitFileDiff(info.root, params[1]!, file) };
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/projects\/([^/]+)\/changes$/,
+    handler: async ({ params }) => {
+      const project = requireProject(params[0]!);
+      const [info, files] = await Promise.all([
+        git.repoInfo(project.path),
+        git.changedFiles(project.path),
+      ]);
+      return { isGit: info.isGit, branch: info.branch, files };
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/projects\/([^/]+)\/diff$/,
+    handler: async ({ params, url }) => {
+      const project = requireProject(params[0]!);
+      const file = url.searchParams.get("file")?.trim() ?? "";
+      if (!file || file.startsWith("-") || file.split("/").includes("..")) {
+        throw new HttpError(400, "`file` is required");
+      }
+      const untracked = url.searchParams.get("untracked") === "1";
+      return { file, diff: await git.fileDiff(project.path, file, untracked) };
     },
   },
   {
@@ -450,6 +533,188 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
           }
         }
       });
+    },
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/projects\/([^/]+)\/worktrees\/lock$/,
+    handler: async ({ params, request }) => {
+      const project = requireProject(params[0]!);
+      const body = await readBody(request);
+      const target = path.resolve(requireString(body, "path"));
+      const info = await git.repoInfo(project.path);
+      if (!info.isGit || !info.root) throw new HttpError(400, "Project is not a git repository");
+      await git.lockWorktree({
+        root: info.root,
+        path: target,
+        reason: typeof body.reason === "string" ? body.reason : undefined,
+      });
+      publish({ type: "projects.changed" });
+      return { ok: true };
+    },
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/projects\/([^/]+)\/worktrees\/unlock$/,
+    handler: async ({ params, request }) => {
+      const project = requireProject(params[0]!);
+      const body = await readBody(request);
+      const target = path.resolve(requireString(body, "path"));
+      const info = await git.repoInfo(project.path);
+      if (!info.isGit || !info.root) throw new HttpError(400, "Project is not a git repository");
+      await git.unlockWorktree({ root: info.root, path: target });
+      publish({ type: "projects.changed" });
+      return { ok: true };
+    },
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/projects\/([^/]+)\/worktrees\/move$/,
+    handler: async ({ params, request }) => {
+      const project = requireProject(params[0]!);
+      const body = await readBody(request);
+      const target = path.resolve(requireString(body, "path"));
+      const to = path.resolve(requireString(body, "to"));
+      const info = await git.repoInfo(project.path);
+      if (!info.isGit || !info.root) throw new HttpError(400, "Project is not a git repository");
+      const usesTarget = (cwd: string) =>
+        path.resolve(cwd) === target || path.resolve(cwd).startsWith(`${target}${path.sep}`);
+      const ids = threads
+        .list()
+        .filter((thread) => thread.projectId === project.id && usesTarget(thread.cwd))
+        .map((thread) => thread.id);
+      return withThreadOperations(ids, async () => {
+        const affected = threads
+          .list()
+          .filter((thread) => thread.projectId === project.id && usesTarget(thread.cwd));
+        if (affected.some((thread) => thread.status === "running" || !agents.canOperate(thread.id))) {
+          throw new HttpError(409, "The worktree is in use by an active session");
+        }
+        await git.moveWorktree({ root: info.root!, path: target, to });
+        for (const thread of affected) {
+          threads.setCwd(thread.id, to + thread.cwd.slice(target.length));
+        }
+        publish({ type: "projects.changed" });
+        return { ok: true, path: to };
+      });
+    },
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/projects\/([^/]+)\/worktrees\/fetch$/,
+    handler: async ({ params, request }) => {
+      requireProject(params[0]!);
+      const body = await readBody(request);
+      const target = path.resolve(requireString(body, "path"));
+      return { output: await git.fetchWorktree(target) };
+    },
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/projects\/([^/]+)\/worktrees\/pull$/,
+    handler: async ({ params, request }) => {
+      requireProject(params[0]!);
+      const body = await readBody(request);
+      const target = path.resolve(requireString(body, "path"));
+      return { output: await git.pullWorktree(target) };
+    },
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/projects\/([^/]+)\/worktrees\/push$/,
+    handler: async ({ params, request }) => {
+      requireProject(params[0]!);
+      const body = await readBody(request);
+      const target = path.resolve(requireString(body, "path"));
+      return { output: await git.pushWorktree(target) };
+    },
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/projects\/([^/]+)\/worktrees\/favorite$/,
+    handler: async ({ params, request }) => {
+      const project = requireProject(params[0]!);
+      const body = await readBody(request);
+      const target = path.resolve(requireString(body, "path"));
+      if (body.favorite === false) {
+        worktreeFavorites.remove(project.id, target);
+      } else {
+        worktreeFavorites.add(project.id, target);
+      }
+      return { ok: true };
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/projects\/([^/]+)\/worktrees\/merged-candidates$/,
+    handler: async ({ params }) => {
+      const project = requireProject(params[0]!);
+      const info = await git.repoInfo(project.path);
+      if (!info.isGit || !info.root) return { candidates: [] };
+      const worktrees = await git.listWorktrees(info.root);
+      const main = worktrees.find((worktree) => worktree.isMain);
+      if (!main?.branch) return { candidates: [] };
+      const merged = await git.mergedBranches(info.root, main.branch);
+      const candidates = worktrees.filter(
+        (worktree) => !worktree.isMain && !worktree.locked && worktree.branch && merged.has(worktree.branch),
+      );
+      return { candidates };
+    },
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/projects\/([^/]+)\/worktrees\/remove-merged$/,
+    handler: async ({ params, request }) => {
+      const project = requireProject(params[0]!);
+      const body = await readBody(request);
+      const paths = Array.isArray(body.paths)
+        ? body.paths.filter((entry): entry is string => typeof entry === "string")
+        : [];
+      if (paths.length === 0) throw new HttpError(400, "`paths` is required");
+      const info = await git.repoInfo(project.path);
+      if (!info.isGit || !info.root) throw new HttpError(400, "Project is not a git repository");
+      const worktrees = await git.listWorktrees(info.root);
+      const main = worktrees.find((worktree) => worktree.isMain);
+      if (!main?.branch) throw new HttpError(400, "The main worktree has no branch checked out");
+      const merged = await git.mergedBranches(info.root, main.branch);
+      const removed: string[] = [];
+      for (const target of paths.map((entry) => path.resolve(entry))) {
+        const worktree = worktrees.find((entry) => entry.path === target);
+        if (!worktree || worktree.isMain) continue;
+        if (worktree.locked) {
+          throw new HttpError(400, `${target} is locked${worktree.lockReason ? `: ${worktree.lockReason}` : ""}`);
+        }
+        if (!worktree.branch || !merged.has(worktree.branch)) continue; // no longer merged; skip, don't fail the batch
+        const usesTarget = (cwd: string) =>
+          path.resolve(cwd) === target || path.resolve(cwd).startsWith(`${target}${path.sep}`);
+        const ids = threads
+          .list()
+          .filter((thread) => thread.projectId === project.id && usesTarget(thread.cwd))
+          .map((thread) => thread.id);
+        await withThreadOperations(ids, async () => {
+          const affected = threads
+            .list()
+            .filter((thread) => thread.projectId === project.id && usesTarget(thread.cwd));
+          if (affected.some((thread) => thread.status === "running" || !agents.canOperate(thread.id))) {
+            throw new HttpError(409, `${target} is in use by an active session`);
+          }
+          const reserved: Array<{ id: string; status: (typeof affected)[number]["status"] }> = [];
+          try {
+            for (const thread of affected) {
+              if (!agents.reserveThread(thread.id)) throw new HttpError(409, "A worktree session is busy");
+              reserved.push({ id: thread.id, status: thread.status });
+              agents.closeSession(thread.id);
+            }
+            await git.removeWorktree({ root: info.root!, path: target, force: false });
+            removed.push(target);
+          } finally {
+            for (const thread of reserved) agents.releaseThreadReservation(thread.id, thread.status);
+          }
+        });
+      }
+      await git.pruneWorktrees(info.root);
+      publish({ type: "projects.changed" });
+      return { removed };
     },
   },
   {
@@ -1122,7 +1387,7 @@ export async function handleApiRequest(
     });
     if (!response.headersSent) json(response, 200, result ?? { ok: true });
   } catch (error) {
-    const status = error instanceof HttpError ? error.status : 500;
+    const status = error instanceof HttpError ? error.status : error instanceof git.GitError ? 400 : 500;
     if (status === 500) console.error("[api]", error);
     json(response, status, { error: (error as Error).message });
   }

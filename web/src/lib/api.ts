@@ -4,6 +4,8 @@ import type {
   AppState,
   ApprovalDecision,
   ChangedFile,
+  Commit,
+  CommitFile,
   DirListing,
   EditorLayout,
   Effort,
@@ -13,6 +15,7 @@ import type {
   Project,
   ProviderId,
   ProviderStatus,
+  Ref,
   SlashCommand,
   TableFilter,
   TableValues,
@@ -139,6 +142,26 @@ export const api = {
     call<{ file: string; diff: string }>(
       `/api/threads/${id}/diff?file=${encodeURIComponent(file)}${untracked ? "&untracked=1" : ""}`,
     ),
+  graphRefs: (projectId: string) => call<{ refs: Ref[] }>(`/api/projects/${projectId}/refs`),
+  graphLog: (projectId: string, input: { maxCount: number; skip: number; ref?: string }) =>
+    call<{ commits: Commit[]; hasMore: boolean }>(
+      `/api/projects/${projectId}/log?maxCount=${input.maxCount}&skip=${input.skip}` +
+        (input.ref ? `&ref=${encodeURIComponent(input.ref)}` : ""),
+    ),
+  commitFiles: (projectId: string, hash: string) =>
+    call<{ files: CommitFile[] }>(`/api/projects/${projectId}/commits/${hash}/files`),
+  commitFileDiff: (projectId: string, hash: string, file: string) =>
+    call<{ path: string; diff: string }>(
+      `/api/projects/${projectId}/commits/${hash}/diff?path=${encodeURIComponent(file)}`,
+    ),
+  projectChanges: (projectId: string) =>
+    call<{ isGit: boolean; branch: string | null; files: ChangedFile[] }>(
+      `/api/projects/${projectId}/changes`,
+    ),
+  projectFileDiff: (projectId: string, file: string, untracked: boolean) =>
+    call<{ file: string; diff: string }>(
+      `/api/projects/${projectId}/diff?file=${encodeURIComponent(file)}${untracked ? "&untracked=1" : ""}`,
+    ),
   settings: () => call<{ settings: Record<string, string> }>("/api/settings"),
   saveSetting: (key: string, value: string) =>
     call<{ ok: true }>("/api/settings", {
@@ -225,4 +248,22 @@ export const api = {
     questionId: string,
     answers: Record<string, string[]>,
   ) => post<{ ok: true }>(`/api/threads/${threadId}/questions/${questionId}`, { answers }),
+  lockWorktree: (projectId: string, path: string, reason?: string) =>
+    post<{ ok: true }>(`/api/projects/${projectId}/worktrees/lock`, { path, reason }),
+  unlockWorktree: (projectId: string, path: string) =>
+    post<{ ok: true }>(`/api/projects/${projectId}/worktrees/unlock`, { path }),
+  moveWorktree: (projectId: string, path: string, to: string) =>
+    post<{ ok: true; path: string }>(`/api/projects/${projectId}/worktrees/move`, { path, to }),
+  fetchWorktree: (projectId: string, path: string) =>
+    post<{ output: string }>(`/api/projects/${projectId}/worktrees/fetch`, { path }),
+  pullWorktree: (projectId: string, path: string) =>
+    post<{ output: string }>(`/api/projects/${projectId}/worktrees/pull`, { path }),
+  pushWorktree: (projectId: string, path: string) =>
+    post<{ output: string }>(`/api/projects/${projectId}/worktrees/push`, { path }),
+  favoriteWorktree: (projectId: string, path: string, favorite: boolean) =>
+    post<{ ok: true }>(`/api/projects/${projectId}/worktrees/favorite`, { path, favorite }),
+  mergedCandidates: (projectId: string) =>
+    call<{ candidates: Worktree[] }>(`/api/projects/${projectId}/worktrees/merged-candidates`),
+  removeMergedWorktrees: (projectId: string, paths: string[]) =>
+    post<{ removed: string[] }>(`/api/projects/${projectId}/worktrees/remove-merged`, { paths }),
 };

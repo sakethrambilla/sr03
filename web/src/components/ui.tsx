@@ -5,7 +5,9 @@
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
+  ArrowDownToLine,
   ArrowUp,
+  ArrowUpFromLine,
   Bot,
   Check,
   ChevronDown,
@@ -29,7 +31,10 @@ import {
   FolderOpen,
   FolderPlus,
   GitBranch,
+  History,
   ListFilter,
+  Lock,
+  LockOpen,
   Maximize2,
   MessageSquare,
   Mic,
@@ -49,6 +54,7 @@ import {
   SquareSplitHorizontal,
   SquareSplitVertical,
   SquareTerminal,
+  Star,
   Trash2,
   Undo2,
   Workflow,
@@ -220,6 +226,7 @@ const ICONS = {
   FolderIcon: Folder,
   RevealIcon: FolderOpen,
   BranchIcon: GitBranch,
+  HistoryIcon: History,
   FilterIcon: ListFilter,
   SearchIcon: Search,
   MicIcon: Mic,
@@ -256,6 +263,11 @@ const ICONS = {
   RewindIcon: Undo2,
   FastIcon: Zap,
   ZedIcon: Zap,
+  LockIcon: Lock,
+  UnlockIcon: LockOpen,
+  FavoriteIcon: Star,
+  PullIcon: ArrowDownToLine,
+  PushIcon: ArrowUpFromLine,
 } as const;
 
 function icon(Source: LucideIcon) {
@@ -270,6 +282,7 @@ export const RevealIcon = icon(ICONS.RevealIcon);
 export const RenameIcon = icon(ICONS.RenameIcon);
 export const TrashIcon = icon(ICONS.TrashIcon);
 export const BranchIcon = icon(ICONS.BranchIcon);
+export const HistoryIcon = icon(ICONS.HistoryIcon);
 export const FilterIcon = icon(ICONS.FilterIcon);
 export const SearchIcon = icon(ICONS.SearchIcon);
 export const MicIcon = icon(ICONS.MicIcon);
@@ -304,6 +317,11 @@ export const StopIcon = icon(ICONS.StopIcon);
 export const RewindIcon = icon(ICONS.RewindIcon);
 export const FastIcon = icon(ICONS.FastIcon);
 export const ZedIcon = icon(ICONS.ZedIcon);
+export const LockIcon = icon(ICONS.LockIcon);
+export const UnlockIcon = icon(ICONS.UnlockIcon);
+export const FavoriteIcon = icon(ICONS.FavoriteIcon);
+export const PullIcon = icon(ICONS.PullIcon);
+export const PushIcon = icon(ICONS.PushIcon);
 
 export interface MenuItem {
   id: string;

@@ -98,6 +98,12 @@ db.exec(`
     pid INTEGER NOT NULL,
     heartbeat_at INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS worktree_favorites (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (project_id, path)
+  );
 `);
 
 // sqlite has no ADD COLUMN IF NOT EXISTS. The write lock makes the check-and-alter sequence safe
@@ -335,6 +341,16 @@ const sql = {
   ),
   messageSetMeta: db.prepare("UPDATE messages SET meta = ? WHERE id = ?"),
   messagesTruncate: db.prepare("DELETE FROM messages WHERE thread_id = ? AND seq >= ?"),
+  worktreeFavoritesList: db.prepare(
+    "SELECT path FROM worktree_favorites WHERE project_id = ? ORDER BY created_at ASC",
+  ),
+  worktreeFavoriteAdd: db.prepare(
+    "INSERT INTO worktree_favorites (project_id, path, created_at) VALUES (?, ?, ?) ON CONFLICT(project_id, path) DO NOTHING",
+  ),
+  worktreeFavoriteRemove: db.prepare(
+    "DELETE FROM worktree_favorites WHERE project_id = ? AND path = ?",
+  ),
+  threadSetCwd: db.prepare("UPDATE threads SET cwd = ?, updated_at = ? WHERE id = ?"),
 };
 
 // the desktop shell loads a new port every launch, so the browser's own storage starts empty
@@ -401,6 +417,18 @@ export const projects = {
   },
   remove(id: string): void {
     sql.projectRemove.run(id);
+  },
+};
+
+export const worktreeFavorites = {
+  list(projectId: string): string[] {
+    return (sql.worktreeFavoritesList.all(projectId) as Array<{ path: string }>).map((row) => row.path);
+  },
+  add(projectId: string, path: string): void {
+    sql.worktreeFavoriteAdd.run(projectId, path, Date.now());
+  },
+  remove(projectId: string, path: string): void {
+    sql.worktreeFavoriteRemove.run(projectId, path);
   },
 };
 
@@ -528,6 +556,9 @@ export const threads = {
   },
   touch(id: string): void {
     sql.threadTouch.run(Date.now(), id);
+  },
+  setCwd(id: string, cwd: string): void {
+    sql.threadSetCwd.run(cwd, Date.now(), id);
   },
   remove(id: string): void {
     sql.threadRemove.run(id);
