@@ -1,14 +1,19 @@
 // What the settings page shows about each local harness: installation, account, model catalog,
 // and auth commands. Credentials remain owned by the CLIs and are never read or stored here.
+//
+// Probing a harness costs several child processes, so the last answer is cached in sqlite: a
+// request is served from it at once and the fresh probe is pushed over the socket when it lands.
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import { publish } from "./bus.ts";
+import { settings } from "./db.ts";
 import { findExecutable } from "./executables.ts";
 import { currentProvider, listModels } from "./models.ts";
-import type { ProviderAccount, ProviderId, ProviderStatus } from "./types.ts";
+import type { ProviderAccount, ProviderCatalog, ProviderId, ProviderStatus } from "./types.ts";
 
 const exec = promisify(execFile);
 const CLAUDE_SETTING_SOURCES = ["user", "project", "local"];
@@ -69,7 +74,7 @@ async function claudeStatus(): Promise<ProviderStatus> {
     readClaudeAccount(),
   ]);
   const state: ProviderStatus["state"] = !binary ? "missing" : account ? "ready" : "signed-out";
-  if (binary) await listModels("claude");
+  if (binary) void listModels("claude");
   return {
     ...currentProvider("claude"),
     state,
@@ -160,7 +165,7 @@ async function cursorStatus(): Promise<ProviderStatus> {
     : details.account
       ? "ready"
       : "signed-out";
-  if (binary) await listModels("cursor");
+  if (binary) void listModels("cursor");
   return {
     ...currentProvider("cursor"),
     state,
@@ -180,12 +185,75 @@ async function cursorStatus(): Promise<ProviderStatus> {
   };
 }
 
-export async function listProviders(): Promise<ProviderStatus[]> {
-  return Promise.all([claudeStatus(), cursorStatus()]);
+const PROVIDER_IDS: ProviderId[] = ["claude", "cursor"];
+
+// Only the probed half is cached; the catalog half is rebuilt from the live model list on read,
+// so a cached row can never resurrect a stale model catalog.
+type ProviderProbe = Omit<ProviderStatus, keyof ProviderCatalog>;
+
+const PROBE_KEY: Record<ProviderId, string> = {
+  claude: "probe:claude",
+  cursor: "probe:cursor",
+};
+
+function loadProbe(providerId: ProviderId): ProviderStatus | null {
+  const raw = settings.all()[PROBE_KEY[providerId]];
+  if (!raw) return null;
+  try {
+    const probe = JSON.parse(raw) as ProviderProbe;
+    return typeof probe?.state === "string"
+      ? { ...currentProvider(providerId), ...probe }
+      : null;
+  } catch {
+    return null;
+  }
 }
 
-export async function providerStatus(providerId: ProviderId): Promise<ProviderStatus> {
-  return providerId === "claude" ? claudeStatus() : cursorStatus();
+function storeProbe(providerId: ProviderId, status: ProviderStatus): void {
+  const probe: ProviderProbe = {
+    state: status.state,
+    detail: status.detail,
+    version: status.version,
+    binary: status.binary,
+    account: status.account,
+    settingSources: status.settingSources,
+    signInHint: status.signInHint,
+    signInCommand: status.signInCommand,
+    logoutCommand: status.logoutCommand,
+  };
+  settings.set(PROBE_KEY[providerId], JSON.stringify(probe));
+}
+
+const probing: Partial<Record<ProviderId, Promise<ProviderStatus>>> = {};
+
+// One probe per provider at a time; whoever asked next gets the same answer and every client
+// gets it pushed.
+function refreshProvider(providerId: ProviderId): Promise<ProviderStatus> {
+  const existing = probing[providerId];
+  if (existing) return existing;
+  const reading = (providerId === "claude" ? claudeStatus() : cursorStatus())
+    .then((status) => {
+      storeProbe(providerId, status);
+      publish({ type: "provider.status", status });
+      return status;
+    })
+    .finally(() => {
+      delete probing[providerId];
+    });
+  probing[providerId] = reading;
+  return reading;
+}
+
+export async function listProviders(): Promise<ProviderStatus[]> {
+  const cached = PROVIDER_IDS.map(loadProbe);
+  const fresh = PROVIDER_IDS.map((providerId) => refreshProvider(providerId));
+  if (cached.every((status) => status !== null)) {
+    for (const reading of fresh) {
+      reading.catch((error: Error) => console.error(`[providers] ${error.message}`));
+    }
+    return cached as ProviderStatus[];
+  }
+  return Promise.all(PROVIDER_IDS.map((_, index) => cached[index] ?? fresh[index]!));
 }
 
 // Logout is delegated to the selected CLI so it clears the same credentials as its own client.
