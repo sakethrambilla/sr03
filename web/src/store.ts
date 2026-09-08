@@ -22,6 +22,7 @@ import type {
   PermissionMode,
   ProviderCatalog,
   ProviderId,
+  ProviderStatus,
   Resources,
   ServerEvent,
   SlashCommand,
@@ -134,6 +135,9 @@ interface Store extends AppState {
   usage: Usage | null;
   // sampled by the server only while the meter is open, so it is null the rest of the time
   resources: Resources | null;
+  // installation + account per provider, as the settings page shows it. The server answers from
+  // its cache and pushes each fresh probe, so this is empty only until the first load resolves.
+  providerStatuses: ProviderStatus[];
   appearance: Appearance;
   // threads whose turn ended while you were somewhere else, cleared when you open them
   finished: Record<string, true>;
@@ -167,6 +171,7 @@ interface Store extends AppState {
   resync: () => Promise<void>;
   loadCommands: (providerId: ProviderId, cwd: string) => Promise<void>;
   loadFiles: (threadId: string, cwd: string) => Promise<void>;
+  loadProviderStatuses: () => Promise<void>;
   setAppearance: (patch: Partial<Appearance>) => void;
   restoreAppearance: () => Promise<void>;
   applyEvent: (event: ServerEvent) => void;
@@ -383,6 +388,7 @@ export const useStore = create<Store>((set, get) => ({
   filesByCwd: {},
   usage: null,
   resources: null,
+  providerStatuses: [],
   appearance: startingAppearance,
   finished: loadFinished(),
   error: null,
@@ -768,6 +774,13 @@ export const useStore = create<Store>((set, get) => ({
     if (files) set((state) => ({ filesByCwd: { ...state.filesByCwd, [cwd]: files } }));
   },
 
+  // The server answers from its cache, so this resolves at once; a re-probe it starts arrives
+  // later as provider.status.
+  loadProviderStatuses: async () => {
+    const { providers } = await api.providers();
+    set({ providerStatuses: providers });
+  },
+
   // context is per-session and the plan windows are account-wide, so both come from one read
   refreshUsage: async () => {
     const usage = await api.usage(get().activeThreadId).catch(() => null);
@@ -890,6 +903,18 @@ export const useStore = create<Store>((set, get) => ({
                 provider.id === event.provider.id ? event.provider : provider,
               )
             : [...state.providers, event.provider],
+        }));
+        return;
+      }
+      case "provider.status": {
+        set((state) => ({
+          providerStatuses: state.providerStatuses.some(
+            (status) => status.id === event.status.id,
+          )
+            ? state.providerStatuses.map((status) =>
+                status.id === event.status.id ? event.status : status,
+              )
+            : [...state.providerStatuses, event.status],
         }));
         return;
       }

@@ -337,6 +337,7 @@ export type ServerEvent =
   | { type: "resources"; resources: Resources }
   | { type: "thread.updated"; thread: Thread }
   | { type: "provider.changed"; provider: ProviderCatalog }
+  | { type: "provider.status"; status: ProviderStatus }
   | { type: "defaults.changed"; defaults: { model: string; permissionMode: PermissionMode; effort: Effort } }
   | { type: "pty.data"; threadId: string; terminalId: string; data: string }
   | { type: "pty.snapshot"; threadId: string; terminalId: string; data: string }

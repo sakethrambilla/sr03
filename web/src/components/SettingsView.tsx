@@ -51,6 +51,9 @@ function ProviderCard({
   onChanged: () => void;
 }) {
   const style = STATE_STYLE[provider.state];
+  // Model discovery lands after the probe, as provider.changed, so the catalog is read live.
+  const catalog = useStore((state) => state.providers.find((entry) => entry.id === provider.id));
+  const models = catalog?.models ?? provider.models;
   const [confirming, setConfirming] = useState(false);
   const [showAllModels, setShowAllModels] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -116,7 +119,7 @@ function ProviderCard({
         <div className="flex flex-col gap-1.5">
           <span className="text-[12px] text-muted-foreground">Models</span>
           <ul className="flex flex-col gap-1">
-            {(showAllModels ? provider.models : provider.models.slice(0, 12)).map((model) => (
+            {(showAllModels ? models : models.slice(0, 12)).map((model) => (
               <li key={model.slug} className="flex items-center gap-2 text-[13px]">
                 <span className="text-foreground">{model.label}</span>
                 <span className="font-mono text-[11px] text-faint">{model.slug}</span>
@@ -128,13 +131,13 @@ function ProviderCard({
               </li>
             ))}
           </ul>
-          {provider.models.length > 12 ? (
+          {models.length > 12 ? (
             <Button
               variant="ghost"
               onClick={() => setShowAllModels((current) => !current)}
               className="mt-1 self-start px-1.5 text-faint"
             >
-              {showAllModels ? "Show fewer" : `Show all ${provider.models.length}`}
+              {showAllModels ? "Show fewer" : `Show all ${models.length}`}
             </Button>
           ) : null}
         </div>
@@ -411,20 +414,17 @@ export function SettingsView() {
   const defaultProviderId = useStore((state) => state.defaultProviderId);
   const refreshState = useStore((state) => state.refreshState);
   const [section, setSection] = usePersistedState<Section>("settings-section", "general");
-  const [providers, setProviders] = useState<ProviderStatus[] | null>(null);
+  const providers = useStore((state) => state.providerStatuses);
+  const loadProviderStatuses = useStore((state) => state.loadProviderStatuses);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
     if (section !== "providers") return;
     let cancelled = false;
-    api
-      .providers()
-      .then((next) => {
-        if (!cancelled) {
-          setProviders(next.providers);
-          setError(null);
-        }
+    loadProviderStatuses()
+      .then(() => {
+        if (!cancelled) setError(null);
       })
       .catch((cause: Error) => {
         if (!cancelled) setError(cause.message);
@@ -432,7 +432,7 @@ export function SettingsView() {
     return () => {
       cancelled = true;
     };
-  }, [tick, section]);
+  }, [tick, section, loadProviderStatuses]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -527,10 +527,10 @@ export function SettingsView() {
                   </div>
                 </section>
                 {error ? <p className="text-[12px] text-destructive">{error}</p> : null}
-                {providers === null && !error ? (
+                {providers.length === 0 && !error ? (
                   <p className="text-[12px] text-faint">Checking…</p>
                 ) : null}
-                {providers?.map((provider) => (
+                {providers.map((provider) => (
                   <ProviderCard
                     key={provider.id}
                     provider={provider}
