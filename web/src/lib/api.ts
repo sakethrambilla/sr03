@@ -13,6 +13,7 @@ import type {
   Message,
   PermissionMode,
   Project,
+  ProviderCatalog,
   ProviderId,
   ProviderStatus,
   Ref,
@@ -169,8 +170,8 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ key, value }),
     }),
-  saveDefaults: (patch: { permissionMode: PermissionMode }) =>
-    call<{ defaults: AppState["defaults"] }>("/api/defaults", {
+  saveProviderDefaults: (providerId: ProviderId, patch: { permissionMode: PermissionMode }) =>
+    call<{ provider: ProviderCatalog }>(`/api/providers/${providerId}/defaults`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(patch),

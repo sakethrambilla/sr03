@@ -164,7 +164,7 @@ interface Store extends AppState {
     effort?: Effort;
     fast?: boolean;
   }) => Promise<void>;
-  setDefaultPermissionMode: (mode: PermissionMode) => Promise<void>;
+  setProviderPermissionMode: (providerId: ProviderId, mode: PermissionMode) => Promise<void>;
   respond: (approval: PendingApproval, decision: ApprovalDecision) => Promise<void>;
   answerQuestion: (questionId: string, answers: Record<string, string[]>) => Promise<void>;
   refreshUsage: () => Promise<void>;
@@ -186,7 +186,6 @@ const EMPTY: AppState = {
   threads: [],
   providers: [],
   defaultProviderId: "claude",
-  defaults: { model: "default", permissionMode: "default", effort: "high" },
   apps: [],
 };
 
@@ -477,11 +476,8 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   startDraft: (input) => {
-    const { providers, defaultProviderId, defaults } = get();
+    const { providers, defaultProviderId } = get();
     const provider = providerCatalog(providers, defaultProviderId);
-    const permissionMode = provider.permissionModes.some((mode) => mode.value === defaults.permissionMode)
-      ? defaults.permissionMode
-      : provider.defaults.permissionMode;
     set({
       activeThreadId: null,
       settingsOpen: false,
@@ -494,7 +490,7 @@ export const useStore = create<Store>((set, get) => ({
         worktree: Boolean(input?.worktreePath),
         locked: Boolean(input?.locked),
         model: provider.defaults.model,
-        permissionMode,
+        permissionMode: provider.defaults.permissionMode,
         ...tuneForModel(provider, provider.defaults.model, provider.defaults.effort),
       },
     });
@@ -673,16 +669,20 @@ export const useStore = create<Store>((set, get) => ({
     }
   },
 
-  // machine-wide, not thread-scoped — patchActive above only ever touches the open thread
-  setDefaultPermissionMode: async (mode) => {
-    const previous = get().defaults;
-    set({ defaults: { ...previous, permissionMode: mode } });
+  // machine-wide but provider-scoped — patchActive only ever touches the open thread
+  setProviderPermissionMode: async (providerId, permissionMode) => {
+    const previous = get().providers;
+    set({
+      providers: previous.map((provider) =>
+        provider.id === providerId
+          ? { ...provider, defaults: { ...provider.defaults, permissionMode } }
+          : provider,
+      ),
+    });
     try {
-      const { defaults } = await api.saveDefaults({ permissionMode: mode });
-      set({ defaults });
+      await api.saveProviderDefaults(providerId, { permissionMode });
     } catch (error) {
-      set({ error: (error as Error).message });
-      await get().refreshState();
+      set({ error: (error as Error).message, providers: previous });
     }
   },
 
@@ -916,10 +916,6 @@ export const useStore = create<Store>((set, get) => ({
               )
             : [...state.providerStatuses, event.status],
         }));
-        return;
-      }
-      case "defaults.changed": {
-        set({ defaults: event.defaults });
         return;
       }
       case "thread.approval": {

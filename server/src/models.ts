@@ -17,7 +17,6 @@ import type {
 
 export const DEFAULT_PROVIDER_ID: ProviderId = "claude";
 export const DEFAULT_MODEL = "default";
-export const DEFAULT_PERMISSION_MODE: PermissionMode = "default";
 export const DEFAULT_EFFORT: Effort = "high";
 
 // faint-to-deep; the display order for whichever subset a model exposes
@@ -53,6 +52,16 @@ const CURSOR_MODES: PermissionModeOption[] = [
   { value: "ask", label: "Ask", hint: "Read-only questions and explanations" },
   { value: "bypassPermissions", label: "Force", hint: "Allow tools unless explicitly denied" },
 ];
+
+const MODES: Record<ProviderId, PermissionModeOption[]> = { claude: CLAUDE_MODES, cursor: CURSOR_MODES };
+const BUILTIN_PERMISSION_MODE: Record<ProviderId, PermissionMode> = { claude: "default", cursor: "default" };
+
+const PERMISSION_MODE_KEY: Record<ProviderId, string> = {
+  claude: "defaultPermissionMode:claude",
+  cursor: "defaultPermissionMode:cursor",
+};
+// the single machine-wide default this replaced; carried onto the default provider once
+const LEGACY_PERMISSION_MODE_KEY = "defaultPermissionMode";
 
 const FALLBACKS: Record<ProviderId, ModelOption[]> = {
   claude: [{ slug: DEFAULT_MODEL, label: "Default", hint: "Whichever model Claude Code picks" }],
@@ -91,7 +100,7 @@ function makeCatalog(providerId: ProviderId): ProviderCatalog {
       effortLevels: EFFORT_LEVELS,
       defaults: {
         model: DEFAULT_MODEL,
-        permissionMode: DEFAULT_PERMISSION_MODE,
+        permissionMode: permissionModeDefaults.claude,
         effort: DEFAULT_EFFORT,
       },
       capabilities: {
@@ -117,7 +126,7 @@ function makeCatalog(providerId: ProviderId): ProviderCatalog {
     models: known.cursor,
     permissionModes: CURSOR_MODES,
     effortLevels: [],
-    defaults: { model: "auto", permissionMode: "default", effort: DEFAULT_EFFORT },
+    defaults: { model: "auto", permissionMode: permissionModeDefaults.cursor, effort: DEFAULT_EFFORT },
     capabilities: {
       effort: true,
       fast: true,
@@ -208,33 +217,37 @@ export function updateProviderModels(providerId: ProviderId, models: ModelOption
   return provider;
 }
 
-const DEFAULT_PERMISSION_MODE_KEY = "defaultPermissionMode";
-
-function loadDefaultPermissionMode(): PermissionMode {
-  const stored = settings.all()[DEFAULT_PERMISSION_MODE_KEY];
-  return typeof stored === "string" &&
-    [...CLAUDE_MODES, ...CURSOR_MODES].some((mode) => mode.value === stored)
-    ? (stored as PermissionMode)
-    : DEFAULT_PERMISSION_MODE;
+// one-shot at import: the legacy value lands on the default provider and is then retired, so a
+// later change of default provider can never migrate it a second time
+function migrateLegacyPermissionMode(): void {
+  const stored = settings.all();
+  const legacy = stored[LEGACY_PERMISSION_MODE_KEY];
+  if (legacy === undefined) return;
+  const providerId = defaultProviderId();
+  if (isPermissionMode(providerId, legacy) && stored[PERMISSION_MODE_KEY[providerId]] === undefined) {
+    settings.set(PERMISSION_MODE_KEY[providerId], legacy);
+  }
+  settings.delete(LEGACY_PERMISSION_MODE_KEY);
 }
 
-let defaultPermissionMode: PermissionMode = loadDefaultPermissionMode();
+function loadPermissionMode(providerId: ProviderId): PermissionMode {
+  const stored = settings.all()[PERMISSION_MODE_KEY[providerId]];
+  return isPermissionMode(providerId, stored) ? stored : BUILTIN_PERMISSION_MODE[providerId];
+}
 
-export function currentDefaults(
-  providerId: ProviderId = defaultProviderId(),
-): { model: string; permissionMode: PermissionMode; effort: Effort } {
+migrateLegacyPermissionMode();
+
+const permissionModeDefaults: Record<ProviderId, PermissionMode> = {
+  claude: loadPermissionMode("claude"),
+  cursor: loadPermissionMode("cursor"),
+};
+
+export function setDefaultPermissionMode(providerId: ProviderId, mode: PermissionMode): ProviderCatalog {
+  permissionModeDefaults[providerId] = mode;
+  settings.set(PERMISSION_MODE_KEY[providerId], mode);
   const provider = makeCatalog(providerId);
-  return {
-    ...provider.defaults,
-    permissionMode: isPermissionMode(providerId, defaultPermissionMode)
-      ? defaultPermissionMode
-      : provider.defaults.permissionMode,
-  };
-}
-
-export function setDefaultPermissionMode(mode: PermissionMode): void {
-  defaultPermissionMode = mode;
-  settings.set(DEFAULT_PERMISSION_MODE_KEY, mode);
+  publish({ type: "provider.changed", provider });
+  return provider;
 }
 
 export function isProviderId(value: unknown): value is ProviderId {
@@ -245,7 +258,7 @@ export function isPermissionMode(
   providerId: ProviderId,
   value: unknown,
 ): value is PermissionMode {
-  return makeCatalog(providerId).permissionModes.some((mode) => mode.value === value);
+  return MODES[providerId].some((mode) => mode.value === value);
 }
 
 export function findModel(providerId: ProviderId, value: unknown): ModelOption | null {
