@@ -283,6 +283,7 @@ const sql = {
   settingsSet: db.prepare(
     "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
   ),
+  settingsDelete: db.prepare("DELETE FROM settings WHERE key = ?"),
   usageAll: db.prepare("SELECT id, json, updated_at FROM usage"),
   usageSet: db.prepare(
     "INSERT INTO usage (id, json, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at",
@@ -363,6 +364,10 @@ export const settings = {
 
   set(key: string, value: string): void {
     sql.settingsSet.run(key, value);
+  },
+
+  delete(key: string): void {
+    sql.settingsDelete.run(key);
   },
 };
 

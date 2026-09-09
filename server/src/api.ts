@@ -32,7 +32,6 @@ import type { TableFilter, TableQuery } from "./table.ts";
 import { messages, projects, settings, threads, worktreeFavorites } from "./db.ts";
 import { parseLayout } from "./layout.ts";
 import {
-  currentDefaults,
   currentProvider,
   currentProviders,
   defaultEffortFor,
@@ -216,7 +215,6 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
       threads: threads.list(),
       providers: currentProviders(),
       defaultProviderId: defaultProviderId(),
-      defaults: currentDefaults(),
       apps: await listApps(),
     }),
   },
@@ -731,7 +729,7 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
       }
       const providerId = body.providerId ?? defaultProviderId();
       const provider = currentProvider(providerId);
-      const defaults = currentDefaults(providerId);
+      const defaults = provider.defaults;
       if (body.model !== undefined && !isModel(providerId, body.model)) {
         throw new HttpError(400, "Unknown model");
       }
@@ -971,19 +969,15 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
   },
   {
     method: "PUT",
-    pattern: /^\/api\/defaults$/,
-    handler: async ({ request }) => {
+    pattern: /^\/api\/providers\/([^/]+)\/defaults$/,
+    handler: async ({ request, params }) => {
+      const providerId = params[0]!;
+      if (!isProviderId(providerId)) throw new HttpError(404, "Provider not found");
       const body = await readBody(request);
-      if (
-        typeof body.permissionMode !== "string" ||
-        !isPermissionMode(defaultProviderId(), body.permissionMode)
-      ) {
+      if (!isPermissionMode(providerId, body.permissionMode)) {
         throw new HttpError(400, "Invalid permissionMode");
       }
-      setDefaultPermissionMode(body.permissionMode);
-      const defaults = currentDefaults();
-      publish({ type: "defaults.changed", defaults });
-      return { defaults };
+      return { provider: setDefaultPermissionMode(providerId, body.permissionMode) };
     },
   },
   {

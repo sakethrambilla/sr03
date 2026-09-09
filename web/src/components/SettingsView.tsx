@@ -54,6 +54,9 @@ function ProviderCard({
   // Model discovery lands after the probe, as provider.changed, so the catalog is read live.
   const catalog = useStore((state) => state.providers.find((entry) => entry.id === provider.id));
   const models = catalog?.models ?? provider.models;
+  const permissionModes = catalog?.permissionModes ?? provider.permissionModes;
+  const permissionMode = catalog?.defaults.permissionMode ?? provider.defaults.permissionMode;
+  const setProviderPermissionMode = useStore((state) => state.setProviderPermissionMode);
   const [confirming, setConfirming] = useState(false);
   const [showAllModels, setShowAllModels] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -115,6 +118,36 @@ function ProviderCard({
           <Field label="Binary path" value={provider.binary ?? "not on PATH"} mono />
           <Field label="Settings honored" value={provider.settingSources.join(", ")} mono />
         </div>
+
+        <Separator />
+
+        <div className="flex items-center gap-4">
+          <div className="min-w-0 flex-1">
+            <p className="text-[13px] text-foreground">Permission mode</p>
+            <p className="text-[11.5px] text-faint">
+              What a new {provider.label} session can do without asking
+            </p>
+          </div>
+          <Select
+            value={permissionMode}
+            onValueChange={(next) =>
+              void setProviderPermissionMode(provider.id, next as PermissionMode)
+            }
+          >
+            <SelectTrigger className="w-56 shrink-0">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {permissionModes.map((mode) => (
+                <SelectItem key={mode.value} value={mode.value}>
+                  {mode.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <Separator />
 
         <div className="flex flex-col gap-1.5">
           <span className="text-[12px] text-muted-foreground">Models</span>
@@ -249,48 +282,6 @@ function FontPicker({ label, hint, value, options, onPick }: {
   );
 }
 
-function GeneralPanel() {
-  const providers = useStore((state) => state.providers);
-  const defaultProviderId = useStore((state) => state.defaultProviderId);
-  const permissionModes =
-    providers.find((provider) => provider.id === defaultProviderId)?.permissionModes ?? [];
-  const defaultPermissionMode = useStore((state) => state.defaults.permissionMode);
-  const setDefaultPermissionMode = useStore((state) => state.setDefaultPermissionMode);
-
-  return (
-    <section className="rounded-lg border border-border/70 bg-card/40">
-      <header className="border-b border-border/60 px-4 py-3">
-        <h2 className="text-[14px] font-medium">Session defaults</h2>
-        <p className="mt-0.5 text-[12px] text-muted-foreground">
-          Applied to every new session started on this machine from now on. Sessions already
-          open keep whatever mode they were started with.
-        </p>
-      </header>
-      <div className="flex items-center gap-4 px-4 py-4">
-        <div className="min-w-0 flex-1">
-          <p className="text-[13px] text-foreground">Permission mode</p>
-          <p className="text-[11.5px] text-faint">How much a new session can do without asking</p>
-        </div>
-        <Select
-          value={defaultPermissionMode}
-          onValueChange={(next) => void setDefaultPermissionMode(next as PermissionMode)}
-        >
-          <SelectTrigger className="w-56 shrink-0">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {permissionModes.map((mode) => (
-              <SelectItem key={mode.value} value={mode.value}>
-                {mode.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-    </section>
-  );
-}
-
 function EditorPanel() {
   const [autoPreview, setAutoPreview] = usePersistedState<boolean>("auto-preview", true);
 
@@ -401,7 +392,6 @@ function AppearancePanel() {
 }
 
 const SECTIONS = [
-  { id: "general", label: "General" },
   { id: "providers", label: "Providers" },
   { id: "appearance", label: "Appearance" },
 ] as const;
@@ -413,7 +403,9 @@ export function SettingsView() {
   const catalogs = useStore((state) => state.providers);
   const defaultProviderId = useStore((state) => state.defaultProviderId);
   const refreshState = useStore((state) => state.refreshState);
-  const [section, setSection] = usePersistedState<Section>("settings-section", "general");
+  const [storedSection, setSection] = usePersistedState<Section>("settings-section", "providers");
+  // an install that remembered the removed General tab lands on Providers
+  const section = SECTIONS.some((entry) => entry.id === storedSection) ? storedSection : "providers";
   const providers = useStore((state) => state.providerStatuses);
   const loadProviderStatuses = useStore((state) => state.loadProviderStatuses);
   const [error, setError] = useState<string | null>(null);
@@ -487,13 +479,12 @@ export function SettingsView() {
 
         <div className="min-h-0 flex-1 overflow-auto">
           <div className="mx-auto flex max-w-2xl flex-col gap-4 px-6 py-6">
-            {section === "general" ? (
+            {section === "appearance" ? (
               <>
-                <GeneralPanel />
+                <AppearancePanel />
                 <EditorPanel />
               </>
             ) : null}
-            {section === "appearance" ? <AppearancePanel /> : null}
             {section === "providers" ? (
               <>
                 <section className="rounded-lg border border-border/70 bg-card/40 px-4 py-3">
