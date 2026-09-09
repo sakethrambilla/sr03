@@ -117,7 +117,7 @@ the worktree still ships without those paths.
 
 - Cursor runs as `cursor-agent acp` over newline-delimited JSON-RPC on stdio. The CLI remains an
   external prerequisite; unlike Claude's SDK CLI, it is not bundled into the desktop payload.
-- Auto-review and Force are process flags. Agent, Plan and Ask are reapplied with
+- Auto-review and Run Everything are process flags. Agent, Plan and Ask are reapplied with
   `session/set_mode` after every new or loaded session; changing a permission mode parks the idle
   process first.
 - Cursor advertises picker slugs through `cursor/list_available_models` at startup (Auto, Composer,

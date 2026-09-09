@@ -50,7 +50,7 @@ const CURSOR_MODES: PermissionModeOption[] = [
   { value: "autoReview", label: "Auto-review", hint: "Automatically review safe tool calls" },
   { value: "plan", label: "Plan", hint: "Read-only planning mode" },
   { value: "ask", label: "Ask", hint: "Read-only questions and explanations" },
-  { value: "bypassPermissions", label: "Force", hint: "Allow tools unless explicitly denied" },
+  { value: "bypassPermissions", label: "Run Everything", hint: "Allow tools unless explicitly denied" },
 ];
 
 const MODES: Record<ProviderId, PermissionModeOption[]> = { claude: CLAUDE_MODES, cursor: CURSOR_MODES };
