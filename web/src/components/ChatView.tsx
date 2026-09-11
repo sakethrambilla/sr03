@@ -32,6 +32,7 @@ import { SearchPalette } from "./SearchPalette.tsx";
 import type { PaletteMode } from "./SearchPalette.tsx";
 import { Timeline } from "./Timeline.tsx";
 import { SubagentView } from "./SubagentView.tsx";
+import { ProviderLogo } from "./ProviderLogo.tsx";
 import { SidebarToggle } from "./Sidebar.tsx";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -573,7 +574,8 @@ export function ChatView({ thread }: { thread: Thread }) {
           <h1 className="min-w-0 truncate text-[13.5px] font-medium" title={thread.cwd}>
             {thread.title}
           </h1>
-          <span className="shrink-0 rounded-md border border-border/70 px-1.5 py-0.5 text-[10.5px] text-faint">
+          <span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border/70 px-1.5 py-0.5 text-[10.5px] text-faint">
+            <ProviderLogo id={thread.providerId} className="size-3" />
             {provider.label}
           </span>
           {branch ? <BranchChip branch={branch} isWorktree={thread.isWorktree} /> : null}
