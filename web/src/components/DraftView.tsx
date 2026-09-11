@@ -189,10 +189,13 @@ function DraftChips({
         items={providers.map((entry) => ({
           id: entry.id,
           label: entry.label,
-          hint: entry.id === "claude" ? "Claude Agent SDK" : "Cursor Agent over ACP",
+          hint: entry.hint,
           selected: entry.id === draft.providerId,
         }))}
-        onPick={(id) => patchDraft({ providerId: id === "cursor" ? "cursor" : "claude" })}
+        onPick={(id) => {
+          const provider = providers.find((entry) => entry.id === id);
+          if (provider) patchDraft({ providerId: provider.id });
+        }}
       />
       <Chip
         icon={<FolderIcon />}

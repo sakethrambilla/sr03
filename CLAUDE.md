@@ -6,10 +6,10 @@ shape — the server owns everything, the client is a thin view over one WebSock
 much smaller.
 
 **Out of scope.** Ask before building any of these: remote control / relay / Tailscale, mobile app,
-providers other than Claude or Cursor, file checkpointing — snapshotting the worktree so a rewind
-can put code back — MCP servers, PR integration. Rewind and `/clear` are conversation-only: they
-drop messages and the CLI session, and never touch disk. t3code is Effect-based and event-sourced;
-sr03 is not, and shouldn't become so.
+providers other than Claude, Cursor, or Codex, file checkpointing — snapshotting the worktree so a
+rewind can put code back — MCP servers, PR integration. Rewind and `/clear` are conversation-only:
+they drop messages and the CLI session, and never touch disk. t3code is Effect-based and
+event-sourced; sr03 is not, and shouldn't become so.
 
 ## Commands
 
@@ -36,6 +36,7 @@ server/src   plain Node, run through --experimental-strip-types (no build step)
   agents/runtime.ts  provider-neutral sessions, transcript projection, approvals, parking
   agents/claude.ts   Claude Agent SDK adapter
   agents/cursor.ts   Cursor ACP adapter
+  agents/codex.ts    Codex app-server adapter
   agents/acp.ts      newline-delimited JSON-RPC transport
   agents/registry.ts provider lookup
   git.ts     worktree add/remove/list, branches, dirty + diff stat
@@ -137,6 +138,29 @@ the worktree still ships without those paths.
 - `cursor/task` arrives on both the request and notification paths. It carries description, prompt,
   subagent type, model, agent id and duration, and nothing else — there is no child transcript to
   render.
+
+## Codex session gotchas
+
+- Codex runs as `codex app-server --listen stdio://` over newline-delimited JSON-RPC. The envelope
+  **omits** `"jsonrpc":"2.0"` (Cursor ACP requires it). The CLI remains an external PATH
+  prerequisite, like Cursor, and is not bundled into the desktop payload.
+- Handshake is `initialize` with `clientInfo: { name: "sr03", title: "sr03" }` — stable API only,
+  no `experimentalApi` — then an `initialized` notification, then `thread/start` or `thread/resume`.
+  Persist Codex `thread.id` as sr03 `sessionId`. `thread/resume` does not replay history; sr03
+  already owns the transcript.
+- Turns are `turn/start` with `[{ type: "text", text }]`. Model, effort, approval policy and
+  sandbox on that call become later-turn defaults, so live picker changes apply on the next turn
+  without restarting the process.
+- Permission presets fold Codex's two axes (approval + sandbox): Agent is `on-request` + workspace
+  write; Plan and Ask are read-only; Accept edits auto-approves file changes in the adapter but
+  still prompts for shell; Full access is `never` + `danger-full-access`. `thread/start` uses
+  kebab-case sandbox (`workspace-write`); `turn/start` uses camelCase `sandboxPolicy.type`
+  (`workspaceWrite`).
+- Approvals return `{ decision: "accept" | "acceptForSession" | "decline" }`.
+  `item/tool/requestUserInput` uses the Cursor question panel. Collab tool-call items are task
+  cards only — there is no child transcript.
+- Skills come from `skills/list` plus a disk scan of `.codex/skills` and `.agents/skills`. macOS
+  already injects the login-shell PATH, so `~/.local/bin/codex` is visible to the desktop app.
 
 ## Desktop shell
 

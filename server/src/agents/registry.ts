@@ -3,11 +3,13 @@
 import type { ProviderId } from "../types.ts";
 import { claudeProvider } from "./claude.ts";
 import { cursorProvider } from "./cursor.ts";
+import { codexProvider } from "./codex.ts";
 import type { AgentProvider } from "./types.ts";
 
 const providers: Record<ProviderId, AgentProvider> = {
   claude: claudeProvider,
   cursor: cursorProvider,
+  codex: codexProvider,
 };
 
 export function providerFor(providerId: ProviderId): AgentProvider {
