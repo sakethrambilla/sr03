@@ -207,3 +207,9 @@ export const TOKEN_CLASS: Record<TokenKind, string> = {
   property: "text-code-property",
   plain: "text-foreground",
 };
+
+// what the editor's comment toggle prefixes a line with — null where the grammar has no
+// line comment (json, css) or the file's kind isn't one we know
+export function lineComment(filename: string): string | null {
+  return grammarFor(filename)?.line[0] ?? null;
+}

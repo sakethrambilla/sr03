@@ -58,6 +58,9 @@ group only — the other groups' files ignore them.
 | Shortcut | Action | Code |
 | --- | --- | --- |
 | `⌘S` | Save | `web/src/components/FileView.tsx` |
+| `Tab` / `⇧Tab` | Indent / outdent the caret's line, or every selected line | `web/src/components/FileView.tsx` |
+| `⏎` | Keep the line's indent, one level deeper after `:` (Python) or an open bracket | `web/src/components/FileView.tsx` |
+| `⌘/` | Comment / uncomment the selected lines | `web/src/components/FileView.tsx` |
 | `⌘⇧V` | Toggle preview — Markdown, Mermaid, Excalidraw, CSV and TSV only | `web/src/components/FileView.tsx` |
 | `Esc` | Close the file, only when it has no unsaved changes | `web/src/components/FileView.tsx` |
 | `⌘`-click an import | Open that file | `web/src/components/FileView.tsx` |
