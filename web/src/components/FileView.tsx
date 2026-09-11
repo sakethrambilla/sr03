@@ -1,7 +1,7 @@
 // One open file tab: the highlighted listing with its diff markers in the gutter, an editable
 // textarea over it, cmd-click navigation to whatever an import or a symbol resolves to, and a
 // preview for markdown, mermaid and excalidraw. A csv, tsv or xlsx hands off to TableView instead.
-import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { api } from "../lib/api.ts";
 import type { FileLinks, LineLink } from "../lib/fileref.ts";
@@ -21,6 +21,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { TOKEN_CLASS, tokenize, type Token } from "../lib/highlight.ts";
+import { comment, indent, indentUnit, newline, outdent, type Edit } from "../lib/editing.ts";
 
 interface Block {
   id: number;
@@ -410,6 +411,42 @@ export const FileView = memo(function FileView({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [active, onClose, dirty, saving, path, thread.id, previewable, preview, drawing, excalidraw]);
 
+  // applied through insertText rather than by assigning value, so the textarea's own
+  // undo stack survives an indent or a comment toggle
+  const applyEdit = (area: HTMLTextAreaElement, edit: Edit) => {
+    area.setSelectionRange(edit.from, edit.to);
+    if (!document.execCommand("insertText", false, edit.text)) {
+      area.setRangeText(edit.text, edit.from, edit.to, "end");
+    }
+    area.setSelectionRange(edit.start, edit.end);
+    source.current = area.value;
+    setText(area.value);
+    setDirty(area.value !== file?.text);
+  };
+
+  const onEditorKey = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    const area = event.currentTarget;
+    const sel = { start: area.selectionStart, end: area.selectionEnd };
+    const unit = indentUnit(area.value, path);
+    const mod = event.metaKey || event.ctrlKey;
+    if (mod && event.key === "/") {
+      const edit = comment(area.value, sel, path);
+      if (!edit) return;
+      event.preventDefault();
+      applyEdit(area, edit);
+      return;
+    }
+    if (event.key === "Tab" && !mod && !event.altKey) {
+      event.preventDefault();
+      applyEdit(area, event.shiftKey ? outdent(area.value, sel, unit) : indent(area.value, sel, unit));
+      return;
+    }
+    if (event.key === "Enter" && !mod && !event.shiftKey && !event.altKey) {
+      event.preventDefault();
+      applyEdit(area, newline(area.value, sel, unit, path));
+    }
+  };
+
   const lines = useMemo(() => {
     if (!file || file.binary) return [] as Segment[][];
     const bindings = links.bindings(path, text);
@@ -602,6 +639,7 @@ export const FileView = memo(function FileView({
                       setText(value);
                       setDirty(value !== file.text);
                     }}
+                    onKeyDown={onEditorKey}
                     wrap={wrap ? "soft" : "off"}
                     spellCheck={false}
                     style={{ left: GUTTER }}
