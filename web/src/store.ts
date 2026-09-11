@@ -192,6 +192,7 @@ const EMPTY: AppState = {
 export const EMPTY_PROVIDER: ProviderCatalog = {
   id: "claude",
   label: "Claude Code",
+  hint: "",
   models: [],
   permissionModes: [],
   effortLevels: [],

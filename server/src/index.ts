@@ -155,5 +155,5 @@ websockets.on("connection", (socket) => {
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`sr03 server listening on http://127.0.0.1:${PORT}`);
   // asking the CLI for its model list costs seconds, so pay it before the first page load
-  void Promise.all([listModels("claude"), listModels("cursor")]);
+  void Promise.all([listModels("claude"), listModels("cursor"), listModels("codex")]);
 });

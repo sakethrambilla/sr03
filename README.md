@@ -1,7 +1,7 @@
 # sr03
 
-A local control plane for Claude Code and Cursor CLI. It runs on your machine and gives you a
-thread sidepanel over folder-based projects — with provider, model and permission pickers, git
+A local control plane for Claude Code, Cursor CLI, and Codex. It runs on your machine and gives you
+a thread sidepanel over folder-based projects — with provider, model and permission pickers, git
 worktrees, a file tree and editor, a terminal, and provider-specific controls.
 
 Modelled on [t3code](https://github.com/pingdotgg/t3code)'s shape — the server owns everything,
@@ -17,6 +17,8 @@ server, no ORM, no event sourcing.
     which reuses the CLI's login and `~/.claude` settings.
   - [Cursor CLI](https://cursor.com/cli), installed as `cursor-agent` (or `agent`) and signed in.
     sr03 talks to `cursor-agent acp` over stdio and reuses Cursor's login.
+  - [Codex CLI](https://developers.openai.com/codex), installed as `codex` and signed in. sr03 talks
+    to `codex app-server` over stdio and reuses Codex's login.
 - macOS or Windows. The core works on both, but the native folder and file pickers, "reveal in
   Finder", the open-in app list and the resource meter are macOS-only, and both installers are
   built from macOS
@@ -62,11 +64,14 @@ unsigned build triggers — is covered in [INSTALL.md](INSTALL.md).
   which is fanned out to every connected client.
 - **One provider session per thread.** `server/src/agents/runtime.ts` owns the common lifecycle and
   routes each persisted `providerId` through the provider registry. Claude uses a streaming Agent
-  SDK session; Cursor uses ACP JSON-RPC over stdio. Idle sessions are stopped after ten minutes and
-  resumed cold on the next turn.
+  SDK session; Cursor uses ACP JSON-RPC over stdio; Codex uses `codex app-server` JSON-RPC over
+  stdio (without the `jsonrpc` field). Idle sessions are stopped after ten minutes and resumed cold
+  on the next turn.
 - **Capabilities are provider-scoped.** Claude exposes effort, slash commands, usage, subagent
   progress and session forks. Cursor exposes its model and runtime modes, per-model effort and fast
-  switches, plus ACP permission and question prompts; controls that ACP does not provide are hidden.
+  switches, plus ACP permission and question prompts. Codex exposes per-model effort, slash
+  commands, usage, task cards, questions and live model/permission/effort switches; controls a
+  provider does not advertise are hidden.
 - **The server is authoritative.** The client keeps no state the server can't replace: a reconnect
   after any real gap re-reads the thread list and the open thread instead of trusting the socket.
 - **The wire types are duplicated on purpose.** `server/src/types.ts` and `web/src/lib/types.ts`
@@ -94,6 +99,7 @@ Every source file carries a header comment saying what it holds. In short:
 | `agents/registry.ts` | Routes each thread to its provider adapter |
 | `agents/claude.ts` | Claude Agent SDK adapter, including slash commands, usage and subagent progress |
 | `agents/cursor.ts` | Cursor ACP adapter: process flags, sessions, updates, permissions and questions |
+| `agents/codex.ts` | Codex app-server adapter: threads, turns, approvals, questions, models and skills |
 | `agents/acp.ts` | Small newline-delimited JSON-RPC client over a child process's stdio |
 | `db.ts` | The whole persistence layer on `node:sqlite`: schema, migrations, and one accessor per table |
 | `git.ts` | Everything sr03 asks git — repo info, worktrees, changed files, diffs, ignore checks |
@@ -102,7 +108,7 @@ Every source file carries a header comment saying what it holds. In short:
 | `fsbrowse.ts` | Filesystem work that isn't git — folder picker, uploads, the session folder's tree, open-in apps |
 | `metrics.ts` | The resource meter's sampler: `ps` on a tick, attributed per thread |
 | `models.ts` | Provider catalogs: discovered models, modes, effort levels (per-model where the provider scopes them), defaults and capabilities |
-| `providers.ts` | Install, account and auth status for Claude Code and Cursor CLI |
+| `providers.ts` | Install, account and auth status for Claude Code, Cursor CLI and Codex CLI |
 | `bus.ts` | In-process pub/sub — the whole of the push side |
 | `config.ts` | Paths and tunables from the environment, resolved once |
 | `types.ts` | The wire contract: db rows and every socket event |
@@ -168,13 +174,13 @@ browser tab the browser claims some first (`⌘⇧N`, `⌘W`, `⌘N`) — test t
 - `~/.sr03/sr03.db` — projects, threads, messages, settings, the last usage read
 - `~/.sr03/worktrees/` — worktrees sr03 created, one directory per repo and branch
 - `~/.sr03/uploads/` — files you dropped or pasted into the composer
-- `~/.claude*` and Cursor's own configuration — owned by their CLIs. sr03 reads profile/status
-  metadata but never stores provider credentials.
+- `~/.claude*`, Cursor's own configuration, and Codex's `~/.codex` — owned by their CLIs. sr03
+  reads profile/status metadata but never stores provider credentials.
 
 ## Out of scope
 
 Ask before building any of these: remote control / relay / Tailscale, a mobile app, providers other
-than Claude or Cursor, file checkpointing, MCP servers, PR integration.
+than Claude, Cursor, or Codex, file checkpointing, MCP servers, PR integration.
 
 ## Contributing
 

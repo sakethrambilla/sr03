@@ -89,3 +89,28 @@ test("closes a connection that exceeds its line bound", async (context) => {
 
   await assert.rejects(connection.request("oversize"), /exceeds 128 bytes/);
 });
+
+test("omits the jsonrpc field when the envelope option is off", async (context) => {
+  const connection = spawnAcp({
+    binary: process.execPath,
+    args: [
+      "--input-type=module",
+      "-e",
+      `${HARNESS}
+        for await (const line of lines) {
+          const message = JSON.parse(line);
+          if (message.method === "ping") send({ id: message.id, result: message });
+        }
+      `,
+    ],
+    cwd: process.cwd(),
+    jsonrpc: false,
+    label: "Codex",
+  });
+  context.after(() => connection.close());
+
+  const echoed = await connection.request<Record<string, unknown>>("ping", { value: "ok" });
+  assert.equal("jsonrpc" in echoed, false);
+  assert.equal(echoed.method, "ping");
+  assert.deepEqual(echoed.params, { value: "ok" });
+});

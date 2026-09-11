@@ -1015,7 +1015,7 @@ export function ThreadComposer({
     (state) => state.providers.find((entry) => entry.id === thread.providerId) ?? EMPTY_PROVIDER,
   );
   const running = thread.status === "running";
-  const name = thread.providerId === "cursor" ? "Cursor" : "Claude";
+  const name = provider.label;
 
   return (
     <Composer

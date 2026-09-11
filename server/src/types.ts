@@ -1,6 +1,6 @@
 // The wire contract: the rows db.ts stores, and every event that crosses the socket in either
 // direction. Mirrored in web/src/lib/types.ts — change both together.
-export type ProviderId = "claude" | "cursor";
+export type ProviderId = "claude" | "cursor" | "codex";
 
 export type PermissionMode =
   | "default"
@@ -190,6 +190,7 @@ export interface ProviderCapabilities {
 export interface ProviderCatalog {
   id: ProviderId;
   label: string;
+  hint: string;
   models: ModelOption[];
   permissionModes: PermissionModeOption[];
   effortLevels: EffortOption[];

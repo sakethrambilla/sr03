@@ -12,12 +12,13 @@ import { promisify } from "node:util";
 import { publish } from "./bus.ts";
 import { settings } from "./db.ts";
 import { findExecutable } from "./executables.ts";
-import { currentProvider, listModels } from "./models.ts";
+import { currentProvider, isProviderId, listModels } from "./models.ts";
 import type { ProviderAccount, ProviderCatalog, ProviderId, ProviderStatus } from "./types.ts";
 
 const exec = promisify(execFile);
 const CLAUDE_SETTING_SOURCES = ["user", "project", "local"];
 const CURSOR_SETTING_SOURCES = ["user", "project"];
+const CODEX_SETTING_SOURCES = ["user", "project"];
 
 const CLAUDE_FALLBACKS = [
   path.join(os.homedir(), ".local/bin/claude"),
@@ -32,12 +33,27 @@ const CURSOR_FALLBACKS = [
   "/usr/local/bin/cursor-agent",
 ];
 
+const CODEX_FALLBACKS = [
+  path.join(os.homedir(), ".local/bin/codex"),
+  "/opt/homebrew/bin/codex",
+  "/usr/local/bin/codex",
+];
+
 export const findClaude = () => findExecutable(["claude"], CLAUDE_FALLBACKS);
 export const findCursor = () => findExecutable(["cursor-agent", "agent"], CURSOR_FALLBACKS);
+export const findCodex = () => findExecutable(["codex"], CODEX_FALLBACKS);
 
 async function claudeVersion(binary: string): Promise<string | null> {
   const { stdout } = await exec(binary, ["--version"]).catch(() => ({ stdout: "" }));
   return stdout.trim().split(/\s+/)[0] || null;
+}
+
+async function binaryVersion(binary: string): Promise<string | null> {
+  const { stdout } = await exec(binary, ["--version"]).catch(() => ({ stdout: "" }));
+  const text = stdout.trim();
+  if (!text) return null;
+  const match = text.match(/\d+\.\d+(?:\.\d+)?/);
+  return match?.[0] ?? text.split(/\s+/)[0];
 }
 
 const PLANS: Record<string, string> = {
@@ -185,7 +201,57 @@ async function cursorStatus(): Promise<ProviderStatus> {
   };
 }
 
-const PROVIDER_IDS: ProviderId[] = ["claude", "cursor"];
+const CODEX_PLANS: Record<string, string> = {
+  free: "Free",
+  go: "Go",
+  plus: "Plus",
+  pro: "Pro",
+  prolite: "Pro Lite",
+  team: "Team",
+  business: "Business",
+  enterprise: "Enterprise",
+  edu: "Edu",
+  edu_plus: "Edu Plus",
+  edu_pro: "Edu Pro",
+};
+
+async function readCodexAccount(binary: string): Promise<ProviderAccount | null> {
+  const { probeCodexAccount } = await import("./agents/codex.ts");
+  return probeCodexAccount(binary);
+}
+
+async function codexStatus(): Promise<ProviderStatus> {
+  const binary = await findCodex();
+  const [version, account] = await Promise.all([
+    binary ? binaryVersion(binary) : Promise.resolve(null),
+    binary ? readCodexAccount(binary) : Promise.resolve(null),
+  ]);
+  const state: ProviderStatus["state"] = !binary ? "missing" : account ? "ready" : "signed-out";
+  if (binary) void listModels("codex");
+  const plan =
+    account?.plan && CODEX_PLANS[account.plan] ? CODEX_PLANS[account.plan] : account?.plan;
+  return {
+    ...currentProvider("codex"),
+    state,
+    detail:
+      state === "missing"
+        ? "Codex CLI (`codex`) was not found on PATH."
+        : state === "signed-out"
+          ? "Installed, but no account is signed in yet."
+          : [plan, account?.organization].filter(Boolean).join(" · ") || "Authenticated",
+    version,
+    binary,
+    account: account
+      ? { ...account, plan: plan ?? account.plan }
+      : null,
+    settingSources: CODEX_SETTING_SOURCES,
+    signInHint: "Run this command in a terminal to sign in.",
+    signInCommand: "codex login",
+    logoutCommand: "codex logout",
+  };
+}
+
+const PROVIDER_IDS: ProviderId[] = ["claude", "cursor", "codex"];
 
 // Only the probed half is cached; the catalog half is rebuilt from the live model list on read,
 // so a cached row can never resurrect a stale model catalog.
@@ -194,6 +260,7 @@ type ProviderProbe = Omit<ProviderStatus, keyof ProviderCatalog>;
 const PROBE_KEY: Record<ProviderId, string> = {
   claude: "probe:claude",
   cursor: "probe:cursor",
+  codex: "probe:codex",
 };
 
 function loadProbe(providerId: ProviderId): ProviderStatus | null {
@@ -231,7 +298,9 @@ const probing: Partial<Record<ProviderId, Promise<ProviderStatus>>> = {};
 function refreshProvider(providerId: ProviderId): Promise<ProviderStatus> {
   const existing = probing[providerId];
   if (existing) return existing;
-  const reading = (providerId === "claude" ? claudeStatus() : cursorStatus())
+  const reading = (
+    providerId === "claude" ? claudeStatus() : providerId === "codex" ? codexStatus() : cursorStatus()
+  )
     .then((status) => {
       storeProbe(providerId, status);
       publish({ type: "provider.status", status });
@@ -258,9 +327,14 @@ export async function listProviders(): Promise<ProviderStatus[]> {
 
 // Logout is delegated to the selected CLI so it clears the same credentials as its own client.
 export async function logoutProvider(id: string): Promise<{ ok: boolean; output: string }> {
-  if (id !== "claude" && id !== "cursor") throw new Error(`Unknown provider: ${id}`);
+  if (!isProviderId(id)) throw new Error(`Unknown provider: ${id}`);
   const providerId: ProviderId = id;
-  const binary = providerId === "claude" ? await findClaude() : await findCursor();
+  const binary =
+    providerId === "claude"
+      ? await findClaude()
+      : providerId === "codex"
+        ? await findCodex()
+        : await findCursor();
   if (!binary) throw new Error(`${currentProvider(providerId).label} was not found on PATH`);
   const args = providerId === "claude" ? ["auth", "logout"] : ["logout"];
   try {

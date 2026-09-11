@@ -247,7 +247,7 @@ function toThread(row: Row): Thread {
   return {
     id: row.id as string,
     projectId: row.project_id as string,
-    providerId: row.provider_id === "cursor" ? "cursor" : "claude",
+    providerId: row.provider_id === "cursor" || row.provider_id === "codex" ? row.provider_id : "claude",
     title: row.title as string,
     cwd: row.cwd as string,
     branch: (row.branch as string | null) ?? null,

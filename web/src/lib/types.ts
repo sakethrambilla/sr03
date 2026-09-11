@@ -1,6 +1,6 @@
 // Mirror of server/src/types.ts, plus the shapes the REST endpoints answer with. Change both
 // together — nothing checks that they agree.
-export type ProviderId = "claude" | "cursor";
+export type ProviderId = "claude" | "cursor" | "codex";
 export type PermissionMode =
   | "default"
   | "acceptEdits"
@@ -188,6 +188,7 @@ export interface ProviderCapabilities {
 export interface ProviderCatalog {
   id: ProviderId;
   label: string;
+  hint: string;
   models: ModelOption[];
   permissionModes: PermissionModeOption[];
   effortLevels: EffortOption[];

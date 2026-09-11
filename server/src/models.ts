@@ -53,12 +53,31 @@ const CURSOR_MODES: PermissionModeOption[] = [
   { value: "bypassPermissions", label: "Run Everything", hint: "Allow tools unless explicitly denied" },
 ];
 
-const MODES: Record<ProviderId, PermissionModeOption[]> = { claude: CLAUDE_MODES, cursor: CURSOR_MODES };
-const BUILTIN_PERMISSION_MODE: Record<ProviderId, PermissionMode> = { claude: "default", cursor: "default" };
+const CODEX_MODES: PermissionModeOption[] = [
+  { value: "default", label: "Agent", hint: "Prompt before tool use" },
+  { value: "acceptEdits", label: "Accept edits", hint: "Auto-approve file edits, prompt for shell" },
+  { value: "plan", label: "Plan", hint: "Read-only planning" },
+  { value: "ask", label: "Ask", hint: "Read-only questions and explanations" },
+  { value: "bypassPermissions", label: "Full access", hint: "No prompts, unsandboxed" },
+];
+
+export const CODEX_DEFAULT_MODEL = "gpt-6-astra";
+
+const MODES: Record<ProviderId, PermissionModeOption[]> = {
+  claude: CLAUDE_MODES,
+  cursor: CURSOR_MODES,
+  codex: CODEX_MODES,
+};
+const BUILTIN_PERMISSION_MODE: Record<ProviderId, PermissionMode> = {
+  claude: "default",
+  cursor: "default",
+  codex: "default",
+};
 
 const PERMISSION_MODE_KEY: Record<ProviderId, string> = {
   claude: "defaultPermissionMode:claude",
   cursor: "defaultPermissionMode:cursor",
+  codex: "defaultPermissionMode:codex",
 };
 // the single machine-wide default this replaced; carried onto the default provider once
 const LEGACY_PERMISSION_MODE_KEY = "defaultPermissionMode";
@@ -66,11 +85,21 @@ const LEGACY_PERMISSION_MODE_KEY = "defaultPermissionMode";
 const FALLBACKS: Record<ProviderId, ModelOption[]> = {
   claude: [{ slug: DEFAULT_MODEL, label: "Default", hint: "Whichever model Claude Code picks" }],
   cursor: [{ slug: "auto", label: "Auto", hint: "Whichever model Cursor picks" }],
+  codex: [
+    {
+      slug: CODEX_DEFAULT_MODEL,
+      label: "GPT-6 Astra",
+      hint: "Whichever model Codex picks",
+      effortLevels: EFFORT_LEVELS.filter((level) => level.value === "low" || level.value === "medium" || level.value === "high"),
+      defaultEffort: DEFAULT_EFFORT,
+    },
+  ],
 };
 
 const MODELS_KEY: Record<ProviderId, string> = {
   claude: "models:claude",
   cursor: "models:cursor:acp",
+  codex: "models:codex:app-server",
 };
 
 function loadStored(providerId: ProviderId): ModelOption[] | null {
@@ -88,6 +117,7 @@ function loadStored(providerId: ProviderId): ModelOption[] | null {
 const known: Record<ProviderId, ModelOption[]> = {
   claude: loadStored("claude") ?? FALLBACKS.claude,
   cursor: loadStored("cursor") ?? FALLBACKS.cursor,
+  codex: loadStored("codex") ?? FALLBACKS.codex,
 };
 
 function makeCatalog(providerId: ProviderId): ProviderCatalog {
@@ -95,6 +125,7 @@ function makeCatalog(providerId: ProviderId): ProviderCatalog {
     return {
       id: "claude",
       label: "Claude Code",
+      hint: "Claude Agent SDK",
       models: known.claude,
       permissionModes: CLAUDE_MODES,
       effortLevels: EFFORT_LEVELS,
@@ -120,9 +151,40 @@ function makeCatalog(providerId: ProviderId): ProviderCatalog {
       },
     };
   }
+  if (providerId === "codex") {
+    return {
+      id: "codex",
+      label: "Codex CLI",
+      hint: "Codex app-server over stdio",
+      models: known.codex,
+      permissionModes: CODEX_MODES,
+      effortLevels: [],
+      defaults: {
+        model: CODEX_DEFAULT_MODEL,
+        permissionMode: permissionModeDefaults.codex,
+        effort: DEFAULT_EFFORT,
+      },
+      capabilities: {
+        effort: true,
+        fast: false,
+        slashCommands: true,
+        usage: true,
+        tasks: true,
+        subagentTranscripts: false,
+        stopSubagents: false,
+        fork: true,
+        questions: true,
+        liveModelSwitch: true,
+        livePermissionModeSwitch: true,
+        liveEffortSwitch: true,
+        liveFastSwitch: false,
+      },
+    };
+  }
   return {
     id: "cursor",
     label: "Cursor CLI",
+    hint: "Cursor Agent over ACP",
     models: known.cursor,
     permissionModes: CURSOR_MODES,
     effortLevels: [],
@@ -150,7 +212,7 @@ export function currentProvider(providerId: ProviderId): ProviderCatalog {
 }
 
 export function currentProviders(): ProviderCatalog[] {
-  return [makeCatalog("claude"), makeCatalog("cursor")];
+  return [makeCatalog("claude"), makeCatalog("cursor"), makeCatalog("codex")];
 }
 
 export function defaultProviderId(): ProviderId {
@@ -186,11 +248,23 @@ async function readCursorCatalog(): Promise<ModelOption[]> {
   return models.length === 0 ? known.cursor : models;
 }
 
+async function readCodexCatalog(): Promise<ModelOption[]> {
+  const { discoverCodexModels } = await import("./agents/codex.ts");
+  const models = await discoverCodexModels();
+  return models.length === 0 ? known.codex : models;
+}
+
+function readCatalog(providerId: ProviderId): Promise<ModelOption[]> {
+  if (providerId === "cursor") return readCursorCatalog();
+  if (providerId === "codex") return readCodexCatalog();
+  return readClaudeCatalog();
+}
+
 // Every provider shares one warm lookup. Changed answers are persisted and pushed to every client.
 export function listModels(providerId: ProviderId): Promise<ModelOption[]> {
   const existing = inFlight[providerId];
   if (existing) return existing;
-  const reading = (providerId === "cursor" ? readCursorCatalog() : readClaudeCatalog())
+  const reading = readCatalog(providerId)
     .then((models) => {
       updateProviderModels(providerId, models);
       return known[providerId];
@@ -240,6 +314,7 @@ migrateLegacyPermissionMode();
 const permissionModeDefaults: Record<ProviderId, PermissionMode> = {
   claude: loadPermissionMode("claude"),
   cursor: loadPermissionMode("cursor"),
+  codex: loadPermissionMode("codex"),
 };
 
 export function setDefaultPermissionMode(providerId: ProviderId, mode: PermissionMode): ProviderCatalog {
@@ -251,7 +326,7 @@ export function setDefaultPermissionMode(providerId: ProviderId, mode: Permissio
 }
 
 export function isProviderId(value: unknown): value is ProviderId {
-  return value === "claude" || value === "cursor";
+  return value === "claude" || value === "cursor" || value === "codex";
 }
 
 export function isPermissionMode(

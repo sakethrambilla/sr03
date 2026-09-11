@@ -23,6 +23,10 @@ export interface AcpSpawnOptions {
   args: readonly string[];
   cwd: string;
   env?: NodeJS.ProcessEnv;
+  // Cursor ACP requires the JSON-RPC 2.0 field; Codex app-server omits it.
+  jsonrpc?: boolean;
+  // Prefix for transport errors and stderr tails. Defaults to "ACP".
+  label?: string;
   maxLineBytes?: number;
   maxDiagnosticBytes?: number;
   onStderr?: (text: string) => void;
@@ -54,28 +58,35 @@ interface PendingRequest {
 }
 
 interface JsonRpcRequest {
-  jsonrpc: "2.0";
+  jsonrpc?: "2.0";
   id: JsonRpcId;
   method: string;
   params?: unknown;
 }
 
 interface JsonRpcNotification {
-  jsonrpc: "2.0";
+  jsonrpc?: "2.0";
   method: string;
   params?: unknown;
 }
 
 interface JsonRpcSuccess {
-  jsonrpc: "2.0";
+  jsonrpc?: "2.0";
   id: JsonRpcId;
   result: unknown;
 }
 
 interface JsonRpcFailure {
-  jsonrpc: "2.0";
+  jsonrpc?: "2.0";
   id: JsonRpcId;
   error: JsonRpcErrorObject;
+}
+
+type OutboundMessage = JsonRpcRequest | JsonRpcNotification | JsonRpcSuccess | JsonRpcFailure;
+
+function withJsonrpc<T extends OutboundMessage>(include: boolean, message: T): T {
+  if (!include) return message;
+  return { jsonrpc: "2.0", ...message };
 }
 
 const DEFAULT_MAX_LINE_BYTES = 8 * 1024 * 1024;
@@ -186,6 +197,8 @@ export function spawnAcp(
     options.maxDiagnosticBytes,
     DEFAULT_MAX_DIAGNOSTIC_BYTES,
   );
+  const includeJsonrpc = options.jsonrpc !== false;
+  const label = options.label?.trim() || "ACP";
   const child: ChildProcessWithoutNullStreams = spawn(options.binary, [...options.args], {
     cwd: options.cwd,
     ...(options.env ? { env: options.env } : {}),
@@ -212,7 +225,7 @@ export function spawnAcp(
 
   function withStderr(message: string): string {
     const stderr = stderrTail.trim();
-    return stderr ? `${message}\nCursor ACP stderr:\n${stderr}` : message;
+    return stderr ? `${message}\n${label} stderr:\n${stderr}` : message;
   }
 
   function cleanupPending(entry: PendingRequest): void {
@@ -266,45 +279,45 @@ export function spawnAcp(
   }
 
   function writeNow(line: string): Promise<void> {
-    if (ended) return Promise.reject(new AcpTransportError("ACP connection is closed"));
+    if (ended) return Promise.reject(new AcpTransportError(`${label} connection is closed`));
     if (!child.stdin.writable || child.stdin.destroyed) {
-      return Promise.reject(transportFailure("Cursor ACP stdin is not writable"));
+      return Promise.reject(transportFailure(`${label} stdin is not writable`));
     }
     return new Promise<void>((resolve, reject) => {
       try {
         child.stdin.write(line, "utf8", (error) => {
           if (error) {
-            const failure = transportFailure("Failed to write to Cursor ACP stdin", error);
+            const failure = transportFailure(`Failed to write to ${label} stdin`, error);
             finish(failure, false, true);
             reject(failure);
             return;
           }
           if (ended) {
-            reject(new AcpTransportError("ACP connection closed while writing"));
+            reject(new AcpTransportError(`${label} connection closed while writing`));
             return;
           }
           resolve();
         });
       } catch (error) {
-        const failure = transportFailure("Failed to write to Cursor ACP stdin", error);
+        const failure = transportFailure(`Failed to write to ${label} stdin`, error);
         finish(failure, false, true);
         reject(failure);
       }
     });
   }
 
-  function sendMessage(message: JsonRpcRequest | JsonRpcNotification | JsonRpcSuccess | JsonRpcFailure) {
+  function sendMessage(message: OutboundMessage) {
     let encoded: string;
     try {
       const value = JSON.stringify(message);
       if (typeof value !== "string") throw new TypeError("Message is not JSON serializable");
       encoded = `${value}\n`;
     } catch (error) {
-      return Promise.reject(new AcpTransportError("Failed to encode ACP JSON-RPC message", error));
+      return Promise.reject(new AcpTransportError(`Failed to encode ${label} JSON-RPC message`, error));
     }
     if (Buffer.byteLength(encoded) > maxLineBytes) {
       return Promise.reject(
-        new AcpTransportError(`Outbound ACP JSON-RPC message exceeds ${maxLineBytes} bytes`),
+        new AcpTransportError(`Outbound ${label} JSON-RPC message exceeds ${maxLineBytes} bytes`),
       );
     }
     const write = writeTail.then(() => writeNow(encoded));
@@ -313,7 +326,7 @@ export function spawnAcp(
   }
 
   function sendFailure(id: JsonRpcId, error: JsonRpcErrorObject): Promise<void> {
-    return sendMessage({ jsonrpc: "2.0", id, error });
+    return sendMessage(withJsonrpc(includeJsonrpc, { id, error }));
   }
 
   function settleResponse(message: Record<string, unknown>): void {
@@ -345,7 +358,9 @@ export function spawnAcp(
     }
     try {
       const result = await handler(params);
-      await sendMessage({ jsonrpc: "2.0", id, result: result === undefined ? null : result });
+      await sendMessage(
+        withJsonrpc(includeJsonrpc, { id, result: result === undefined ? null : result }),
+      );
     } catch (error) {
       const failure =
         error instanceof AcpRpcError
@@ -355,7 +370,7 @@ export function spawnAcp(
               ...(error.data === undefined ? {} : { data: error.data }),
             }
           : { code: -32603, message: "Internal error" };
-      diagnostic(`ACP request handler "${method}" failed: ${errorMessage(error)}`);
+      diagnostic(`${label} request handler "${method}" failed: ${errorMessage(error)}`);
       await sendFailure(id, failure).catch(() => undefined);
     }
   }
@@ -366,13 +381,13 @@ export function spawnAcp(
     void Promise.resolve()
       .then(() => handler(params))
       .catch((error) =>
-        diagnostic(`ACP notification handler "${method}" failed: ${errorMessage(error)}`),
+        diagnostic(`${label} notification handler "${method}" failed: ${errorMessage(error)}`),
       );
   }
 
   function handleMessage(value: unknown): void {
-    if (!isRecord(value) || value.jsonrpc !== "2.0") {
-      const failure = transportFailure("Cursor ACP emitted an invalid JSON-RPC envelope");
+    if (!isRecord(value) || (includeJsonrpc && value.jsonrpc !== "2.0")) {
+      const failure = transportFailure(`${label} emitted an invalid JSON-RPC envelope`);
       finish(failure, false, true);
       return;
     }
@@ -401,14 +416,14 @@ export function spawnAcp(
       return;
     }
 
-    const failure = transportFailure("Cursor ACP emitted an unrecognized JSON-RPC message");
+    const failure = transportFailure(`${label} emitted an unrecognized JSON-RPC message`);
     finish(failure, false, true);
   }
 
   function handleLine(line: Buffer): void {
     if (line.length > maxLineBytes) {
       const failure = transportFailure(
-        `Cursor ACP output line exceeds ${maxLineBytes} bytes: ${boundedPreview(
+        `${label} output line exceeds ${maxLineBytes} bytes: ${boundedPreview(
           line,
           maxDiagnosticBytes,
         )}`,
@@ -423,7 +438,7 @@ export function spawnAcp(
       handleMessage(JSON.parse(withoutCarriageReturn.toString("utf8")) as unknown);
     } catch (error) {
       const failure = transportFailure(
-        `Failed to parse Cursor ACP JSON-RPC output: ${boundedPreview(
+        `Failed to parse ${label} JSON-RPC output: ${boundedPreview(
           withoutCarriageReturn,
           maxDiagnosticBytes,
         )}`,
@@ -447,7 +462,7 @@ export function spawnAcp(
     }
     if (!ended && stdoutBuffer.length > maxLineBytes) {
       const failure = transportFailure(
-        `Cursor ACP output line exceeds ${maxLineBytes} bytes: ${boundedPreview(
+        `${label} output line exceeds ${maxLineBytes} bytes: ${boundedPreview(
           stdoutBuffer,
           maxDiagnosticBytes,
         )}`,
@@ -457,14 +472,14 @@ export function spawnAcp(
   });
 
   child.stdout.on("error", (error) => {
-    finish(transportFailure("Failed to read Cursor ACP stdout", error), false, true);
+    finish(transportFailure(`Failed to read ${label} stdout`, error), false, true);
   });
 
   child.stdout.on("end", () => {
     if (ended) return;
     if (stdoutBuffer.length > 0) handleLine(stdoutBuffer);
     if (!ended) {
-      finish(transportFailure("Cursor ACP stdout ended unexpectedly"), false, true);
+      finish(transportFailure(`${label} stdout ended unexpectedly`), false, true);
     }
   });
 
@@ -479,15 +494,15 @@ export function spawnAcp(
     }
   });
   child.stderr.on("error", (error) => {
-    diagnostic(`Failed to read Cursor ACP stderr: ${errorMessage(error)}`);
+    diagnostic(`Failed to read ${label} stderr: ${errorMessage(error)}`);
   });
 
   child.stdin.on("error", (error) => {
-    finish(transportFailure("Cursor ACP stdin failed", error), false, true);
+    finish(transportFailure(`${label} stdin failed`, error), false, true);
   });
 
   child.on("error", (error) => {
-    finish(transportFailure(`Failed to spawn Cursor ACP process "${options.binary}"`, error), false, false);
+    finish(transportFailure(`Failed to spawn ${label} process "${options.binary}"`, error), false, false);
   });
 
   child.on("exit", (code, signal) => {
@@ -498,8 +513,8 @@ export function spawnAcp(
     if (ended) return;
     const detail =
       code === null
-        ? `Cursor ACP process exited from signal ${signal ?? "unknown"}`
-        : `Cursor ACP process exited with code ${code}`;
+        ? `${label} process exited from signal ${signal ?? "unknown"}`
+        : `${label} process exited with code ${code}`;
     finish(transportFailure(detail), false, false);
   });
 
@@ -514,10 +529,10 @@ export function spawnAcp(
     params?: unknown,
     requestOptions?: AcpRequestOptions,
   ): Promise<T> {
-    if (ended) return Promise.reject(new AcpTransportError("ACP connection is closed"));
-    if (!method.trim()) return Promise.reject(new TypeError("ACP request method is required"));
+    if (ended) return Promise.reject(new AcpTransportError(`${label} connection is closed`));
+    if (!method.trim()) return Promise.reject(new TypeError(`${label} request method is required`));
     if (requestOptions?.signal?.aborted) {
-      return Promise.reject(new AcpTransportError(`ACP request "${method}" was aborted`));
+      return Promise.reject(new AcpTransportError(`${label} request "${method}" was aborted`));
     }
     const id = allocateRequestId();
     const key = idKey(id);
@@ -541,7 +556,7 @@ export function spawnAcp(
           cleanupPending(entry);
           reject(
             new AcpTransportError(
-              `ACP request "${method}" timed out after ${requestOptions.timeoutMs}ms`,
+              `${label} request "${method}" timed out after ${requestOptions.timeoutMs}ms`,
             ),
           );
         }, requestOptions.timeoutMs);
@@ -552,37 +567,38 @@ export function spawnAcp(
         entry.abort = () => {
           if (!pending.delete(key)) return;
           cleanupPending(entry);
-          reject(new AcpTransportError(`ACP request "${method}" was aborted`));
+          reject(new AcpTransportError(`${label} request "${method}" was aborted`));
         };
         entry.signal.addEventListener("abort", entry.abort, { once: true });
       }
 
       pending.set(key, entry);
-      const message: JsonRpcRequest = {
-        jsonrpc: "2.0",
-        id,
-        method,
-        ...(params === undefined ? {} : { params }),
-      };
-      void sendMessage(message).catch((error) => {
+      void sendMessage(
+        withJsonrpc(includeJsonrpc, {
+          id,
+          method,
+          ...(params === undefined ? {} : { params }),
+        }),
+      ).catch((error) => {
         if (!pending.delete(key)) return;
         cleanupPending(entry);
         reject(
           error instanceof Error
             ? error
-            : new AcpTransportError(`Failed to send ACP request "${method}"`, error),
+            : new AcpTransportError(`Failed to send ${label} request "${method}"`, error),
         );
       });
     });
   }
 
   function notify(method: string, params?: unknown): Promise<void> {
-    if (!method.trim()) return Promise.reject(new TypeError("ACP notification method is required"));
-    return sendMessage({
-      jsonrpc: "2.0",
-      method,
-      ...(params === undefined ? {} : { params }),
-    });
+    if (!method.trim()) return Promise.reject(new TypeError(`${label} notification method is required`));
+    return sendMessage(
+      withJsonrpc(includeJsonrpc, {
+        method,
+        ...(params === undefined ? {} : { params }),
+      }),
+    );
   }
 
   function registerRequestHandler(method: string, handler: AcpRequestHandler): () => void {
@@ -604,7 +620,7 @@ export function spawnAcp(
 
   function close(): void {
     if (ended) return;
-    const error = new AcpTransportError("ACP connection was closed");
+    const error = new AcpTransportError(`${label} connection was closed`);
     try {
       child.stdin.end();
     } catch {
