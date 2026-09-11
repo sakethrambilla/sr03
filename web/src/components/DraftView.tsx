@@ -29,6 +29,7 @@ import {
   WorktreeIcon,
 } from "./ui.tsx";
 import { Composer } from "./Composer.tsx";
+import { ProviderLogo } from "./ProviderLogo.tsx";
 import { SidebarToggle } from "./Sidebar.tsx";
 import { Separator } from "@/components/ui/separator";
 import { FolderPicker } from "./FolderPicker.tsx";
@@ -186,10 +187,12 @@ function DraftChips({
         title="Provider"
         heading="Provider"
         trigger={provider.label}
+        triggerIcon={<ProviderLogo id={draft.providerId} />}
         items={providers.map((entry) => ({
           id: entry.id,
           label: entry.label,
           hint: entry.hint,
+          icon: <ProviderLogo id={entry.id} />,
           selected: entry.id === draft.providerId,
         }))}
         onPick={(id) => {

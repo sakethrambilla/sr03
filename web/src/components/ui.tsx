@@ -327,11 +327,13 @@ export interface MenuItem {
   id: string;
   label: string;
   hint?: string;
+  icon?: ReactNode;
   selected?: boolean;
 }
 
 export function Menu({
   trigger,
+  triggerIcon,
   title,
   heading,
   items,
@@ -340,6 +342,7 @@ export function Menu({
   disabled = false,
 }: {
   trigger: string;
+  triggerIcon?: ReactNode;
   title?: string;
   heading?: string;
   items: MenuItem[];
@@ -352,8 +355,9 @@ export function Menu({
       <DropdownMenuTrigger
         title={title}
         disabled={disabled}
-        className="flex h-7 max-w-44 shrink-0 items-center rounded-md px-1.5 text-[12.5px] text-muted-foreground transition outline-none hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 data-[state=open]:bg-accent data-[state=open]:text-foreground"
+        className="flex h-7 max-w-44 shrink-0 items-center gap-1.5 rounded-md px-1.5 text-[12.5px] text-muted-foreground transition outline-none hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 data-[state=open]:bg-accent data-[state=open]:text-foreground"
       >
+        {triggerIcon}
         <span className="truncate">{trigger}</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent
@@ -374,6 +378,7 @@ export function Menu({
         ) : null}
         {items.map((item, index) => (
           <DropdownMenuItem key={item.id} onSelect={() => onPick(item.id)} className="gap-3">
+            {item.icon}
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[13px]">{item.label}</span>
               {item.hint ? (
