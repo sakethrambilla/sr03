@@ -1,5 +1,5 @@
 // Tab body for one subagent: Claude gets the same Timeline the parent uses, scoped to that
-// task; Cursor gets a card, because its protocol never publishes a child stream.
+// task; Cursor and Codex get a card, because their protocols never publish a child stream.
 import { useEffect, useState } from "react";
 
 import { api } from "../lib/api.ts";
@@ -34,7 +34,15 @@ function useClock(live: boolean): number {
   return now;
 }
 
-function CursorCard({ task, now }: { task: ThreadTask; now: number }) {
+function NoTranscriptCard({
+  task,
+  now,
+  label,
+}: {
+  task: ThreadTask;
+  now: number;
+  label: string;
+}) {
   return (
     <div className="mx-auto flex max-w-xl flex-col gap-3 px-5 py-8">
       <p className="text-[14px] text-foreground">{task.description}</p>
@@ -49,8 +57,7 @@ function CursorCard({ task, now }: { task: ThreadTask; now: number }) {
           .join(" · ")}
       </p>
       <p className="text-[13px] leading-relaxed text-muted-foreground">
-        Cursor reports that a subagent ran, but does not publish what it did. Its result is folded
-        into the reply above.
+        {`${label} reports that a subagent ran, but does not publish what it did. Its result is folded into the reply above.`}
       </p>
     </div>
   );
@@ -133,7 +140,7 @@ export function SubagentView({
           onRun={onRun}
         />
       ) : (
-        <CursorCard task={task} now={now} />
+        <NoTranscriptCard task={task} now={now} label={provider.label} />
       )}
     </div>
   );
