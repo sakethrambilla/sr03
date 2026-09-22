@@ -1,0 +1,25 @@
+// The faces sr03 bundles itself, so the appearance picker can offer them on any machine.
+import "@fontsource-variable/bricolage-grotesque";
+import "@fontsource-variable/geist";
+import "@fontsource-variable/fraunces";
+import "@fontsource-variable/ibm-plex-sans";
+import "@fontsource-variable/instrument-sans";
+import "@fontsource-variable/inter";
+import "@fontsource-variable/lora";
+import "@fontsource-variable/outfit";
+import "@fontsource-variable/public-sans";
+import "@fontsource-variable/sora";
+import "@fontsource-variable/source-sans-3";
+import "@fontsource-variable/space-grotesk";
+import "@fontsource-variable/azeret-mono";
+import "@fontsource-variable/fira-code";
+import "@fontsource-variable/geist-mono";
+import "@fontsource-variable/jetbrains-mono";
+import "@fontsource-variable/martian-mono";
+import "@fontsource-variable/recursive";
+import "@fontsource-variable/red-hat-mono";
+import "@fontsource-variable/source-code-pro";
+import "@fontsource/commit-mono";
+import "@fontsource/ibm-plex-mono";
+import "@fontsource/iosevka";
+import "@fontsource/space-mono";

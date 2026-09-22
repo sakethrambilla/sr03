@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { api } from "../lib/api.ts";
 import { THEMES, availableFonts } from "../lib/appearance.ts";
-import type { ThemeMode } from "../lib/appearance.ts";
+import type { FontGroups, ThemeMode } from "../lib/appearance.ts";
 import type { PermissionMode, ProviderStatus } from "../lib/types.ts";
 import { useStore } from "../store.ts";
 import { SidebarToggle } from "./Sidebar.tsx";
@@ -17,13 +17,17 @@ import {
   cn,
   usePersistedState,
 } from "./ui.tsx";
+import { ProviderLogo } from "./ProviderLogo.tsx";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -252,11 +256,25 @@ function ThemeSwatch({ id, label, selected, onPick }: {
   );
 }
 
+function FontOptions({ label, fonts }: { label: string; fonts: string[] }) {
+  if (fonts.length === 0) return null;
+  return (
+    <SelectGroup>
+      <SelectLabel>{label}</SelectLabel>
+      {fonts.map((font) => (
+        <SelectItem key={font} value={font} style={{ fontFamily: `"${font}"` }}>
+          {font}
+        </SelectItem>
+      ))}
+    </SelectGroup>
+  );
+}
+
 function FontPicker({ label, hint, value, options, onPick }: {
   label: string;
   hint: string;
   value: string;
-  options: string[];
+  options: FontGroups;
   onPick: (next: string) => void;
 }) {
   return (
@@ -271,11 +289,8 @@ function FontPicker({ label, hint, value, options, onPick }: {
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="system">System default</SelectItem>
-          {options.map((font) => (
-            <SelectItem key={font} value={font} style={{ fontFamily: `"${font}"` }}>
-              {font}
-            </SelectItem>
-          ))}
+          <FontOptions label="Bundled" fonts={options.bundled} />
+          <FontOptions label="Installed on this Mac" fonts={options.installed} />
         </SelectContent>
       </Select>
     </div>
@@ -318,8 +333,8 @@ function AppearancePanel() {
         <header className="border-b border-border/60 px-4 py-3">
           <h2 className="text-[14px] font-medium">Theme</h2>
           <p className="mt-0.5 text-[12px] text-muted-foreground">
-            The shadcn palettes. Diff, syntax and file-icon colors keep their editor meaning in
-            every one.
+            The shadcn palettes plus six of our own. Diff, syntax and file-icon colors keep their
+            editor meaning in every one.
           </p>
         </header>
         <div className="flex items-center gap-4 border-b border-border/60 px-4 py-4">
@@ -358,7 +373,7 @@ function AppearancePanel() {
         <header className="border-b border-border/60 px-4 py-3">
           <h2 className="text-[14px] font-medium">Fonts</h2>
           <p className="mt-0.5 text-[12px] text-muted-foreground">
-            Only faces installed on this machine are listed.
+            Faces sr03 bundles, plus the ones already installed on this machine.
           </p>
         </header>
         <div className="flex flex-col gap-4 px-4 py-4">
@@ -404,12 +419,27 @@ export function SettingsView() {
   const defaultProviderId = useStore((state) => state.defaultProviderId);
   const refreshState = useStore((state) => state.refreshState);
   const [storedSection, setSection] = usePersistedState<Section>("settings-section", "providers");
+  const [storedProvider, setStoredProvider] = usePersistedState<string>("settings-provider", "");
   // an install that remembered the removed General tab lands on Providers
   const section = SECTIONS.some((entry) => entry.id === storedSection) ? storedSection : "providers";
-  const providers = useStore((state) => state.providerStatuses);
+  const statuses = useStore((state) => state.providerStatuses);
   const loadProviderStatuses = useStore((state) => state.loadProviderStatuses);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  // probes finish out of order and each unseen one is appended, so the tabs would reshuffle as
+  // they land — the catalog is the stable order, and it also makes the fallback below deterministic
+  const providers = useMemo(
+    () =>
+      [...statuses].sort(
+        (a, b) =>
+          catalogs.findIndex((entry) => entry.id === a.id) -
+          catalogs.findIndex((entry) => entry.id === b.id),
+      ),
+    [statuses, catalogs],
+  );
+  // a remembered id that no longer exists falls back to the first provider
+  const activeProvider =
+    providers.find((entry) => entry.id === storedProvider)?.id ?? providers[0]?.id ?? "";
 
   useEffect(() => {
     if (section !== "providers") return;
@@ -521,13 +551,36 @@ export function SettingsView() {
                 {providers.length === 0 && !error ? (
                   <p className="text-[12px] text-faint">Checking…</p>
                 ) : null}
-                {providers.map((provider) => (
-                  <ProviderCard
-                    key={provider.id}
-                    provider={provider}
-                    onChanged={() => setTick((current) => current + 1)}
-                  />
-                ))}
+                {providers.length > 0 ? (
+                  <Tabs value={activeProvider} onValueChange={setStoredProvider}>
+                    <TabsList
+                      className="h-auto w-full justify-start gap-0 rounded-none border-b border-border/60 bg-transparent p-0"
+                    >
+                      {providers.map((provider) => (
+                        <TabsTrigger
+                          key={provider.id}
+                          value={provider.id}
+                          title={`${provider.label} — ${STATE_STYLE[provider.state].label}`}
+                          className="h-8 flex-none rounded-md px-3 text-[12px] font-normal text-muted-foreground hover:text-foreground data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-[inset_0_1px_0_var(--color-primary)]"
+                        >
+                          <ProviderLogo id={provider.id} className="size-3.5" />
+                          <span>{provider.label}</span>
+                          <span
+                            className={cn("size-1.5 rounded-full", STATE_STYLE[provider.state].dot)}
+                          />
+                        </TabsTrigger>
+                      ))}
+                    </TabsList>
+                    {providers.map((provider) => (
+                      <TabsContent key={provider.id} value={provider.id}>
+                        <ProviderCard
+                          provider={provider}
+                          onChanged={() => setTick((current) => current + 1)}
+                        />
+                      </TabsContent>
+                    ))}
+                  </Tabs>
+                ) : null}
               </>
             ) : null}
           </div>

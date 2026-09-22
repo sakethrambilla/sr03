@@ -116,7 +116,7 @@ const sessions = new Map<string, CodexNativeSession>();
 const commandsByCwd = new Map<string, SlashCommand[]>();
 const liveRefreshes = new Map<string, Promise<void>>();
 const probesByCwd = new Map<string, Promise<SlashCommand[]>>();
-let lastUsage: Usage = EMPTY_USAGE;
+const usageByThread = new Map<string, Usage>();
 
 function createDeferred<T>(): Deferred<T> {
   let resolver: ((value: T) => void) | null = null;
@@ -396,9 +396,9 @@ function parseRateWindow(
   return { id, label, utilization: value.usedPercent / 100, resetsAt };
 }
 
-function parseUsage(value: unknown): Usage {
+function parseUsage(value: unknown, fallback: Usage): Usage {
   const snapshot = isRecord(value) && isRecord(value.rateLimits) ? value.rateLimits : value;
-  if (!isRecord(snapshot)) return lastUsage;
+  if (!isRecord(snapshot)) return fallback;
   const windows = [
     parseRateWindow("primary", "Primary", snapshot.primary),
     parseRateWindow("secondary", "Secondary", snapshot.secondary),
@@ -414,8 +414,11 @@ function parseUsage(value: unknown): Usage {
 }
 
 function publishUsage(session: CodexNativeSession | null, value: unknown): void {
-  lastUsage = parseUsage(value);
-  session?.emit({ type: "usage", usage: lastUsage });
+  if (!session) return;
+  const previous = usageByThread.get(session.threadId) ?? EMPTY_USAGE;
+  const usage = parseUsage(value, previous);
+  usageByThread.set(session.threadId, usage);
+  session.emit({ type: "usage", usage });
 }
 
 async function refreshUsage(session: CodexNativeSession): Promise<void> {
@@ -536,11 +539,16 @@ function listCommands(cwd: string): Promise<SlashCommand[]> {
   });
 }
 
+function completeMessage(session: CodexNativeSession, turn: ActiveTurn): void {
+  if (turn.text) session.emit({ type: "assistant.complete", text: turn.text });
+  turn.text = "";
+}
+
 function finishAssistant(session: CodexNativeSession, turn: ActiveTurn, emit: boolean): void {
   if (turn.finished) return;
   turn.finished = true;
-  if (turn.text && emit) session.emit({ type: "assistant.complete", text: turn.text });
-  turn.text = "";
+  if (emit) completeMessage(session, turn);
+  else turn.text = "";
 }
 
 function appendMessage(session: CodexNativeSession, text: string): void {
@@ -679,7 +687,7 @@ function handleItemCompleted(session: CodexNativeSession, params: unknown): void
   if (type === "agentMessage") {
     const text = stringValue(item.text);
     const turn = session.activeTurn;
-    if (turn && !turn.finished && text && text !== turn.text) {
+    if (turn && text && text !== turn.text) {
       // completed payload is the full message; deltas already streamed the prefix
       const prefix = turn.text;
       if (text.startsWith(prefix)) {
@@ -687,7 +695,7 @@ function handleItemCompleted(session: CodexNativeSession, params: unknown): void
         if (rest) appendMessage(session, rest);
       }
     }
-    if (turn) finishAssistant(session, turn, true);
+    if (turn) completeMessage(session, turn);
     else if (text) session.emit({ type: "assistant.complete", text });
     return;
   }
@@ -718,10 +726,8 @@ function handleTurnCompleted(session: CodexNativeSession, params: unknown): void
     isRecord(params) && isRecord(params.turn) && isRecord(params.turn.error)
       ? stringValue(params.turn.error.message)
       : null;
-  if (status === "failed" && error) {
-    session.emit({ type: "turn.completed", error });
-  } else if (status === "interrupted" || turn?.interrupted) {
-    session.emit({ type: "turn.completed" });
+  if (status === "failed") {
+    session.emit({ type: "turn.completed", error: error ?? "Codex turn failed" });
   } else {
     session.emit({ type: "turn.completed" });
   }
@@ -1218,8 +1224,9 @@ async function open(
   }
 }
 
-async function readUsage(): Promise<Usage> {
-  return lastUsage;
+async function readUsage(threadId: string | null): Promise<Usage> {
+  if (!threadId) return EMPTY_USAGE;
+  return usageByThread.get(threadId) ?? EMPTY_USAGE;
 }
 
 async function forkSession(sessionId: string, cwd: string): Promise<string> {
@@ -1248,4 +1255,7 @@ export const codexProvider: AgentProvider = {
   warmCommands,
   readUsage,
   forkSession,
+  forgetThread(threadId) {
+    usageByThread.delete(threadId);
+  },
 };

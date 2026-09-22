@@ -104,6 +104,24 @@ for await (const line of lines) {
     if (text.includes("interrupt-me")) {
       continue;
     }
+    if (text.includes("two-messages")) {
+      send({ method: "item/agentMessage/delta", params: { itemId: "msg-1", threadId: "thr_1", turnId: "turn_1", delta: "First" } });
+      send({
+        method: "item/completed",
+        params: { item: { id: "msg-1", type: "agentMessage", text: "First" }, threadId: "thr_1", turnId: "turn_1" }
+      });
+      send({ method: "item/agentMessage/delta", params: { itemId: "msg-2", threadId: "thr_1", turnId: "turn_1", delta: "Second" } });
+      send({
+        method: "item/completed",
+        params: { item: { id: "msg-2", type: "agentMessage", text: "Second" }, threadId: "thr_1", turnId: "turn_1" }
+      });
+      send({ method: "turn/completed", params: { threadId: "thr_1", turn: { id: "turn_1", status: "completed" } } });
+      continue;
+    }
+    if (text.includes("blank-failure")) {
+      send({ method: "turn/completed", params: { threadId: "thr_1", turn: { id: "turn_1", status: "failed" } } });
+      continue;
+    }
     if (text.includes("plain")) {
       send({ method: "item/reasoning/summaryTextDelta", params: { itemId: "think-1", threadId: "thr_1", turnId: "turn_1", summaryIndex: 0, delta: "hmm" } });
       send({ method: "item/agentMessage/delta", params: { itemId: "msg-1", threadId: "thr_1", turnId: "turn_1", delta: "Hello" } });
@@ -446,6 +464,42 @@ test("streams a turn without approvals and applies the next-turn settings stash"
   assert.equal(params.effort, "extra-high");
   assert.equal(params.approvalPolicy, "on-request");
   assert.equal(params.sandboxPolicy?.type, "workspaceWrite");
+});
+
+test("completes each agent message of a multi-message turn", async (context) => {
+  const { directory } = await withMock(context, "sr03-codex-multi-");
+  const { codexProvider } = await import("./codex.ts");
+  const events: AgentEvent[] = [];
+  const session = await codexProvider.open(
+    threadFor(directory, { id: "codex-multi-test" }),
+    (event) => events.push(event),
+    new AbortController().signal,
+  );
+  context.after(() => session.close());
+
+  await session.send("two-messages please");
+
+  assert.deepEqual(
+    events.flatMap((event) => (event.type === "assistant.complete" ? [event.text] : [])),
+    ["First", "Second"],
+  );
+});
+
+test("surfaces a failed Codex turn that carries no error message", async (context) => {
+  const { directory } = await withMock(context, "sr03-codex-failed-");
+  const { codexProvider } = await import("./codex.ts");
+  const events: AgentEvent[] = [];
+  const session = await codexProvider.open(
+    threadFor(directory, { id: "codex-failed-test" }),
+    (event) => events.push(event),
+    new AbortController().signal,
+  );
+  context.after(() => session.close());
+
+  await session.send("blank-failure now");
+
+  const completed = events.find((event) => event.type === "turn.completed");
+  assert.equal(completed?.type === "turn.completed" ? completed.error : null, "Codex turn failed");
 });
 
 test("interrupts an in-flight Codex turn", async (context) => {
