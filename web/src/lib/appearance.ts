@@ -1,5 +1,5 @@
-// The theme and font choice behind the appearance panel: the lists it offers, a canvas probe for
-// which faces the machine actually has, and applying the pick to the document root.
+// The theme and font choice behind the appearance panel: the faces sr03 bundles, a canvas probe
+// for which further faces the machine already has, and applying the pick to the document root.
 export type ThemeMode = "light" | "dark" | "system";
 
 export interface Appearance {
@@ -14,7 +14,8 @@ export interface Theme {
   label: string;
 }
 
-// sr03's own palette is what :root carries; the rest are the shadcn set, keyed by data-theme
+// sr03's own palette is what :root carries; the rest — the shadcn set, then six of ours — are
+// keyed by data-theme
 export const THEMES: Theme[] = [
   { id: "sr03", label: "sr03" },
   { id: "zinc", label: "Zinc" },
@@ -29,6 +30,12 @@ export const THEMES: Theme[] = [
   { id: "blue", label: "Blue" },
   { id: "yellow", label: "Yellow" },
   { id: "violet", label: "Violet" },
+  { id: "neon", label: "Neon" },
+  { id: "bloom", label: "Bloom" },
+  { id: "terminal", label: "Terminal" },
+  { id: "dune", label: "Dune" },
+  { id: "nord", label: "Nord" },
+  { id: "mono", label: "Mono" },
 ];
 
 // pure: takes the OS preference as a value rather than reading matchMedia itself, so it's
@@ -47,6 +54,38 @@ export function systemPrefersDark(): boolean {
 export function watchSystemMode(onChange: () => void): void {
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", onChange);
 }
+
+// the exact CSS family names web/src/fonts.ts pulls in — fontsource's variable builds declare
+// "<Name> Variable", its static ones the plain name
+export const BUNDLED_UI_FONTS = [
+  "Inter Variable",
+  "Geist Variable",
+  "IBM Plex Sans Variable",
+  "Source Sans 3 Variable",
+  "Public Sans Variable",
+  "Outfit Variable",
+  "Bricolage Grotesque Variable",
+  "Instrument Sans Variable",
+  "Space Grotesk Variable",
+  "Sora Variable",
+  "Fraunces Variable",
+  "Lora Variable",
+];
+
+export const BUNDLED_CODE_FONTS = [
+  "JetBrains Mono Variable",
+  "Fira Code Variable",
+  "IBM Plex Mono",
+  "Source Code Pro Variable",
+  "Geist Mono Variable",
+  "Iosevka",
+  "Space Mono",
+  "Commit Mono",
+  "Martian Mono Variable",
+  "Red Hat Mono Variable",
+  "Azeret Mono Variable",
+  "Recursive Variable",
+];
 
 const UI_FONTS = [
   "Inter",
@@ -113,10 +152,31 @@ function installed(family: string): boolean {
   );
 }
 
-let cache: { ui: string[]; code: string[] } | null = null;
+export interface FontGroups {
+  bundled: string[];
+  installed: string[];
+}
 
-export function availableFonts(): { ui: string[]; code: string[] } {
-  cache ??= { ui: UI_FONTS.filter(installed), code: CODE_FONTS.filter(installed) };
+// dedupe on the family name with fontsource's " Variable" suffix dropped, since the bundled
+// "Inter Variable" and the probed "Inter" are the same typeface to anyone reading the picker
+function baseName(family: string): string {
+  return family.replace(/ Variable$/, "");
+}
+
+// pure half of availableFonts, so it can be tested without a canvas
+export function groupFonts(bundled: string[], probed: string[]): FontGroups {
+  const covered = new Set(bundled.map(baseName));
+  return { bundled, installed: probed.filter((family) => !covered.has(baseName(family))) };
+}
+
+let cache: { ui: FontGroups; code: FontGroups } | null = null;
+
+export function availableFonts(): { ui: FontGroups; code: FontGroups } {
+  // bundled faces are never probed: one that hasn't finished loading measures like its generic
+  cache ??= {
+    ui: groupFonts(BUNDLED_UI_FONTS, UI_FONTS.filter(installed)),
+    code: groupFonts(BUNDLED_CODE_FONTS, CODE_FONTS.filter(installed)),
+  };
   return cache;
 }
 

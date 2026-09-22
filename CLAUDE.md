@@ -47,10 +47,13 @@ web/src      Vite + React 19 + Tailwind v4 + shadcn/ui + zustand
   lib/api.ts     every server call, one method each
   lib/layout.ts  the editor's group model — split, move, close, and the drop-zone geometry
   lib/utils.ts   cn() — clsx + tailwind-merge
+  lib/appearance.ts  themes, the bundled + machine-installed font lists, applying a pick to <html>
+  fonts.ts       the bundled @fontsource faces, imported once for their side effects
   components/ui  shadcn/ui, generated — don't hand-edit, re-add instead
   components/ui.tsx  app-level wrappers over shadcn (Dialog, Menu, Chip) + lucide icon aliases
   components/EditorGroups.tsx  the editor grid: per-group tab strips, sashes, drop overlay
-  components/SubagentView.tsx  one subagent's tab body — transcript or Cursor card
+  components/SubagentView.tsx  one subagent's tab body — a transcript, or a card naming the
+                 provider for the ones whose protocol publishes no child stream
 desktop      Electron shell — a window over the ordinary server, nothing app-specific in it
   main.js    resolves the login shell's PATH, spawns the server, opens the window
   payload.mjs collects web/dist + a symlink-free server copy into desktop/payload
@@ -79,7 +82,10 @@ the worktree still ships without those paths.
   exception — `node-pty` on the server and `@xterm/xterm` on the web, since a PTY and an ANSI
   renderer can't be built from built-ins. The mermaid and excalidraw file previews are the other —
   `mermaid` and `@excalidraw/excalidraw` on the web, both dynamically imported so opening neither
-  kind of file costs anything on the rest of the app.
+  kind of file costs anything on the rest of the app. The appearance panel's fonts are the third —
+  the `@fontsource*` packages listed in `web/src/fonts.ts`, self-hosted so the picker offers the
+  same faces on every machine and inside the packaged app. The browser fetches only the face in
+  use, but they do land in the installer.
 - UI comes from shadcn/ui — never hand-roll a button, dialog, menu, popover, input or the like.
   Add what you need with `pnpm dlx shadcn@latest add <component>` (run it in `web/`), then compose
   it. Icons come from `lucide-react`, aliased in `components/ui.tsx`; no hand-drawn SVG glyphs and
