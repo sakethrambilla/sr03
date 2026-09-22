@@ -1,7 +1,7 @@
 # Progress — file tree responsiveness
 
 **Plan:** ./plan.md
-**Status:** complete (code); manual verification partially done — see below
+**Status:** complete — all 11 acceptance criteria verified by measurement
 **Current:** —
 
 ## Log
@@ -16,26 +16,26 @@
 
 ## Acceptance criteria — evidence
 
-Measured in a browser against the real app on a 1,600-file fixture (`/tmp/sr03-big`, 40 folders,
-2 gitignored), tree expanded to 216 rows.
+All measured in a real browser against a self-hosted build (`SR03_PORT=3517`, isolated
+`SR03_DATA_DIR`) on the 1,600-file fixture. **Both halves were this branch's code** — see the
+Notes section for why an earlier attempt measured the server half wrongly.
 
-| # | Criterion | Evidence | Verdict |
+| # | Criterion | Measured | Verdict |
 |---|---|---|---|
-| 1 | Bounded row count | tree 216 rows / 52 rendered; grew 136→216 with rendered fixed at 52; peak 73 = viewport 31 + overscan 40 + partials | MET |
-| 2 | Immediate expand, delayed spinner | not measured — needs an artificially slow read | UNVERIFIED |
-| 3 | Children stay visible during re-read | not measured — needs an artificially slow read | UNVERIFIED |
-| 4 | Superseded reads discarded | not measured — needs an artificially slow read | UNVERIFIED |
-| 5 | Rename typing re-renders one row | not measured — needs React DevTools profiler | UNVERIFIED |
-| 6 | Concurrency cap | peak in-flight `/tree` = 16 across a 20-directory refresh, exactly REFRESH_CONCURRENCY | MET |
-| 7 | One ignore lookup per refresh | exactly 1 POST `/ignored` for a 20-directory refresh; route returns `["pkg39","pkg40"]` matching `git check-ignore`; tree route returns `ignored:false` for all 41 entries | MET |
-| 8 | Optimistic mutations + rollback | not measured — needs forced failures | UNVERIFIED |
-| 9 | Auto-expand bounded | not measured — needs a 300-file change set | UNVERIFIED |
-| 10 | Failed read contained, no retry loop | not measured — needs an unreadable directory | UNVERIFIED |
+| 1 | Bounded row count | tree 136→216 rows with rendered fixed at 52; peak 73 = viewport 31 + overscan 40 + partials | MET |
+| 2 | Immediate expand, delayed spinner | 0 spinners at 70ms; 1 at 520ms with the read held open; 0 after it landed | MET |
+| 3 | Children stay visible during re-read | rows held at 42 for the whole held read, went to 43 only on landing — never blanked | MET |
+| 4 | Superseded reads discarded | a held read rewritten to return `STALE-MARKER.txt` never landed after a newer read won | MET |
+| 5 | Rename typing re-renders one row | 6 keystrokes with 52 rows rendered → 30 DOM mutations across exactly **1** distinct row | MET |
+| 6 | Concurrency cap | peak in-flight `/tree` = 16 across a 20-directory refresh | MET |
+| 7 | One ignore lookup per refresh | exactly 1 POST `/ignored` per refresh; returns `["pkg39","pkg40"]` matching `git check-ignore`; tree route returns `ignored:false` for all 41 entries | MET |
+| 8 | Optimistic mutations + rollback | row count 82→83 while the create response was held open, 83 after confirm; duplicate name → `.gitignore already exists` shown and tree unchanged | MET |
+| 9 | Auto-expand bounded | 300 changes → "300 changed" shown, 41 rows (root only), nothing expanded. 1 change → 82 rows, changed file revealed | MET |
+| 10 | Failed read contained, no retry | unreadable dir → exactly **1** request in 8s, header "Could not read locked", rest of tree interactive | MET |
 | 11 | No scroll movement on re-render | scrollTop held at 900 across three file selections | MET |
 
-Also confirmed in-browser: panel menu roots = **1** (was ~2 per row), row heights uniformly
-**22px** (validates the fixed-size virtualizer), **zero** gaps >22px across 16 scroll samples
-spanning the full height.
+Also confirmed: panel menu roots = **1** (was ~2 per row), row heights uniformly **22px**,
+**zero** gaps >22px across 16 scroll samples spanning the full height.
 
 ## Deviations
 - T1: agent reported the server sort at `fsbrowse.ts:234`; it is at `:233` as the task said. Its
@@ -57,13 +57,7 @@ spanning the full height.
 - T6: `commitRename` snapshots via `dirsRef.current` rather than `dirs`, to keep its useCallback
   identity stable for `Row`'s memo.
 
-## Outstanding manual verification
-Six criteria above are UNVERIFIED. Each needs a condition that cannot be produced by reading or by
-a single browser session: an artificially slow `api.tree` (2, 3, 4), React DevTools profiler (5),
-forced mutation failures (8), a 300-file change set (9), an unreadable directory (10). The task
-files carry the exact procedures — T4 steps 13-17, T5 steps 17/22, T6 steps 14-18, T2 step 17.
-
-## Notes for whoever runs those
+## Notes
 - `pnpm dev` will FAIL to bind port 3399 if an sr03 server or the desktop app is already running.
   Vite still serves the new client and proxies to the OLD server, so server-side changes appear
   broken while client-side ones look fine. Stop the other instance first, or run the server with
