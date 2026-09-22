@@ -11,11 +11,12 @@ import {
   OVERSCAN,
   ROW_HEIGHT,
   ancestors,
+  createDirLoadTracker,
   dirtyAncestors,
   projectRows,
   toggleSubtree,
 } from "../lib/filetree.ts";
-import type { TreeRow } from "../lib/filetree.ts";
+import type { DirLoadTracker, TreeRow } from "../lib/filetree.ts";
 import type { ChangedFile, Thread, TreeEntry } from "../lib/types.ts";
 import { useStore } from "../store.ts";
 import { Button } from "@/components/ui/button";
@@ -41,12 +42,33 @@ import {
   RefreshIcon,
   RenameIcon,
   RevealIcon,
+  SpinnerIcon,
   TrashIcon,
   WorktreeIcon,
   cn,
 } from "./ui.tsx";
 
 type Status = ChangedFile["status"];
+
+// stable empty identity for the two loading sets, so an idle render never produces a new set
+const EMPTY_DIRS: ReadonlySet<string> = new Set();
+
+// how long a read may take before its row shows a spinner
+const SPINNER_DELAY_MS = 150;
+
+function withPath(set: ReadonlySet<string>, path: string): ReadonlySet<string> {
+  if (set.has(path)) return set;
+  const next = new Set(set);
+  next.add(path);
+  return next;
+}
+
+function withoutPath(set: ReadonlySet<string>, path: string): ReadonlySet<string> {
+  if (!set.has(path)) return set;
+  const next = new Set(set);
+  next.delete(path);
+  return next.size === 0 ? EMPTY_DIRS : next;
+}
 
 const DECORATION: Record<Status, { letter: string; className: string }> = {
   untracked: { letter: "U", className: "text-git-untracked" },
@@ -166,6 +188,7 @@ const Row = memo(function Row({
   dirty,
   expanded,
   selected,
+  isLoading,
   onActivate,
   onReload,
   onToggleSubtree,
@@ -181,6 +204,7 @@ const Row = memo(function Row({
   dirty: boolean;
   expanded: boolean;
   selected: boolean;
+  isLoading: boolean;
   onActivate: (entry: TreeEntry) => void;
   onReload: (entry: TreeEntry) => void;
   onToggleSubtree: (entry: TreeEntry) => void;
@@ -243,7 +267,12 @@ const Row = memo(function Row({
                 ) : null}
               </span>
               {entry.isDir ? (
-                <FolderIcon className={cn("size-3.5", entry.ignored ? "text-git-ignored" : "text-faint")} />
+                // the spinner takes the folder icon's slot, so the chevron stays turned
+                isLoading ? (
+                  <SpinnerIcon className="size-3.5 animate-spin text-faint" />
+                ) : (
+                  <FolderIcon className={cn("size-3.5", entry.ignored ? "text-git-ignored" : "text-faint")} />
+                )
               ) : (
                 <FileIcon name={entry.name} muted={entry.ignored} />
               )}
@@ -384,6 +413,9 @@ export function FileTree({
   const [changes, setChanges] = useState<Map<string, Status>>(new Map());
   const [branch, setBranch] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [dirErrors, setDirErrors] = useState<Record<string, string>>({});
+  const [loadingDirs, setLoadingDirs] = useState<ReadonlySet<string>>(EMPTY_DIRS);
+  const [slowDirs, setSlowDirs] = useState<ReadonlySet<string>>(EMPTY_DIRS);
   const [tick, setTick] = useState(0);
   const [creating, setCreating] = useState<{ parent: string; kind: "file" | "dir" } | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -391,11 +423,63 @@ export function FileTree({
   const [busy, setBusy] = useState(false);
   const [menu, setMenu] = useState<{ entry: TreeEntry; x: number; y: number } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const trackerRef = useRef<DirLoadTracker | null>(null);
+  if (trackerRef.current === null) trackerRef.current = createDirLoadTracker();
+  const slowTimersRef = useRef<Map<string, number>>(new Map());
+  // read through a ref so load's identity does not change with every listing, which would
+  // rebuild the row callbacks and defeat Row's memo
+  const dirsRef = useRef(dirs);
+  dirsRef.current = dirs;
 
   const load = useCallback(
-    async (path: string) => {
-      const listing = await api.tree(thread.id, path);
-      setDirs((current) => ({ ...current, [path]: listing.entries }));
+    async (path: string, options?: { force?: boolean }) => {
+      if (!options?.force && (dirsRef.current[path]?.length ?? 0) > 0) return;
+      const token = trackerRef.current!.begin(path);
+      setLoadingDirs((current) => withPath(current, path));
+
+      const clearTimer = () => {
+        const timer = slowTimersRef.current.get(path);
+        if (timer === undefined) return;
+        window.clearTimeout(timer);
+        slowTimersRef.current.delete(path);
+      };
+      const settle = () => {
+        clearTimer();
+        setLoadingDirs((current) => withoutPath(current, path));
+        setSlowDirs((current) => withoutPath(current, path));
+      };
+
+      // a forced re-read skips the delay entirely: a refresh must not flash a spinner on every
+      // open folder whose contents did not change
+      if (!options?.force) {
+        clearTimer();
+        slowTimersRef.current.set(
+          path,
+          window.setTimeout(() => {
+            slowTimersRef.current.delete(path);
+            setSlowDirs((current) => withPath(current, path));
+          }, SPINNER_DELAY_MS),
+        );
+      }
+
+      try {
+        const listing = await api.tree(thread.id, path);
+        if (!trackerRef.current!.isCurrent(token)) return;
+        setDirs((current) => ({ ...current, [path]: listing.entries }));
+        setDirErrors((current) => {
+          if (current[path] === undefined) return current;
+          const next = { ...current };
+          delete next[path];
+          return next;
+        });
+        settle();
+      } catch (cause) {
+        if (!trackerRef.current!.isCurrent(token)) return;
+        setDirErrors((current) => ({ ...current, [path]: (cause as Error).message }));
+        // a failed root read is the panel's own error, so it stays distinguishable from an empty root
+        if (path === "") setError((cause as Error).message);
+        settle();
+      }
     },
     [thread.id],
   );
@@ -440,9 +524,12 @@ export function FileTree({
     });
   }, [changes]);
 
+  // the loadingDirs and dirErrors clauses both prevent a re-load loop: a read in flight would be
+  // restarted whenever another directory resolves, and a failed read would retry without limit
   useEffect(() => {
-    for (const path of expanded) if (!dirs[path]) void load(path).catch(() => undefined);
-  }, [expanded, dirs, load]);
+    for (const path of expanded)
+      if (!dirs[path] && !loadingDirs.has(path) && !dirErrors[path]) void load(path);
+  }, [expanded, dirs, loadingDirs, dirErrors, load]);
 
   const toggle = useCallback(
     (entry: TreeEntry) => {
@@ -471,7 +558,7 @@ export function FileTree({
     setCreating(null);
     try {
       const entry = await api.createEntry(thread.id, target, creating.kind);
-      await load(creating.parent);
+      await load(creating.parent, { force: true });
       if (entry.isDir) setExpanded((current) => new Set(current).add(entry.path));
       else onOpenFile(entry.path);
     } catch (cause) {
@@ -487,7 +574,7 @@ export function FileTree({
       if (name === entry.name) return;
       try {
         const next = await api.renameEntry(thread.id, entry.path, name);
-        await load(parentOf(entry.path));
+        await load(parentOf(entry.path), { force: true });
         onRenamed(entry.path, next.path);
       } catch (cause) {
         setError((cause as Error).message);
@@ -501,7 +588,7 @@ export function FileTree({
     setBusy(true);
     try {
       await api.trashEntry(thread.id, pendingDelete.path);
-      await load(parentOf(pendingDelete.path));
+      await load(parentOf(pendingDelete.path), { force: true });
       onDeleted(pendingDelete.path);
       setPendingDelete(null);
     } catch (cause) {
@@ -528,6 +615,12 @@ export function FileTree({
 
   const dirtyDirs = useMemo(() => dirtyAncestors(changes.keys()), [changes]);
   const rows = useMemo(() => projectRows(dirs, expanded), [dirs, expanded]);
+
+  // the most recently failed directory — one strip in the header, never a row in the list; the
+  // root's failure is reported through the panel-level error instead
+  const failedDir = Object.keys(dirErrors)
+    .filter((path) => path !== "")
+    .at(-1);
 
   // index of the create row within the virtual list, or -1
   const creatingIndex = useMemo(() => {
@@ -562,7 +655,7 @@ export function FileTree({
   // per-action props rather than one object: an inline actions literal is a fresh object every
   // render and would defeat Row's memo
   const onReloadEntry = useCallback(
-    (entry: TreeEntry) => void load(entry.path).catch(() => undefined),
+    (entry: TreeEntry) => void load(entry.path, { force: true }),
     [load],
   );
   const onToggleSubtreeEntry = useCallback((entry: TreeEntry) => toggleSubtreeAt(entry.path), [dirs]);
@@ -644,6 +737,11 @@ export function FileTree({
 
         {/* outside the scroll container: inside, it would offset every virtual item's position */}
         {error ? <p className="text-[12px] text-destructive">{error}</p> : null}
+        {failedDir !== undefined ? (
+          <p className="truncate text-[12px] text-destructive">
+            Could not read <span className="font-mono">{failedDir}</span>
+          </p>
+        ) : null}
       </header>
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto py-1">
@@ -672,6 +770,7 @@ export function FileTree({
                     dirty={row.entry.isDir && dirtyDirs.has(row.entry.path)}
                     expanded={row.entry.isDir && expanded.has(row.entry.path)}
                     selected={row.entry.path === openPath}
+                    isLoading={row.entry.isDir && slowDirs.has(row.entry.path)}
                     onActivate={toggle}
                     onReload={onReloadEntry}
                     onToggleSubtree={onToggleSubtreeEntry}
