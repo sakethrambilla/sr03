@@ -1,6 +1,6 @@
 // The session folder's tree: lazily expanded directories, git status decorations, and the row
 // actions — open, create, rename, trash, reveal in Finder. Re-reads itself when a turn writes
-// to disk, which the store signals through fsVersionByThread.
+// to disk, which the server's filesystem watcher signals through fsVersionByThread.
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -64,6 +64,10 @@ const SPINNER_DELAY_MS = 150;
 
 // how long the ignore lookup waits for the per-directory setDirs commits of a refresh to settle
 const IGNORE_DEBOUNCE_MS = 150;
+
+// floor on the change-set read, which shells out to `git status`; the watcher can signal twice this
+// often, and the directory listings still refresh at the full signal rate
+const CHANGES_MIN_INTERVAL_MS = 1000;
 
 function withPath(set: ReadonlySet<string>, path: string): ReadonlySet<string> {
   if (set.has(path)) return set;
@@ -406,7 +410,6 @@ export function FileTree({
   onOpenFile,
   onRenamed,
   onDeleted,
-  refreshToken,
   onClose,
 }: {
   thread: Thread;
@@ -414,7 +417,6 @@ export function FileTree({
   onOpenFile: (path: string) => void;
   onRenamed: (from: string, to: string) => void;
   onDeleted: (path: string) => void;
-  refreshToken: number;
   onClose: () => void;
 }) {
   const fsTick = useStore((state) => state.fsVersionByThread[thread.id] ?? 0);
@@ -498,32 +500,49 @@ export function FileTree({
     [thread.id],
   );
 
-  // reloading every open directory keeps files Claude just created from going missing; the
-  // trigger settles a moment after the last write, so a busy turn costs one pass, not fifty.
+  const mountedRef = useRef(true);
+  const changesAtRef = useRef(0);
+  const changesTimerRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      mountedRef.current = false;
+      if (changesTimerRef.current !== null) window.clearTimeout(changesTimerRef.current);
+    },
+    [],
+  );
+
+  const readChanges = useCallback(async () => {
+    changesAtRef.current = Date.now();
+    try {
+      const next = await api.changes(thread.id);
+      if (!mountedRef.current) return;
+      setChanges(new Map(next.files.map((file) => [file.path, file.status])));
+      setBranch(next.branch);
+      setError(null);
+    } catch (cause) {
+      if (mountedRef.current) setError((cause as Error).message);
+    } finally {
+      changesAtRef.current = Date.now();
+    }
+  }, [thread.id]);
+
+  // reloading every open directory keeps files Claude just created from going missing; the watcher
+  // has already coalesced, so a busy turn costs one pass per window, not one per write.
   // The directory half needs no cancellation flag — load's per-directory tokens supersede a
-  // stale read, and a thread change unmounts the panel.
+  // stale read, and a thread change unmounts the panel. The change set is floored instead of
+  // cancelled: a skipped read schedules a trailing one so churn is never simply dropped.
   useEffect(() => {
-    let cancelled = false;
     const open = [...expanded];
-    void (async () => {
-      try {
-        const next = await api.changes(thread.id);
-        if (!cancelled) {
-          setChanges(new Map(next.files.map((file) => [file.path, file.status])));
-          setBranch(next.branch);
-          setError(null);
-        }
-      } catch (cause) {
-        if (!cancelled) setError((cause as Error).message);
-      }
-      await forEachWithConcurrency(open, REFRESH_CONCURRENCY, (path) =>
-        load(path, { force: true }),
-      );
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [thread.id, fsTick, tick, refreshToken]);
+    const waited = Date.now() - changesAtRef.current;
+    if (waited >= CHANGES_MIN_INTERVAL_MS) void readChanges();
+    else if (changesTimerRef.current === null) {
+      changesTimerRef.current = window.setTimeout(() => {
+        changesTimerRef.current = null;
+        void readChanges();
+      }, CHANGES_MIN_INTERVAL_MS - waited);
+    }
+    void forEachWithConcurrency(open, REFRESH_CONCURRENCY, (path) => load(path, { force: true }));
+  }, [thread.id, fsTick, tick, readChanges]);
 
   // opening straight onto the changed files is the whole point of the panel in a session; a very
   // large change set expands nothing, and the header's count still says why

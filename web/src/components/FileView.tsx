@@ -202,7 +202,6 @@ export const FileView = memo(function FileView({
   onClose,
   onMissing,
   onDirtyChange,
-  onSaved,
   registerSave,
   reveal,
   links,
@@ -213,7 +212,6 @@ export const FileView = memo(function FileView({
   onClose: (path: string) => void;
   onMissing: (path: string) => void;
   onDirtyChange: (path: string, dirty: boolean) => void;
-  onSaved: () => void;
   registerSave: (path: string, save: (() => Promise<boolean>) | null) => void;
   reveal: { line: number; key: number } | null;
   links: FileLinks;
@@ -372,7 +370,6 @@ export const FileView = memo(function FileView({
       setFile(next);
       setDirty(source.current !== next.text);
       setError(null);
-      onSaved();
       return true;
     } catch (cause) {
       setError((cause as Error).message);

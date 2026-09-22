@@ -262,7 +262,6 @@ export function ChatView({ thread }: { thread: Thread }) {
   const [dirty, setDirty] = useState<Set<string>>(new Set());
   const [pendingClose, setPendingClose] = useState<string | null>(null);
   const [palette, setPalette] = useState<PaletteMode | null>(null);
-  const [fsVersion, setFsVersion] = useState(0);
   // seeded from the stored value so the chip paints on the first frame, then kept live: the
   // column is written once at creation and any checkout since would leave it stale
   const [branch, setBranch] = useState<string | null>(thread.branch);
@@ -361,7 +360,6 @@ export function ChatView({ thread }: { thread: Thread }) {
   const latestRequestClose = useRef(requestClose);
   latestRequestClose.current = requestClose;
   const closeFileTab = useCallback((path: string) => latestRequestClose.current(path), []);
-  const savedFile = useCallback(() => setFsVersion((current) => current + 1), []);
 
   const saveAndClose = async (path: string) => {
     const saved = await savers.current.get(path)?.();
@@ -429,7 +427,7 @@ export function ChatView({ thread }: { thread: Thread }) {
   // a turn that wrote to disk may have added or renamed files, so the index follows it
   useEffect(() => {
     void loadFiles(thread.id, thread.cwd);
-  }, [loadFiles, thread.id, thread.cwd, fsTick, fsVersion]);
+  }, [loadFiles, thread.id, thread.cwd, fsTick]);
 
   useEffect(() => {
     let cancelled = false;
@@ -443,7 +441,7 @@ export function ChatView({ thread }: { thread: Thread }) {
     return () => {
       cancelled = true;
     };
-  }, [thread.id, thread.branch, fsTick, fsVersion]);
+  }, [thread.id, thread.branch, fsTick]);
 
   // the panel owns the terminals, so it is left to decide which one a command lands in
   const runCommand = useCallback(
@@ -685,7 +683,6 @@ export function ChatView({ thread }: { thread: Thread }) {
                         onClose={closeFileTab}
                         onMissing={closeFileTab}
                         onDirtyChange={markDirty}
-                        onSaved={savedFile}
                         registerSave={registerSave}
                         reveal={reveal?.path === tab.path ? reveal : null}
                         links={links}
@@ -723,7 +720,6 @@ export function ChatView({ thread }: { thread: Thread }) {
           onOpenFile={openFile}
           onRenamed={renamed}
           onDeleted={deleted}
-          refreshToken={fsVersion}
           onClose={() => setTreeOpen(false)}
         />
       ) : null}
