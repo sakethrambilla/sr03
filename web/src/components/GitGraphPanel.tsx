@@ -24,7 +24,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, Pill, cn } from "./ui.tsx";
 
 const PAGE_SIZE = 100;
-const GRID_COLUMNS = "minmax(0, 1fr) 10rem 7rem";
+// author and date are sized to their content, not padded out: between the lane graph and the
+// changed-files panel, 10rem/7rem left the message column under 100px — and the message is the
+// column worth reading
+const GRID_COLUMNS = "minmax(0, 1fr) 6rem 5rem";
 
 function Graph({
   rows,
