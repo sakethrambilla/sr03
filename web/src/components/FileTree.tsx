@@ -56,6 +56,9 @@ const EMPTY_DIRS: ReadonlySet<string> = new Set();
 // how long a read may take before its row shows a spinner
 const SPINNER_DELAY_MS = 150;
 
+// how long the ignore lookup waits for the per-directory setDirs commits of a refresh to settle
+const IGNORE_DEBOUNCE_MS = 150;
+
 function withPath(set: ReadonlySet<string>, path: string): ReadonlySet<string> {
   if (set.has(path)) return set;
   const next = new Set(set);
@@ -186,6 +189,7 @@ const Row = memo(function Row({
   depth,
   status,
   dirty,
+  ignored,
   expanded,
   selected,
   isLoading,
@@ -202,6 +206,7 @@ const Row = memo(function Row({
   depth: number;
   status: Status | undefined;
   dirty: boolean;
+  ignored: boolean;
   expanded: boolean;
   selected: boolean;
   isLoading: boolean;
@@ -216,7 +221,7 @@ const Row = memo(function Row({
 }) {
   const [hovered, setHovered] = useState(false);
   const decoration = status ? DECORATION[status] : null;
-  const tint = entry.ignored
+  const tint = ignored
     ? "text-git-ignored"
     : decoration
       ? decoration.className
@@ -271,10 +276,10 @@ const Row = memo(function Row({
                 isLoading ? (
                   <SpinnerIcon className="size-3.5 animate-spin text-faint" />
                 ) : (
-                  <FolderIcon className={cn("size-3.5", entry.ignored ? "text-git-ignored" : "text-faint")} />
+                  <FolderIcon className={cn("size-3.5", ignored ? "text-git-ignored" : "text-faint")} />
                 )
               ) : (
-                <FileIcon name={entry.name} muted={entry.ignored} />
+                <FileIcon name={entry.name} muted={ignored} />
               )}
               <span
                 className={cn(
@@ -416,6 +421,7 @@ export function FileTree({
   const [dirErrors, setDirErrors] = useState<Record<string, string>>({});
   const [loadingDirs, setLoadingDirs] = useState<ReadonlySet<string>>(EMPTY_DIRS);
   const [slowDirs, setSlowDirs] = useState<ReadonlySet<string>>(EMPTY_DIRS);
+  const [ignoredSet, setIgnoredSet] = useState<ReadonlySet<string>>(EMPTY_DIRS);
   const [tick, setTick] = useState(0);
   const [creating, setCreating] = useState<{ parent: string; kind: "file" | "dir" } | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -425,6 +431,8 @@ export function FileTree({
   const scrollRef = useRef<HTMLDivElement>(null);
   const trackerRef = useRef<DirLoadTracker | null>(null);
   if (trackerRef.current === null) trackerRef.current = createDirLoadTracker();
+  const ignoreTrackerRef = useRef<DirLoadTracker | null>(null);
+  if (ignoreTrackerRef.current === null) ignoreTrackerRef.current = createDirLoadTracker();
   const slowTimersRef = useRef<Map<string, number>>(new Map());
   // read through a ref so load's identity does not change with every listing, which would
   // rebuild the row callbacks and defeat Row's memo
@@ -616,6 +624,27 @@ export function FileTree({
   const dirtyDirs = useMemo(() => dirtyAncestors(changes.keys()), [changes]);
   const rows = useMemo(() => projectRows(dirs, expanded), [dirs, expanded]);
 
+  // keyed on content, not array identity: the projection is rebuilt whenever dirs commits
+  const visiblePaths = useMemo(() => rows.map((row) => row.entry.path), [rows]);
+  const ignoreKey = useMemo(() => visiblePaths.join("\n"), [visiblePaths]);
+
+  // debounced because a refresh commits one setDirs per directory, which would otherwise be one
+  // lookup per open folder; fsTick/tick re-ask when .gitignore changed but the path set did not
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const token = ignoreTrackerRef.current!.begin("ignored");
+      const paths = ignoreKey === "" ? [] : ignoreKey.split("\n");
+      api
+        .ignored(thread.id, paths)
+        .then((answer) => {
+          if (!ignoreTrackerRef.current!.isCurrent(token)) return;
+          setIgnoredSet(answer.ignored.length === 0 ? EMPTY_DIRS : new Set(answer.ignored));
+        })
+        .catch(() => undefined);
+    }, IGNORE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [ignoreKey, fsTick, tick, thread.id]);
+
   // the most recently failed directory — one strip in the header, never a row in the list; the
   // root's failure is reported through the panel-level error instead
   const failedDir = Object.keys(dirErrors)
@@ -768,6 +797,7 @@ export function FileTree({
                     depth={row.depth}
                     status={changes.get(row.entry.path)}
                     dirty={row.entry.isDir && dirtyDirs.has(row.entry.path)}
+                    ignored={ignoredSet.has(row.entry.path)}
                     expanded={row.entry.isDir && expanded.has(row.entry.path)}
                     selected={row.entry.path === openPath}
                     isLoading={row.entry.isDir && slowDirs.has(row.entry.path)}

@@ -815,14 +815,20 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
       const thread = requireThread(params[0]!);
       const rel = url.searchParams.get("path") ?? "";
       const entries = await listWorkspaceDir(thread.cwd, rel);
-      const ignored = await git.ignoredPaths(
-        thread.cwd,
-        entries.map((entry) => entry.path),
-      );
-      return {
-        path: rel,
-        entries: entries.map((entry) => ({ ...entry, ignored: ignored.has(entry.path) })),
-      };
+      return { path: rel, entries };
+    },
+  },
+  // ignore status for the whole visible tree at once — one check-ignore per directory was the cost
+  {
+    method: "POST",
+    pattern: /^\/api\/threads\/([^/]+)\/ignored$/,
+    handler: async ({ params, request }) => {
+      const thread = requireThread(params[0]!);
+      const body = await readBody(request);
+      const paths = Array.isArray(body.paths)
+        ? body.paths.filter((entry): entry is string => typeof entry === "string")
+        : [];
+      return { ignored: [...(await git.ignoredPaths(thread.cwd, paths))] };
     },
   },
   {
