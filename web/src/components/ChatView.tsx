@@ -22,6 +22,7 @@ import {
   tabKey,
   trackOf,
 } from "../lib/layout.ts";
+import { sendClientMessage } from "../lib/ws.ts";
 import { EMPTY_PROVIDER, useStore } from "../store.ts";
 import { AgentsPanel } from "./AgentsPanel.tsx";
 import { EditorGroups } from "./EditorGroups.tsx";
@@ -226,6 +227,7 @@ export function ChatView({ thread }: { thread: Thread }) {
   const workspace = useStore((state) => state.filesByCwd[thread.cwd] ?? NO_FILES);
   const loadFiles = useStore((state) => state.loadFiles);
   const fsTick = useStore((state) => state.fsVersionByThread[thread.id] ?? 0);
+  const connected = useStore((state) => state.connected);
   const [treeOpen, setTreeOpen] = usePersistedState<boolean>("file-tree", false);
   // the terminal panel is per thread: a shared flag would open it — and spawn a shell — in
   // every session you merely pass through
@@ -412,6 +414,17 @@ export function ChatView({ thread }: { thread: Thread }) {
     setFocused((current) =>
       Math.min(Math.max(current + step, 0), layoutRef.current.groups.length - 1),
     );
+
+  // the watch belongs to the thread, not the files panel: the file index and the branch chip
+  // read fsTick too, and they would starve while that panel is closed. The server drops every
+  // watch when the socket closes, so a reconnect has to ask again.
+  useEffect(() => {
+    if (!connected) return;
+    sendClientMessage({ type: "fs.watch", threadId: thread.id, on: true });
+    return () => {
+      sendClientMessage({ type: "fs.watch", threadId: thread.id, on: false });
+    };
+  }, [thread.id, connected]);
 
   // a turn that wrote to disk may have added or renamed files, so the index follows it
   useEffect(() => {

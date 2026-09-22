@@ -353,7 +353,8 @@ export type ClientMessage =
   | { type: "pty.open"; threadId: string; terminalId: string; cols: number; rows: number }
   | { type: "pty.input"; threadId: string; terminalId: string; data: string }
   | { type: "pty.resize"; threadId: string; terminalId: string; cols: number; rows: number }
-  | { type: "pty.close"; threadId: string; terminalId: string };
+  | { type: "pty.close"; threadId: string; terminalId: string }
+  | { type: "fs.watch"; threadId: string; on: boolean };
 
 // a column keeps only the values ticked in its checklist
 export interface TableFilter {

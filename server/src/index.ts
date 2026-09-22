@@ -16,6 +16,7 @@ import { threads } from "./db.ts";
 import * as metrics from "./metrics.ts";
 import { listModels } from "./models.ts";
 import * as pty from "./pty.ts";
+import { watchThread } from "./watch.ts";
 import type { ClientMessage, ServerEvent } from "./types.ts";
 
 const WEB_DIST = path.resolve(fileURLToPath(new URL("../../web/dist", import.meta.url)));
@@ -61,6 +62,8 @@ const websockets = new WebSocketServer({ server, path: "/ws" });
 interface Connection {
   send: (data: string) => void;
   watchResources: (() => void) | null;
+  // one socket can have several sessions open, so a release per thread
+  watchFs: Map<string, () => void>;
 }
 
 function handleClientMessage(socket: Connection, raw: string): void {
@@ -122,11 +125,26 @@ function handleClientMessage(socket: Connection, raw: string): void {
     case "pty.close":
       pty.closeSession(message.terminalId);
       return;
+    case "fs.watch": {
+      if (!message.on) {
+        socket.watchFs.get(thread.id)?.();
+        socket.watchFs.delete(thread.id);
+        return;
+      }
+      if (!socket.watchFs.has(thread.id)) {
+        socket.watchFs.set(thread.id, watchThread(thread.id, thread.cwd));
+      }
+      return;
+    }
   }
 }
 
 websockets.on("connection", (socket) => {
-  const connection: Connection = { send: (data) => socket.send(data), watchResources: null };
+  const connection: Connection = {
+    send: (data) => socket.send(data),
+    watchResources: null,
+    watchFs: new Map(),
+  };
   const unsubscribe = subscribe((_event, json) => {
     if (socket.readyState === socket.OPEN) socket.send(json);
   });
@@ -147,6 +165,8 @@ websockets.on("connection", (socket) => {
     unsubscribe();
     connection.watchResources?.();
     connection.watchResources = null;
+    for (const release of connection.watchFs.values()) release();
+    connection.watchFs.clear();
   };
   socket.on("close", teardown);
   socket.on("error", teardown);
