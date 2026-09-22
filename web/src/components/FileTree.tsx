@@ -1,10 +1,17 @@
 // The session folder's tree: lazily expanded directories, git status decorations, and the row
 // actions — open, create, rename, trash, reveal in Finder. Re-reads itself when a turn writes
 // to disk, which the store signals through fsVersionByThread.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 
 import { api } from "../lib/api.ts";
+import {
+  INDENT,
+  ancestors,
+  dirtyAncestors,
+  projectRows,
+  toggleSubtree,
+} from "../lib/filetree.ts";
 import type { ChangedFile, Thread, TreeEntry } from "../lib/types.ts";
 import { useStore } from "../store.ts";
 import { Button } from "@/components/ui/button";
@@ -16,19 +23,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
-import {
   BranchIcon,
   ChevronIcon,
   CloseIcon,
   CopyIcon,
   Dialog,
-  DotsIcon,
   CollapseIcon,
   ExpandIcon,
   FileIcon,
@@ -52,14 +51,6 @@ const DECORATION: Record<Status, { letter: string; className: string }> = {
   renamed: { letter: "R", className: "text-git-untracked" },
   deleted: { letter: "D", className: "text-git-deleted" },
 };
-
-function ancestors(path: string): string[] {
-  const parts = path.split("/");
-  parts.pop();
-  return parts.map((_, index) => parts.slice(0, index + 1).join("/"));
-}
-
-const INDENT = 12;
 
 function Guides({ depth }: { depth: number }) {
   // one guide per ancestor level, the way the editor draws them
@@ -104,7 +95,7 @@ interface RowActions {
   onDelete: () => void;
 }
 
-// the same items back both the row's … dropdown and its right-click menu
+// the panel's one right-click menu, parameterised over Item/Separator so the menu kind can change
 function RowMenuItems({
   Item,
   Separator,
@@ -164,21 +155,21 @@ function RowMenuItems({
   );
 }
 
-function Row({
+const Row = memo(function Row({
   entry,
   depth,
   status,
   dirty,
   expanded,
   selected,
-  canReveal,
-  onClick,
+  onActivate,
   onReload,
   onToggleSubtree,
+  onCreateIn,
+  onOpenMenu,
   renaming,
   onRename,
   onCancelRename,
-  actions,
 }: {
   entry: TreeEntry;
   depth: number;
@@ -186,15 +177,16 @@ function Row({
   dirty: boolean;
   expanded: boolean;
   selected: boolean;
-  canReveal: boolean;
-  onClick: () => void;
-  onReload: () => void;
-  onToggleSubtree: () => void;
+  onActivate: (entry: TreeEntry) => void;
+  onReload: (entry: TreeEntry) => void;
+  onToggleSubtree: (entry: TreeEntry) => void;
+  onCreateIn: (entry: TreeEntry, kind: "file" | "dir") => void;
+  onOpenMenu: (entry: TreeEntry, x: number, y: number) => void;
   renaming: boolean;
-  onRename: (name: string) => void;
+  onRename: (entry: TreeEntry, name: string) => void;
   onCancelRename: () => void;
-  actions: RowActions;
 }) {
+  const [hovered, setHovered] = useState(false);
   const decoration = status ? DECORATION[status] : null;
   const tint = entry.ignored
     ? "text-git-ignored"
@@ -205,10 +197,15 @@ function Row({
         : "text-muted-foreground";
 
   return (
-    // modal would trap focus while the menu closes, so Rename's input never gets it
-    <ContextMenu modal={false}>
-      <ContextMenuTrigger asChild disabled={renaming}>
         <div
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+          onContextMenu={(event) => {
+            // right-clicking mid-rename would blur the input and cancel the rename
+            if (renaming) return;
+            event.preventDefault();
+            onOpenMenu(entry, event.clientX, event.clientY);
+          }}
           className={cn(
             "group/row flex h-[22px] w-full items-stretch transition hover:bg-accent/50",
             selected && "bg-accent",
@@ -226,13 +223,13 @@ function Row({
               <NameInput
                 initial={entry.name}
                 placeholder="new name"
-                onCommit={onRename}
+                onCommit={(name) => onRename(entry, name)}
                 onCancel={onCancelRename}
               />
             </span>
           ) : (
             <button
-              onClick={onClick}
+              onClick={() => onActivate(entry)}
               title={entry.path}
               className="flex min-w-0 flex-1 items-center gap-1 pl-1 text-left"
             >
@@ -258,51 +255,25 @@ function Row({
             </button>
           )}
 
-          {renaming ? null : (
-            <span className="hidden items-center gap-0.5 pr-1 group-hover/row:flex has-[[data-state=open]]:flex">
-              {entry.isDir ? (
-                <>
-                  <RowAction label="New file" onClick={() => actions.onCreate("file")}>
-                    <NewFileIcon className="size-3" />
-                  </RowAction>
-                  <RowAction label="New folder" onClick={() => actions.onCreate("dir")}>
-                    <NewFolderIcon className="size-3" />
-                  </RowAction>
-                  <RowAction label="Reload folder" onClick={onReload}>
-                    <RefreshIcon className="size-3" />
-                  </RowAction>
-                  <RowAction label={expanded ? "Collapse folder" : "Expand folder"} onClick={onToggleSubtree}>
-                    {expanded ? <CollapseIcon className="size-3" /> : <ExpandIcon className="size-3" />}
-                  </RowAction>
-                </>
-              ) : null}
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  title="More"
-                  aria-label="More"
-                  onClick={(event) => event.stopPropagation()}
-                  className="grid size-4 place-items-center rounded text-faint outline-none transition hover:bg-accent hover:text-foreground"
-                >
-                  <DotsIcon className="size-3" />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent
-                  align="end"
-                  className="min-w-36"
-                  // closing the menu would otherwise pull focus back to the trigger and
-                  // blur the rename input the moment it mounts, cancelling the rename
-                  onCloseAutoFocus={(event) => event.preventDefault()}
-                >
-                  <RowMenuItems
-                    Item={DropdownMenuItem}
-                    Separator={DropdownMenuSeparator}
-                    entry={entry}
-                    canReveal={canReveal}
-                    actions={actions}
-                  />
-                </DropdownMenuContent>
-              </DropdownMenu>
+          {!renaming && hovered && entry.isDir ? (
+            <span className="flex items-center gap-0.5 pr-1">
+              <RowAction label="New file" onClick={() => onCreateIn(entry, "file")}>
+                <NewFileIcon className="size-3" />
+              </RowAction>
+              <RowAction label="New folder" onClick={() => onCreateIn(entry, "dir")}>
+                <NewFolderIcon className="size-3" />
+              </RowAction>
+              <RowAction label="Reload folder" onClick={() => onReload(entry)}>
+                <RefreshIcon className="size-3" />
+              </RowAction>
+              <RowAction
+                label={expanded ? "Collapse folder" : "Expand folder"}
+                onClick={() => onToggleSubtree(entry)}
+              >
+                {expanded ? <CollapseIcon className="size-3" /> : <ExpandIcon className="size-3" />}
+              </RowAction>
             </span>
-          )}
+          ) : null}
 
           <span className={cn("flex shrink-0 items-center pr-2", "group-hover/row:hidden")}>
             {decoration ? (
@@ -314,24 +285,8 @@ function Row({
             ) : null}
           </span>
         </div>
-      </ContextMenuTrigger>
-      <ContextMenuContent
-        className="min-w-44"
-        // closing the menu would otherwise pull focus back to the row and blur the
-        // rename input the moment it mounts, cancelling the rename
-        onCloseAutoFocus={(event) => event.preventDefault()}
-      >
-        <RowMenuItems
-          Item={ContextMenuItem}
-          Separator={ContextMenuSeparator}
-          entry={entry}
-          canReveal={canReveal}
-          actions={actions}
-        />
-      </ContextMenuContent>
-    </ContextMenu>
   );
-}
+});
 
 function NameInput({
   initial,
@@ -430,6 +385,7 @@ export function FileTree({
   const [renaming, setRenaming] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<TreeEntry | null>(null);
   const [busy, setBusy] = useState(false);
+  const [menu, setMenu] = useState<{ entry: TreeEntry; x: number; y: number } | null>(null);
 
   const load = useCallback(
     async (path: string) => {
@@ -483,23 +439,26 @@ export function FileTree({
     for (const path of expanded) if (!dirs[path]) void load(path).catch(() => undefined);
   }, [expanded, dirs, load]);
 
-  const toggle = (entry: TreeEntry) => {
-    if (!entry.isDir) {
-      onOpenFile(entry.path);
-      return;
-    }
-    setExpanded((current) => {
-      const next = new Set(current);
-      if (next.has(entry.path)) next.delete(entry.path);
-      else next.add(entry.path);
-      return next;
-    });
-  };
+  const toggle = useCallback(
+    (entry: TreeEntry) => {
+      if (!entry.isDir) {
+        onOpenFile(entry.path);
+        return;
+      }
+      setExpanded((current) => {
+        const next = new Set(current);
+        if (next.has(entry.path)) next.delete(entry.path);
+        else next.add(entry.path);
+        return next;
+      });
+    },
+    [onOpenFile],
+  );
 
-  const startCreate = (parent: string, kind: "file" | "dir") => {
+  const startCreate = useCallback((parent: string, kind: "file" | "dir") => {
     setExpanded((current) => new Set(current).add(parent));
     setCreating({ parent, kind });
-  };
+  }, []);
 
   const commitCreate = async (name: string) => {
     if (!creating) return;
@@ -517,17 +476,20 @@ export function FileTree({
 
   const parentOf = (path: string) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
 
-  const commitRename = async (entry: TreeEntry, name: string) => {
-    setRenaming(null);
-    if (name === entry.name) return;
-    try {
-      const next = await api.renameEntry(thread.id, entry.path, name);
-      await load(parentOf(entry.path));
-      onRenamed(entry.path, next.path);
-    } catch (cause) {
-      setError((cause as Error).message);
-    }
-  };
+  const commitRename = useCallback(
+    async (entry: TreeEntry, name: string) => {
+      setRenaming(null);
+      if (name === entry.name) return;
+      try {
+        const next = await api.renameEntry(thread.id, entry.path, name);
+        await load(parentOf(entry.path));
+        onRenamed(entry.path, next.path);
+      } catch (cause) {
+        setError((cause as Error).message);
+      }
+    },
+    [thread.id, load, onRenamed],
+  );
 
   const confirmDelete = async () => {
     if (!pendingDelete) return;
@@ -555,69 +517,45 @@ export function FileTree({
   };
 
   // collapsing a folder takes its whole subtree with it; expanding restores what is already loaded
-  const toggleSubtree = (dir: string) => {
-    setExpanded((current) => {
-      const next = new Set(current);
-      if (current.has(dir)) {
-        for (const path of current) if (path === dir || path.startsWith(`${dir}/`)) next.delete(path);
-      } else {
-        next.add(dir);
-        for (const path of Object.keys(dirs)) if (path.startsWith(`${dir}/`)) next.add(path);
-      }
-      return next;
-    });
+  const toggleSubtreeAt = (dir: string) => {
+    setExpanded((current) => toggleSubtree(current, dirs, dir));
   };
 
-  const hasChangesUnder = (dir: string) => {
-    const prefix = `${dir}/`;
-    for (const path of changes.keys()) if (path.startsWith(prefix)) return true;
-    return false;
-  };
+  const dirtyDirs = useMemo(() => dirtyAncestors(changes.keys()), [changes]);
+  const rows = useMemo(() => projectRows(dirs, expanded), [dirs, expanded]);
 
-  const rows = (path: string, depth: number): ReactNode[] => {
-    const out: ReactNode[] = [];
-    if (creating?.parent === path) {
-      out.push(
-        <NewEntryRow
-          key="__new"
-          depth={depth}
-          kind={creating.kind}
-          onCommit={(name) => void commitCreate(name)}
-          onCancel={() => setCreating(null)}
-        />,
-      );
-    }
-    for (const entry of dirs[path] ?? []) {
-      const isExpanded = entry.isDir && expanded.has(entry.path);
-      out.push(
-        <Row
-          key={entry.path}
-          entry={entry}
-          depth={depth}
-          status={changes.get(entry.path)}
-          dirty={entry.isDir && hasChangesUnder(entry.path)}
-          expanded={isExpanded}
-          selected={entry.path === openPath}
-          canReveal={canReveal}
-          onClick={() => toggle(entry)}
-          onReload={() => void load(entry.path).catch(() => undefined)}
-          onToggleSubtree={() => toggleSubtree(entry.path)}
-          renaming={renaming === entry.path}
-          onRename={(name) => void commitRename(entry, name)}
-          onCancelRename={() => setRenaming(null)}
-          actions={{
-            onCreate: (kind) => startCreate(entry.path, kind),
-            onReveal: () => reveal(entry.path),
-            onCopy: (kind) => copyPath(entry.path, kind),
-            onStartRename: () => setRenaming(entry.path),
-            onDelete: () => setPendingDelete(entry),
-          }}
-        />,
-      );
-      if (isExpanded) out.push(...rows(entry.path, depth + 1));
-    }
-    return out;
-  };
+  // per-action props rather than one object: an inline actions literal is a fresh object every
+  // render and would defeat Row's memo
+  const onReloadEntry = useCallback(
+    (entry: TreeEntry) => void load(entry.path).catch(() => undefined),
+    [load],
+  );
+  const onToggleSubtreeEntry = useCallback((entry: TreeEntry) => toggleSubtreeAt(entry.path), [dirs]);
+  const onCreateIn = useCallback(
+    (entry: TreeEntry, kind: "file" | "dir") => startCreate(entry.path, kind),
+    [startCreate],
+  );
+  const onRenameEntry = useCallback(
+    (entry: TreeEntry, name: string) => void commitRename(entry, name),
+    [commitRename],
+  );
+  const onCancelRename = useCallback(() => setRenaming(null), []);
+  const onOpenMenu = useCallback(
+    (entry: TreeEntry, x: number, y: number) => setMenu({ entry, x, y }),
+    [],
+  );
+
+  // RowMenuItems' callbacks take no arguments, so they are rebuilt for whichever row opened the menu
+  const menuActions = useMemo<RowActions>(
+    () => ({
+      onCreate: (kind) => menu && startCreate(menu.entry.path, kind),
+      onReveal: () => menu && reveal(menu.entry.path),
+      onCopy: (kind) => menu && copyPath(menu.entry.path, kind),
+      onStartRename: () => menu && setRenaming(menu.entry.path),
+      onDelete: () => menu && setPendingDelete(menu.entry),
+    }),
+    [menu],
+  );
 
   return (
     <aside className="flex h-full w-[300px] shrink-0 flex-col border-l border-border/60 bg-card">
@@ -672,8 +610,76 @@ export function FileTree({
 
       <div className="min-h-0 flex-1 overflow-auto py-1">
         {error ? <p className="px-3 py-4 text-[12px] text-destructive">{error}</p> : null}
-        {rows("", 0)}
+        {creating?.parent === "" ? (
+          <NewEntryRow
+            depth={0}
+            kind={creating.kind}
+            onCommit={(name) => void commitCreate(name)}
+            onCancel={() => setCreating(null)}
+          />
+        ) : null}
+        {rows.map(({ entry, depth }) => (
+          <Fragment key={entry.path}>
+            <Row
+              entry={entry}
+              depth={depth}
+              status={changes.get(entry.path)}
+              dirty={entry.isDir && dirtyDirs.has(entry.path)}
+              expanded={entry.isDir && expanded.has(entry.path)}
+              selected={entry.path === openPath}
+              onActivate={toggle}
+              onReload={onReloadEntry}
+              onToggleSubtree={onToggleSubtreeEntry}
+              onCreateIn={onCreateIn}
+              onOpenMenu={onOpenMenu}
+              renaming={renaming === entry.path}
+              onRename={onRenameEntry}
+              onCancelRename={onCancelRename}
+            />
+            {creating?.parent === entry.path ? (
+              <NewEntryRow
+                depth={depth + 1}
+                kind={creating.kind}
+                onCommit={(name) => void commitCreate(name)}
+                onCancel={() => setCreating(null)}
+              />
+            ) : null}
+          </Fragment>
+        ))}
       </div>
+
+      {/* modal would trap focus while the menu closes, so Rename's input never gets it */}
+      <DropdownMenu
+        modal={false}
+        open={menu !== null}
+        onOpenChange={(open) => {
+          if (!open) setMenu(null);
+        }}
+      >
+        <DropdownMenuTrigger
+          aria-hidden
+          tabIndex={-1}
+          className="fixed size-0"
+          style={{ left: menu?.x ?? 0, top: menu?.y ?? 0 }}
+        />
+        <DropdownMenuContent
+          align="start"
+          className="min-w-44"
+          // closing the menu would otherwise pull focus back to the trigger and blur the
+          // rename input the moment it mounts, cancelling the rename
+          onCloseAutoFocus={(event) => event.preventDefault()}
+        >
+          {menu ? (
+            <RowMenuItems
+              Item={DropdownMenuItem}
+              Separator={DropdownMenuSeparator}
+              entry={menu.entry}
+              canReveal={canReveal}
+              actions={menuActions}
+            />
+          ) : null}
+        </DropdownMenuContent>
+      </DropdownMenu>
 
       {pendingDelete ? (
         <Dialog
