@@ -466,9 +466,10 @@ export function FileTree({
       };
 
       // a forced re-read skips the delay entirely: a refresh must not flash a spinner on every
-      // open folder whose contents did not change
+      // open folder whose contents did not change. Clearing runs unconditionally — a timer armed
+      // by an earlier non-forced read of this dir would otherwise still fire mid-refresh.
+      clearTimer();
       if (!options?.force) {
-        clearTimer();
         slowTimersRef.current.set(
           path,
           window.setTimeout(() => {
@@ -609,7 +610,13 @@ export function FileTree({
       if (entry.isDir) setExpanded((current) => new Set(current).add(entry.path));
       else onOpenFile(entry.path);
     } catch (cause) {
-      if (previous) applyToDir(parent, () => [...previous]);
+      // undo just this row: restoring the whole snapshot would drop a listing that landed
+      // while the request was in flight. insertEntry replaces on collision, so a name that
+      // already existed is put back rather than removed.
+      const collided = previous?.find((item) => item.path === target);
+      applyToDir(parent, (entries) =>
+        collided ? insertEntry(entries, collided) : removeEntry(entries, target),
+      );
       setError((cause as Error).message);
     }
   };
@@ -619,15 +626,14 @@ export function FileTree({
       setRenaming(null);
       if (name === entry.name) return;
       const parent = parentOf(entry.path);
-      // dirsRef, not dirs, so this callback's identity survives every listing and Row stays memoized
-      const previous = dirsRef.current[parent];
       const next = parent ? `${parent}/${name}` : name;
       applyToDir(parent, (entries) => replaceEntry(entries, entry.path, { ...entry, name, path: next }));
       try {
         await api.renameEntry(thread.id, entry.path, name);
         onRenamed(entry.path, next);
       } catch (cause) {
-        if (previous) applyToDir(parent, () => [...previous]);
+        // undo just this row, so a listing committed during the request survives
+        applyToDir(parent, (entries) => replaceEntry(entries, next, entry));
         setError((cause as Error).message);
       }
     },
@@ -638,7 +644,7 @@ export function FileTree({
     if (!pendingDelete) return;
     const path = pendingDelete.path;
     const parent = parentOf(path);
-    const previous = dirs[parent];
+    const removed = pendingDelete;
     setBusy(true);
     applyToDir(parent, (entries) => removeEntry(entries, path));
     setPendingDelete(null);
@@ -646,8 +652,9 @@ export function FileTree({
       await api.trashEntry(thread.id, path);
       onDeleted(path);
     } catch (cause) {
-      // restores the row, not the file: anything past the request itself already reached the Trash
-      if (previous) applyToDir(parent, () => [...previous]);
+      // restores the row, not the file: anything past the request itself already reached the Trash.
+      // Re-inserting just this entry keeps a listing that landed during the request.
+      applyToDir(parent, (entries) => insertEntry(entries, removed));
       setError((cause as Error).message);
     } finally {
       setBusy(false);

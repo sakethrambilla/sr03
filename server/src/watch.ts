@@ -110,6 +110,22 @@ function teardown(threadId: string): void {
   }
 }
 
+/**
+ * Idempotent release bound to the Entry it was issued for. The identity check matters after
+ * releaseAllUnder: it force-deletes an entry while refs are still held, and a later release
+ * must not decrement a watch that was recreated for the same thread in the meantime.
+ */
+function releaseFor(threadId: string, owner: Entry): () => void {
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    if (entries.get(threadId) !== owner) return;
+    owner.refs -= 1;
+    if (owner.refs <= 0) teardown(threadId);
+  };
+}
+
 /** Refcounted recursive watch on one thread's cwd. Returns an idempotent release. */
 export function watchThread(
   threadId: string,
@@ -120,15 +136,7 @@ export function watchThread(
   const existing = entries.get(threadId);
   if (existing) {
     existing.refs += 1;
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      const entry = entries.get(threadId);
-      if (!entry) return;
-      entry.refs -= 1;
-      if (entry.refs <= 0) teardown(threadId);
-    };
+    return releaseFor(threadId, existing);
   }
 
   const entry: Entry = { cwd: path.resolve(cwd), refs: 1, handle: null, coalescer: null };
@@ -157,15 +165,7 @@ export function watchThread(
   });
 
   entries.set(threadId, entry);
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    const current = entries.get(threadId);
-    if (!current) return;
-    current.refs -= 1;
-    if (current.refs <= 0) teardown(threadId);
-  };
+  return releaseFor(threadId, entry);
 }
 
 /** Force-close every watch at or under `cwd`, ignoring refcounts. For worktree removal. */

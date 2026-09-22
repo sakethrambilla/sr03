@@ -251,6 +251,24 @@ test("releaseAllUnder closes every watch at or under a directory", () => {
   assert.equal(closed, 3);
 });
 
+test("a release issued before releaseAllUnder cannot close a watch recreated after it", () => {
+  let closed = 0;
+  const factory: WatchFactory = (): WatchHandle => ({ close: () => closed++, on: () => {} });
+  const cwd = path.join(os.tmpdir(), "sr03-recreate");
+
+  // two holders, as two clients watching the same thread
+  const first = watchThread("t-recreate", cwd, factory);
+  watchThread("t-recreate", cwd, factory);
+  releaseAllUnder(cwd);
+  assert.equal(closed, 1);
+
+  // a new client asks again, which builds a fresh watch for the same thread
+  watchThread("t-recreate", cwd, factory);
+  // the pre-force release must not decrement the replacement
+  first();
+  assert.equal(closed, 1, "the recreated watch was torn down by a stale release");
+});
+
 // The only test here that depends on the platform's recursive fs.watch support.
 test("a real write reaches the bus", async () => {
   const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "sr03-watch-"));
