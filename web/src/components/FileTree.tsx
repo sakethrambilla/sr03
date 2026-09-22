@@ -15,7 +15,11 @@ import {
   createDirLoadTracker,
   dirtyAncestors,
   forEachWithConcurrency,
+  insertEntry,
+  parentOf,
   projectRows,
+  removeEntry,
+  replaceEntry,
   toggleSubtree,
 } from "../lib/filetree.ts";
 import type { DirLoadTracker, TreeRow } from "../lib/filetree.ts";
@@ -562,46 +566,69 @@ export function FileTree({
     setCreating({ parent, kind });
   }, []);
 
+  // a directory that is not loaded has nothing on screen to move, so the change is dropped
+  const applyToDir = useCallback(
+    (dir: string, change: (entries: readonly TreeEntry[]) => TreeEntry[]) =>
+      setDirs((current) =>
+        current[dir] === undefined ? current : { ...current, [dir]: change(current[dir]!) },
+      ),
+    [],
+  );
+
   const commitCreate = async (name: string) => {
     if (!creating) return;
-    const target = creating.parent ? `${creating.parent}/${name}` : name;
+    const parent = creating.parent;
+    const kind = creating.kind;
+    const target = parent ? `${parent}/${name}` : name;
+    const previous = dirs[parent];
     setCreating(null);
+    applyToDir(parent, (entries) =>
+      insertEntry(entries, { name, path: target, isDir: kind === "dir", ignored: false }),
+    );
     try {
-      const entry = await api.createEntry(thread.id, target, creating.kind);
-      await load(creating.parent, { force: true });
+      const entry = await api.createEntry(thread.id, target, kind);
       if (entry.isDir) setExpanded((current) => new Set(current).add(entry.path));
       else onOpenFile(entry.path);
     } catch (cause) {
+      if (previous) applyToDir(parent, () => [...previous]);
       setError((cause as Error).message);
     }
   };
-
-  const parentOf = (path: string) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
 
   const commitRename = useCallback(
     async (entry: TreeEntry, name: string) => {
       setRenaming(null);
       if (name === entry.name) return;
+      const parent = parentOf(entry.path);
+      // dirsRef, not dirs, so this callback's identity survives every listing and Row stays memoized
+      const previous = dirsRef.current[parent];
+      const next = parent ? `${parent}/${name}` : name;
+      applyToDir(parent, (entries) => replaceEntry(entries, entry.path, { ...entry, name, path: next }));
       try {
-        const next = await api.renameEntry(thread.id, entry.path, name);
-        await load(parentOf(entry.path), { force: true });
-        onRenamed(entry.path, next.path);
+        await api.renameEntry(thread.id, entry.path, name);
+        onRenamed(entry.path, next);
       } catch (cause) {
+        if (previous) applyToDir(parent, () => [...previous]);
         setError((cause as Error).message);
       }
     },
-    [thread.id, load, onRenamed],
+    [thread.id, applyToDir, onRenamed],
   );
 
   const confirmDelete = async () => {
     if (!pendingDelete) return;
+    const path = pendingDelete.path;
+    const parent = parentOf(path);
+    const previous = dirs[parent];
     setBusy(true);
+    applyToDir(parent, (entries) => removeEntry(entries, path));
+    setPendingDelete(null);
     try {
-      await api.trashEntry(thread.id, pendingDelete.path);
-      await load(parentOf(pendingDelete.path), { force: true });
-      onDeleted(pendingDelete.path);
-      setPendingDelete(null);
+      await api.trashEntry(thread.id, path);
+      onDeleted(path);
     } catch (cause) {
+      // restores the row, not the file: anything past the request itself already reached the Trash
+      if (previous) applyToDir(parent, () => [...previous]);
       setError((cause as Error).message);
     } finally {
       setBusy(false);
