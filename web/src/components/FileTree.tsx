@@ -1,17 +1,21 @@
 // The session folder's tree: lazily expanded directories, git status decorations, and the row
 // actions — open, create, rename, trash, reveal in Finder. Re-reads itself when a turn writes
 // to disk, which the store signals through fsVersionByThread.
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { api } from "../lib/api.ts";
 import {
   INDENT,
+  OVERSCAN,
+  ROW_HEIGHT,
   ancestors,
   dirtyAncestors,
   projectRows,
   toggleSubtree,
 } from "../lib/filetree.ts";
+import type { TreeRow } from "../lib/filetree.ts";
 import type { ChangedFile, Thread, TreeEntry } from "../lib/types.ts";
 import { useStore } from "../store.ts";
 import { Button } from "@/components/ui/button";
@@ -386,6 +390,7 @@ export function FileTree({
   const [pendingDelete, setPendingDelete] = useState<TreeEntry | null>(null);
   const [busy, setBusy] = useState(false);
   const [menu, setMenu] = useState<{ entry: TreeEntry; x: number; y: number } | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(
     async (path: string) => {
@@ -524,6 +529,36 @@ export function FileTree({
   const dirtyDirs = useMemo(() => dirtyAncestors(changes.keys()), [changes]);
   const rows = useMemo(() => projectRows(dirs, expanded), [dirs, expanded]);
 
+  // index of the create row within the virtual list, or -1
+  const creatingIndex = useMemo(() => {
+    if (!creating) return -1;
+    if (creating.parent === "") return 0;
+    const parentAt = rows.findIndex((row) => row.entry.path === creating.parent);
+    return parentAt === -1 ? -1 : parentAt + 1;
+  }, [creating, rows]);
+
+  const count = rows.length + (creatingIndex >= 0 ? 1 : 0);
+  const rowAt = (index: number): TreeRow | null => {
+    if (index === creatingIndex) return null;
+    return rows[creatingIndex >= 0 && index > creatingIndex ? index - 1 : index] ?? null;
+  };
+
+  const creatingDepth =
+    creatingIndex > 0 ? (rows[creatingIndex - 1]?.depth ?? 0) + 1 : 0;
+
+  const virtualizer = useVirtualizer({
+    count,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: OVERSCAN,
+    getItemKey: (index) =>
+      index === creatingIndex ? "__new" : (rowAt(index)?.entry.path ?? `__row_${index}`),
+  });
+
+  useEffect(() => {
+    if (creatingIndex >= 0) virtualizer.scrollToIndex(creatingIndex, { align: "auto" });
+  }, [creatingIndex]);
+
   // per-action props rather than one object: an inline actions literal is a fresh object every
   // render and would defeat Row's memo
   const onReloadEntry = useCallback(
@@ -606,46 +641,51 @@ export function FileTree({
             ) : null}
           </div>
         ) : null}
+
+        {/* outside the scroll container: inside, it would offset every virtual item's position */}
+        {error ? <p className="text-[12px] text-destructive">{error}</p> : null}
       </header>
 
-      <div className="min-h-0 flex-1 overflow-auto py-1">
-        {error ? <p className="px-3 py-4 text-[12px] text-destructive">{error}</p> : null}
-        {creating?.parent === "" ? (
-          <NewEntryRow
-            depth={0}
-            kind={creating.kind}
-            onCommit={(name) => void commitCreate(name)}
-            onCancel={() => setCreating(null)}
-          />
-        ) : null}
-        {rows.map(({ entry, depth }) => (
-          <Fragment key={entry.path}>
-            <Row
-              entry={entry}
-              depth={depth}
-              status={changes.get(entry.path)}
-              dirty={entry.isDir && dirtyDirs.has(entry.path)}
-              expanded={entry.isDir && expanded.has(entry.path)}
-              selected={entry.path === openPath}
-              onActivate={toggle}
-              onReload={onReloadEntry}
-              onToggleSubtree={onToggleSubtreeEntry}
-              onCreateIn={onCreateIn}
-              onOpenMenu={onOpenMenu}
-              renaming={renaming === entry.path}
-              onRename={onRenameEntry}
-              onCancelRename={onCancelRename}
-            />
-            {creating?.parent === entry.path ? (
-              <NewEntryRow
-                depth={depth + 1}
-                kind={creating.kind}
-                onCommit={(name) => void commitCreate(name)}
-                onCancel={() => setCreating(null)}
-              />
-            ) : null}
-          </Fragment>
-        ))}
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto py-1">
+        <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+          {virtualizer.getVirtualItems().map((item) => {
+            const row = rowAt(item.index);
+            return (
+              <div
+                key={item.key}
+                data-index={item.index}
+                className="absolute left-0 right-0"
+                style={{ transform: `translateY(${item.start}px)` }}
+              >
+                {item.index === creatingIndex && creating ? (
+                  <NewEntryRow
+                    depth={creatingDepth}
+                    kind={creating.kind}
+                    onCommit={(name) => void commitCreate(name)}
+                    onCancel={() => setCreating(null)}
+                  />
+                ) : row ? (
+                  <Row
+                    entry={row.entry}
+                    depth={row.depth}
+                    status={changes.get(row.entry.path)}
+                    dirty={row.entry.isDir && dirtyDirs.has(row.entry.path)}
+                    expanded={row.entry.isDir && expanded.has(row.entry.path)}
+                    selected={row.entry.path === openPath}
+                    onActivate={toggle}
+                    onReload={onReloadEntry}
+                    onToggleSubtree={onToggleSubtreeEntry}
+                    onCreateIn={onCreateIn}
+                    onOpenMenu={onOpenMenu}
+                    renaming={renaming === row.entry.path}
+                    onRename={onRenameEntry}
+                    onCancelRename={onCancelRename}
+                  />
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* modal would trap focus while the menu closes, so Rename's input never gets it */}
