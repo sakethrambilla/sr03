@@ -280,6 +280,7 @@ export type ServerEvent =
   | { type: "pty.terminals"; threadId: string; ids: string[] }
   | { type: "pty.created"; threadId: string; terminalId: string }
   | { type: "pty.exit"; threadId: string; terminalId: string; code: number }
+  | { type: "fs.changed"; threadId: string }
   | { type: "projects.changed" };
 
 // the only traffic that flows client -> server over the socket; everything else is REST
