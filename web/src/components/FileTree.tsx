@@ -9,10 +9,12 @@ import { api } from "../lib/api.ts";
 import {
   INDENT,
   OVERSCAN,
+  REFRESH_CONCURRENCY,
   ROW_HEIGHT,
   ancestors,
   createDirLoadTracker,
   dirtyAncestors,
+  forEachWithConcurrency,
   projectRows,
   toggleSubtree,
 } from "../lib/filetree.ts";
@@ -493,30 +495,27 @@ export function FileTree({
   );
 
   // reloading every open directory keeps files Claude just created from going missing; the
-  // trigger settles a moment after the last write, so a busy turn costs one pass, not fifty
+  // trigger settles a moment after the last write, so a busy turn costs one pass, not fifty.
+  // The directory half needs no cancellation flag — load's per-directory tokens supersede a
+  // stale read, and a thread change unmounts the panel.
   useEffect(() => {
     let cancelled = false;
     const open = [...expanded];
-    Promise.all([
-      api.changes(thread.id),
-      Promise.all(open.map((path) => api.tree(thread.id, path).catch(() => null))),
-    ])
-      .then(([next, listings]) => {
-        if (cancelled) return;
-        setChanges(new Map(next.files.map((file) => [file.path, file.status])));
-        setBranch(next.branch);
-        setDirs((current) => {
-          const merged = { ...current };
-          listings.forEach((listing, index) => {
-            if (listing) merged[open[index]!] = listing.entries;
-          });
-          return merged;
-        });
-        setError(null);
-      })
-      .catch((cause: Error) => {
-        if (!cancelled) setError(cause.message);
-      });
+    void (async () => {
+      try {
+        const next = await api.changes(thread.id);
+        if (!cancelled) {
+          setChanges(new Map(next.files.map((file) => [file.path, file.status])));
+          setBranch(next.branch);
+          setError(null);
+        }
+      } catch (cause) {
+        if (!cancelled) setError((cause as Error).message);
+      }
+      await forEachWithConcurrency(open, REFRESH_CONCURRENCY, (path) =>
+        load(path, { force: true }),
+      );
+    })();
     return () => {
       cancelled = true;
     };
