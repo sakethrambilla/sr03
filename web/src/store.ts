@@ -321,36 +321,6 @@ function drain(set: (partial: (state: Store) => Partial<Store>) => void): void {
   });
 }
 
-// only these tools change the folder; a Read or a Grep never earns a re-read
-const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash"]);
-const FS_SETTLE_MS = 750;
-const fsTimers = new Map<string, number>();
-
-function writes(message: Message): boolean {
-  return (
-    message.role === "tool" &&
-    (message.meta?.mutatesFiles === true ||
-      WRITE_TOOLS.has(String(message.meta?.toolName ?? "")))
-  );
-}
-
-function bumpFs(threadId: string, set: (partial: (state: Store) => Partial<Store>) => void): void {
-  const pending = fsTimers.get(threadId);
-  if (pending) window.clearTimeout(pending);
-  fsTimers.set(
-    threadId,
-    window.setTimeout(() => {
-      fsTimers.delete(threadId);
-      set((state) => ({
-        fsVersionByThread: {
-          ...state.fsVersionByThread,
-          [threadId]: (state.fsVersionByThread[threadId] ?? 0) + 1,
-        },
-      }));
-    }, FS_SETTLE_MS),
-  );
-}
-
 // A sash drag would otherwise write once per pointer move. The trailing edge is enough because the
 // optimistic update has already painted; only the server needs to wait for the gesture to settle.
 const LAYOUT_SETTLE_MS = 250;
@@ -802,13 +772,21 @@ export const useStore = create<Store>((set, get) => ({
         return;
       }
       case "thread.message.updated": {
-        if (writes(event.message)) bumpFs(event.threadId, set);
         set((state) => ({
           messagesByThread: {
             ...state.messagesByThread,
             [event.threadId]: (state.messagesByThread[event.threadId] ?? []).map((message) =>
               message.id === event.message.id ? event.message : message,
             ),
+          },
+        }));
+        return;
+      }
+      case "fs.changed": {
+        set((state) => ({
+          fsVersionByThread: {
+            ...state.fsVersionByThread,
+            [event.threadId]: (state.fsVersionByThread[event.threadId] ?? 0) + 1,
           },
         }));
         return;
@@ -870,7 +848,6 @@ export const useStore = create<Store>((set, get) => ({
         return;
       }
       case "thread.status": {
-        if (event.status !== "running") bumpFs(event.threadId, set);
         set((state) => ({
           // a turn you watched finish needs no marker; one you missed does
           finished:

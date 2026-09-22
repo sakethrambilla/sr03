@@ -185,6 +185,8 @@ export const api = {
     call<{ path: string; entries: TreeEntry[] }>(
       `/api/threads/${id}/tree${path ? `?path=${encodeURIComponent(path)}` : ""}`,
     ),
+  ignored: (id: string, paths: string[]) =>
+    post<{ ignored: string[] }>(`/api/threads/${id}/ignored`, { paths }),
   file: (id: string, path: string) =>
     call<{
       path: string;

@@ -22,6 +22,7 @@ import {
   tabKey,
   trackOf,
 } from "../lib/layout.ts";
+import { sendClientMessage } from "../lib/ws.ts";
 import { EMPTY_PROVIDER, useStore } from "../store.ts";
 import { AgentsPanel } from "./AgentsPanel.tsx";
 import { EditorGroups } from "./EditorGroups.tsx";
@@ -226,6 +227,7 @@ export function ChatView({ thread }: { thread: Thread }) {
   const workspace = useStore((state) => state.filesByCwd[thread.cwd] ?? NO_FILES);
   const loadFiles = useStore((state) => state.loadFiles);
   const fsTick = useStore((state) => state.fsVersionByThread[thread.id] ?? 0);
+  const connected = useStore((state) => state.connected);
   const [treeOpen, setTreeOpen] = usePersistedState<boolean>("file-tree", false);
   // the terminal panel is per thread: a shared flag would open it — and spawn a shell — in
   // every session you merely pass through
@@ -260,7 +262,6 @@ export function ChatView({ thread }: { thread: Thread }) {
   const [dirty, setDirty] = useState<Set<string>>(new Set());
   const [pendingClose, setPendingClose] = useState<string | null>(null);
   const [palette, setPalette] = useState<PaletteMode | null>(null);
-  const [fsVersion, setFsVersion] = useState(0);
   // seeded from the stored value so the chip paints on the first frame, then kept live: the
   // column is written once at creation and any checkout since would leave it stale
   const [branch, setBranch] = useState<string | null>(thread.branch);
@@ -359,7 +360,6 @@ export function ChatView({ thread }: { thread: Thread }) {
   const latestRequestClose = useRef(requestClose);
   latestRequestClose.current = requestClose;
   const closeFileTab = useCallback((path: string) => latestRequestClose.current(path), []);
-  const savedFile = useCallback(() => setFsVersion((current) => current + 1), []);
 
   const saveAndClose = async (path: string) => {
     const saved = await savers.current.get(path)?.();
@@ -413,10 +413,21 @@ export function ChatView({ thread }: { thread: Thread }) {
       Math.min(Math.max(current + step, 0), layoutRef.current.groups.length - 1),
     );
 
+  // the watch belongs to the thread, not the files panel: the file index and the branch chip
+  // read fsTick too, and they would starve while that panel is closed. The server drops every
+  // watch when the socket closes, so a reconnect has to ask again.
+  useEffect(() => {
+    if (!connected) return;
+    sendClientMessage({ type: "fs.watch", threadId: thread.id, on: true });
+    return () => {
+      sendClientMessage({ type: "fs.watch", threadId: thread.id, on: false });
+    };
+  }, [thread.id, connected]);
+
   // a turn that wrote to disk may have added or renamed files, so the index follows it
   useEffect(() => {
     void loadFiles(thread.id, thread.cwd);
-  }, [loadFiles, thread.id, thread.cwd, fsTick, fsVersion]);
+  }, [loadFiles, thread.id, thread.cwd, fsTick]);
 
   useEffect(() => {
     let cancelled = false;
@@ -430,7 +441,7 @@ export function ChatView({ thread }: { thread: Thread }) {
     return () => {
       cancelled = true;
     };
-  }, [thread.id, thread.branch, fsTick, fsVersion]);
+  }, [thread.id, thread.branch, fsTick]);
 
   // the panel owns the terminals, so it is left to decide which one a command lands in
   const runCommand = useCallback(
@@ -672,7 +683,6 @@ export function ChatView({ thread }: { thread: Thread }) {
                         onClose={closeFileTab}
                         onMissing={closeFileTab}
                         onDirtyChange={markDirty}
-                        onSaved={savedFile}
                         registerSave={registerSave}
                         reveal={reveal?.path === tab.path ? reveal : null}
                         links={links}
@@ -710,7 +720,6 @@ export function ChatView({ thread }: { thread: Thread }) {
           onOpenFile={openFile}
           onRenamed={renamed}
           onDeleted={deleted}
-          refreshToken={fsVersion}
           onClose={() => setTreeOpen(false)}
         />
       ) : null}

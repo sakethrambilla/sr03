@@ -28,6 +28,7 @@ import {
   writeWorkspaceFile,
 } from "./fsbrowse.ts";
 import { readTable, readValues, tableKind, writeCell } from "./table.ts";
+import { releaseAllUnder } from "./watch.ts";
 import type { TableFilter, TableQuery } from "./table.ts";
 import { messages, projects, settings, threads, worktreeFavorites } from "./db.ts";
 import { parseLayout } from "./layout.ts";
@@ -521,6 +522,8 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
           if (!info.isGit || !info.root) {
             throw new HttpError(400, "Project is not a git repository");
           }
+          // an open watch handle can block the removal on some platforms
+          releaseAllUnder(target);
           await git.removeWorktree({ root: info.root, path: target, force: body.force === true });
           await git.pruneWorktrees(info.root);
           publish({ type: "projects.changed" });
@@ -815,14 +818,20 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
       const thread = requireThread(params[0]!);
       const rel = url.searchParams.get("path") ?? "";
       const entries = await listWorkspaceDir(thread.cwd, rel);
-      const ignored = await git.ignoredPaths(
-        thread.cwd,
-        entries.map((entry) => entry.path),
-      );
-      return {
-        path: rel,
-        entries: entries.map((entry) => ({ ...entry, ignored: ignored.has(entry.path) })),
-      };
+      return { path: rel, entries };
+    },
+  },
+  // ignore status for the whole visible tree at once — one check-ignore per directory was the cost
+  {
+    method: "POST",
+    pattern: /^\/api\/threads\/([^/]+)\/ignored$/,
+    handler: async ({ params, request }) => {
+      const thread = requireThread(params[0]!);
+      const body = await readBody(request);
+      const paths = Array.isArray(body.paths)
+        ? body.paths.filter((entry): entry is string => typeof entry === "string")
+        : [];
+      return { ignored: [...(await git.ignoredPaths(thread.cwd, paths))] };
     },
   },
   {

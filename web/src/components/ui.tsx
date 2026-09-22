@@ -33,6 +33,7 @@ import {
   GitBranch,
   History,
   ListFilter,
+  LoaderCircle,
   Lock,
   LockOpen,
   Maximize2,
@@ -268,6 +269,7 @@ const ICONS = {
   FavoriteIcon: Star,
   PullIcon: ArrowDownToLine,
   PushIcon: ArrowUpFromLine,
+  SpinnerIcon: LoaderCircle,
 } as const;
 
 function icon(Source: LucideIcon) {
@@ -322,6 +324,7 @@ export const UnlockIcon = icon(ICONS.UnlockIcon);
 export const FavoriteIcon = icon(ICONS.FavoriteIcon);
 export const PullIcon = icon(ICONS.PullIcon);
 export const PushIcon = icon(ICONS.PushIcon);
+export const SpinnerIcon = icon(ICONS.SpinnerIcon);
 
 export interface MenuItem {
   id: string;

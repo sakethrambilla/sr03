@@ -1,102 +1,70 @@
 // A project's commit graph: one lane per branch, computed client-side from parent hashes —
 // mirrors mhutchie.git-graph's approach (no layout library, no --graph flag). Read-only for
 // v1: click a commit to see its changed files and diffs; no checkout/cherry-pick/merge here.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { api } from "../lib/api.ts";
+import {
+  LANE_WIDTH,
+  OVERSCAN,
+  ROW_HEIGHT,
+  UNCOMMITTED,
+  FILTER_DEBOUNCE_MS,
+  laneColor,
+  layoutGraph,
+  matchesFilter,
+  withUncommitted,
+} from "../lib/gitgraph.ts";
+import type { GraphRow } from "../lib/gitgraph.ts";
 import type { ChangedFile, Commit, CommitFile, Project, Ref } from "../lib/types.ts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, Pill, cn } from "./ui.tsx";
 
 const PAGE_SIZE = 100;
-const ROW_HEIGHT = 28;
-const LANE_WIDTH = 16;
-const UNCOMMITTED = "uncommitted";
+const GRID_COLUMNS = "minmax(0, 1fr) 10rem 7rem";
 
-interface GraphRow {
-  commit: Commit;
-  lane: number;
-}
-
-// Single-pass lane assignment: each lane holds the hash it's waiting to place next. A
-// commit takes over the first lane already waiting for it (or the first free lane, or a new
-// one), then hands its lane to its first parent and gives any additional parents (merges)
-// their own lanes. Any other lane still waiting for this same hash converges here and frees.
-function layoutGraph(commits: Commit[]): { rows: GraphRow[]; laneCount: number } {
-  const lanes: Array<string | null> = [];
-  const rows: GraphRow[] = [];
-  const findLane = (hash: string) => lanes.indexOf(hash);
-  const freeLane = () => {
-    const index = lanes.indexOf(null);
-    if (index !== -1) return index;
-    lanes.push(null);
-    return lanes.length - 1;
-  };
-  for (const commit of commits) {
-    let lane = findLane(commit.hash);
-    if (lane === -1) lane = freeLane();
-    for (let index = 0; index < lanes.length; index += 1) {
-      if (index !== lane && lanes[index] === commit.hash) lanes[index] = null;
-    }
-    lanes[lane] = commit.parents[0] ?? null;
-    for (const parent of commit.parents.slice(1)) {
-      const existing = findLane(parent);
-      const parentLane = existing !== -1 ? existing : freeLane();
-      lanes[parentLane] = parent;
-    }
-    rows.push({ commit, lane });
-  }
-  return { rows, laneCount: lanes.length };
-}
-
-function laneColor(lane: number): string {
-  return `var(--graph-lane-${(lane % 8) + 1})`;
-}
-
-// prepends a synthetic node for the dirty working tree so layoutGraph handles it like any
-// other commit — it gets a lane and an edge down to HEAD without special-casing row math
-function withUncommitted(commits: Commit[], headHash: string | null, dirty: boolean): Commit[] {
-  if (!dirty || !headHash) return commits;
-  return [
-    {
-      hash: UNCOMMITTED,
-      parents: [headHash],
-      authorName: "",
-      authorEmail: "",
-      authorDate: 0,
-      message: "Uncommitted changes",
-    },
-    ...commits,
-  ];
-}
-
-function Graph({ rows }: { rows: GraphRow[] }) {
-  const rowIndexByHash = useMemo(
+function Graph({
+  rows,
+  laneCount,
+  height,
+}: {
+  rows: GraphRow[];
+  laneCount: number;
+  height: number;
+}) {
+  // display indices, not history indices: a filtered-out row has no position to draw to
+  const displayIndexByHash = useMemo(
     () => new Map(rows.map((row, index) => [row.commit.hash, index])),
     [rows],
   );
-  const laneCount = rows.reduce((max, row) => Math.max(max, row.lane + 1), 1);
   const width = laneCount * LANE_WIDTH + LANE_WIDTH / 2;
-  const height = rows.length * ROW_HEIGHT;
 
-  const edges = rows.flatMap((row, index) => {
-    const y = index * ROW_HEIGHT + ROW_HEIGHT / 2;
-    const x = row.lane * LANE_WIDTH + LANE_WIDTH / 2;
-    return row.commit.parents.flatMap((parent) => {
-      const parentIndex = rowIndexByHash.get(parent);
-      if (parentIndex === undefined) return []; // parent is beyond the loaded page
-      const parentRow = rows[parentIndex]!;
-      const py = parentIndex * ROW_HEIGHT + ROW_HEIGHT / 2;
-      const px = parentRow.lane * LANE_WIDTH + LANE_WIDTH / 2;
-      return [{ x1: x, y1: y, x2: px, y2: py, color: laneColor(row.lane) }];
-    });
-  });
+  const edges = useMemo(
+    () =>
+      rows.flatMap((row, index) => {
+        const y = index * ROW_HEIGHT + ROW_HEIGHT / 2;
+        const x = row.lane * LANE_WIDTH + LANE_WIDTH / 2;
+        return row.commit.parents.flatMap((parent) => {
+          const parentIndex = displayIndexByHash.get(parent);
+          if (parentIndex === undefined) return []; // parent is filtered out or beyond the loaded page
+          const parentRow = rows[parentIndex]!;
+          const py = parentIndex * ROW_HEIGHT + ROW_HEIGHT / 2;
+          const px = parentRow.lane * LANE_WIDTH + LANE_WIDTH / 2;
+          return [{ x1: x, y1: y, x2: px, y2: py, color: laneColor(row.lane) }];
+        });
+      }),
+    [rows, displayIndexByHash],
+  );
 
   return (
-    <svg width={width} height={Math.max(height, ROW_HEIGHT)} className="shrink-0">
+    <svg
+      width={width}
+      height={Math.max(height, ROW_HEIGHT)}
+      className="pointer-events-none absolute top-0 left-0"
+    >
       {edges.map((edge, index) => (
         <path
           key={index}
@@ -202,15 +170,44 @@ export function GitGraphPanel({ project, onClose }: { project: Project; onClose:
   const graphCommits = useMemo(() => withUncommitted(commits, headHash, dirty > 0), [commits, headHash, dirty]);
   const { rows } = useMemo(() => layoutGraph(graphCommits), [graphCommits]);
 
-  const needle = filterText.trim().toLowerCase();
-  const visibleRows = needle
-    ? rows.filter(
-        (row) =>
-          row.commit.message.toLowerCase().includes(needle) ||
-          row.commit.authorName.toLowerCase().includes(needle) ||
-          row.commit.hash.startsWith(needle),
-      )
-    : rows;
+  // filterText drives the field; needle lags it, so typing never rebuilds the filtered list
+  const [needle, setNeedle] = useState("");
+  const filterTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (filterTimerRef.current !== null) window.clearTimeout(filterTimerRef.current);
+    filterTimerRef.current = window.setTimeout(
+      () => setNeedle(filterText.trim().toLowerCase()),
+      FILTER_DEBOUNCE_MS,
+    );
+    return () => {
+      if (filterTimerRef.current !== null) window.clearTimeout(filterTimerRef.current);
+    };
+  }, [filterText]);
+
+  const visibleRows = useMemo(
+    () => (needle ? rows.filter((row) => matchesFilter(row.commit, needle)) : rows),
+    [rows, needle],
+  );
+
+  const laneCount = useMemo(
+    () => visibleRows.reduce((max, row) => Math.max(max, row.lane + 1), 1),
+    [visibleRows],
+  );
+  const graphWidth = laneCount * LANE_WIDTH + LANE_WIDTH / 2;
+
+  // Radix nests the scrollable element inside Root, so a ref on <ScrollArea> reaches Root only
+  const scrollRootRef = useRef<HTMLDivElement>(null);
+  const getScrollElement = () =>
+    scrollRootRef.current?.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]') ?? null;
+
+  const virtualizer = useVirtualizer({
+    count: visibleRows.length,
+    getScrollElement,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: OVERSCAN,
+    getItemKey: (index) => visibleRows[index]?.commit.hash ?? `__row_${index}`,
+  });
+  const totalHeight = virtualizer.getTotalSize();
 
   const selectCommit = (hash: string) => {
     setSelected(hash);
@@ -276,45 +273,54 @@ export function GitGraphPanel({ project, onClose }: { project: Project; onClose:
       </div>
 
       <div className="flex gap-3">
-        <ScrollArea className="h-[50vh] flex-1 rounded-lg border border-border">
-          <div className="flex">
-            <div className="shrink-0 py-1 pl-2">
-              <Graph rows={visibleRows} />
+        <ScrollArea ref={scrollRootRef} className="h-[50vh] flex-1 rounded-lg border border-border">
+          <div className="pl-2">
+            <div
+              className="grid h-10 items-center border-b border-border text-sm font-medium"
+              style={{ gridTemplateColumns: GRID_COLUMNS, paddingLeft: graphWidth }}
+            >
+              <span className="px-2">Message</span>
+              <span className="px-2">Author</span>
+              <span className="px-2">Date</span>
             </div>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Message</TableHead>
-                  <TableHead>Author</TableHead>
-                  <TableHead>Date</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {visibleRows.map((row) => (
-                  <TableRow
-                    key={row.commit.hash}
+            {/* one positioned container: the graph and every row take their y from the same offset */}
+            <div className="relative" style={{ height: totalHeight }}>
+              <Graph rows={visibleRows} laneCount={laneCount} height={totalHeight} />
+              {virtualizer.getVirtualItems().map((item) => {
+                const row = visibleRows[item.index];
+                if (!row) return null;
+                return (
+                  <div
+                    key={item.key}
+                    data-graph-row
                     data-state={selected === row.commit.hash ? "selected" : undefined}
-                    className="cursor-pointer"
+                    className="absolute top-0 left-0 grid w-full cursor-pointer items-center border-b border-border text-sm transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted"
+                    style={{
+                      height: ROW_HEIGHT,
+                      transform: `translateY(${item.start}px)`,
+                      gridTemplateColumns: GRID_COLUMNS,
+                      paddingLeft: graphWidth,
+                    }}
                     onClick={() => selectCommit(row.commit.hash)}
                   >
-                    <TableCell className="max-w-80 truncate">
-                      <span className="flex items-center gap-1.5">
-                        {(refsByCommit.get(row.commit.hash) ?? []).map((ref) => (
-                          <Pill key={`${ref.kind}:${ref.name}`}>{ref.name}</Pill>
-                        ))}
-                        {row.commit.message}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{row.commit.authorName}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
+                    <span className="flex max-w-80 items-center gap-1.5 truncate px-2">
+                      {(refsByCommit.get(row.commit.hash) ?? []).map((ref) => (
+                        <Pill key={`${ref.kind}:${ref.name}`}>{ref.name}</Pill>
+                      ))}
+                      <span className="truncate">{row.commit.message}</span>
+                    </span>
+                    <span className="truncate px-2 text-xs text-muted-foreground">
+                      {row.commit.authorName}
+                    </span>
+                    <span className="truncate px-2 text-xs text-muted-foreground">
                       {row.commit.authorDate
                         ? new Date(row.commit.authorDate * 1000).toLocaleDateString()
                         : ""}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
           {hasMore && !needle ? (
             <div className="p-2">

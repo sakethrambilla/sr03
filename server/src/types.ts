@@ -280,6 +280,7 @@ export type ServerEvent =
   | { type: "pty.terminals"; threadId: string; ids: string[] }
   | { type: "pty.created"; threadId: string; terminalId: string }
   | { type: "pty.exit"; threadId: string; terminalId: string; code: number }
+  | { type: "fs.changed"; threadId: string }
   | { type: "projects.changed" };
 
 // the only traffic that flows client -> server over the socket; everything else is REST
@@ -290,4 +291,5 @@ export type ClientMessage =
   | { type: "pty.open"; threadId: string; terminalId: string; cols: number; rows: number }
   | { type: "pty.input"; threadId: string; terminalId: string; data: string }
   | { type: "pty.resize"; threadId: string; terminalId: string; cols: number; rows: number }
-  | { type: "pty.close"; threadId: string; terminalId: string };
+  | { type: "pty.close"; threadId: string; terminalId: string }
+  | { type: "fs.watch"; threadId: string; on: boolean };
