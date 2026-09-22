@@ -11,7 +11,7 @@ import {
   OVERSCAN,
   REFRESH_CONCURRENCY,
   ROW_HEIGHT,
-  ancestors,
+  autoExpandFor,
   createDirLoadTracker,
   dirtyAncestors,
   forEachWithConcurrency,
@@ -521,12 +521,15 @@ export function FileTree({
     };
   }, [thread.id, fsTick, tick, refreshToken]);
 
-  // opening straight onto the changed files is the whole point of the panel in a session
+  // opening straight onto the changed files is the whole point of the panel in a session; a very
+  // large change set expands nothing, and the header's count still says why
   useEffect(() => {
     if (changes.size === 0) return;
+    const toExpand = autoExpandFor(new Set(changes.keys()));
+    if (toExpand === null) return;
     setExpanded((current) => {
       const next = new Set(current);
-      for (const path of changes.keys()) for (const dir of ancestors(path)) next.add(dir);
+      for (const dir of toExpand) next.add(dir);
       return next.size === current.size ? current : next;
     });
   }, [changes]);
