@@ -8,6 +8,8 @@ import { api } from "./lib/api.ts";
 import { persistable } from "./lib/layout.ts";
 import { applyAppearance, loadAppearance, saveAppearance, watchSystemMode } from "./lib/appearance.ts";
 import type { Appearance } from "./lib/appearance.ts";
+import { PANEL_DEFAULTS } from "./lib/panels.ts";
+import type { PanelId } from "./lib/panels.ts";
 import type {
   AppState,
   ApprovalDecision,
@@ -111,6 +113,7 @@ export function resolvePlan(draft: Draft, snapshot: GitSnapshot | null): DraftPl
 interface Store extends AppState {
   connected: boolean;
   sidebarOpen: boolean;
+  panelWidths: Record<PanelId, number>;
   settingsOpen: boolean;
   activeThreadId: string | null;
   draft: Draft | null;
@@ -176,6 +179,7 @@ interface Store extends AppState {
   restoreAppearance: () => Promise<void>;
   applyEvent: (event: ServerEvent) => void;
   toggleSidebar: () => void;
+  setPanelWidth: (panel: PanelId, width: number) => void;
   setSettingsOpen: (open: boolean) => void;
   setConnected: (connected: boolean) => void;
   setError: (error: string | null) => void;
@@ -342,6 +346,7 @@ export const useStore = create<Store>((set, get) => ({
   ...EMPTY,
   connected: false,
   sidebarOpen: true,
+  panelWidths: { ...PANEL_DEFAULTS },
   settingsOpen: false,
   activeThreadId: null,
   draft: null,
@@ -365,6 +370,7 @@ export const useStore = create<Store>((set, get) => ({
   booted: false,
 
   toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
+  setPanelWidth: (panel, width) => set((state) => ({ panelWidths: { ...state.panelWidths, [panel]: width } })),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   setConnected: (connected) => set({ connected }),
   setError: (error) => set({ error }),

@@ -7,6 +7,7 @@ import { EMPTY_PROVIDER, useStore } from "../store.ts";
 import { api } from "../lib/api.ts";
 import { Button } from "@/components/ui/button";
 import { CloseIcon, StatusDot, StopIcon, cn } from "./ui.tsx";
+import { PanelResize } from "./PanelResize.tsx";
 
 const NO_TASKS: ThreadTask[] = [];
 
@@ -129,6 +130,7 @@ export function AgentsPanel({
 }) {
   const tasks = useStore((state) => state.tasksByThread[thread.id] ?? NO_TASKS);
   const setError = useStore((state) => state.setError);
+  const width = useStore((state) => state.panelWidths.agents);
   const provider = useStore(
     (state) => state.providers.find((entry) => entry.id === thread.providerId) ?? EMPTY_PROVIDER,
   );
@@ -141,7 +143,7 @@ export function AgentsPanel({
   };
 
   return (
-    <aside className="flex h-full w-[260px] shrink-0 flex-col border-l border-border/60 bg-card">
+    <aside style={{ width }} className="relative flex h-full shrink-0 flex-col border-l border-border/60 bg-card">
       <header className="flex items-center gap-2 border-b border-border/60 px-3 py-2.5">
         <h2 className="shrink-0 text-[12px] font-semibold tracking-wide text-muted-foreground uppercase">
           Agents
@@ -183,6 +185,7 @@ export function AgentsPanel({
           <span>{formatTokens(tokens)}</span>
         </footer>
       ) : null}
+      <PanelResize panel="agents" edge="left" />
     </aside>
   );
 }

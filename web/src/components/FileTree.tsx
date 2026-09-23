@@ -53,6 +53,7 @@ import {
   WorktreeIcon,
   cn,
 } from "./ui.tsx";
+import { PanelResize } from "./PanelResize.tsx";
 
 type Status = ChangedFile["status"];
 
@@ -421,6 +422,7 @@ export function FileTree({
 }) {
   const fsTick = useStore((state) => state.fsVersionByThread[thread.id] ?? 0);
   const canReveal = useStore((state) => state.apps.some((app) => app.id === "finder"));
+  const width = useStore((state) => state.panelWidths.files);
   const [dirs, setDirs] = useState<Record<string, TreeEntry[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set([""]));
   const [changes, setChanges] = useState<Map<string, Status>>(new Map());
@@ -770,7 +772,7 @@ export function FileTree({
   );
 
   return (
-    <aside className="flex h-full w-[300px] shrink-0 flex-col border-l border-border/60 bg-card">
+    <aside style={{ width }} className="relative flex h-full shrink-0 flex-col border-l border-border/60 bg-card">
       <header className="flex flex-col gap-1 border-b border-border/60 px-3 py-2.5">
         <div className="flex items-center gap-2">
         <h2 className="shrink-0 text-[12px] font-semibold tracking-wide text-muted-foreground uppercase">Files</h2>
@@ -927,6 +929,7 @@ export function FileTree({
           </p>
         </Dialog>
       ) : null}
+      <PanelResize panel="files" edge="left" />
     </aside>
   );
 }

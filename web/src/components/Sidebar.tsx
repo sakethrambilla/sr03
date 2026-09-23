@@ -40,6 +40,7 @@ import {
   usePersistedState,
 } from "./ui.tsx";
 import { GitGraphPanel } from "./GitGraphPanel.tsx";
+import { PanelResize } from "./PanelResize.tsx";
 import { WorktreePanel } from "./WorktreePanel.tsx";
 
 function SidebarButton() {
@@ -369,6 +370,7 @@ export function Sidebar() {
   const draft = useStore((state) => state.draft);
   const startDraft = useStore((state) => state.startDraft);
   const setSettingsOpen = useStore((state) => state.setSettingsOpen);
+  const width = useStore((state) => state.panelWidths.sidebar);
   const [worktreeProject, setWorktreeProject] = useState<Project | null>(null);
   const [graphProject, setGraphProject] = useState<Project | null>(null);
   const [showArchived, setShowArchived] = useState(false);
@@ -417,7 +419,7 @@ export function Sidebar() {
   );
 
   return (
-    <aside className="flex h-full w-72 shrink-0 flex-col border-r border-border/60 bg-card">
+    <aside style={{ width }} className="relative flex h-full shrink-0 flex-col border-r border-border/60 bg-card">
       <header data-titlebar className="flex h-13 shrink-0 items-center gap-1 border-b border-border/60 px-3">
         <SidebarButton />
       </header>
@@ -550,6 +552,7 @@ export function Sidebar() {
       {graphProject ? (
         <GitGraphPanel project={graphProject} onClose={() => setGraphProject(null)} />
       ) : null}
+      <PanelResize panel="sidebar" edge="right" />
     </aside>
   );
 }
