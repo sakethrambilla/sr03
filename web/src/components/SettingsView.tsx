@@ -421,7 +421,7 @@ function WallpaperSection() {
               label="Panel opacity"
               hint="How solid the sidebar, editor and panels are"
               value={appearance.panelOpacity}
-              min={30}
+              min={0}
               max={100}
               step={5}
               unit="%"

@@ -9,7 +9,7 @@ export interface Appearance {
   codeFont: string;
   mode: ThemeMode;
   wallpaper: string;
-  panelOpacity: number; // percent, 30–100
+  panelOpacity: number; // percent, 0–100
   wallpaperBlur: number; // px, 0–40
   wallpaperDim: number; // percent, 0–80
 }
