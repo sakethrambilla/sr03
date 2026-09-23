@@ -1058,6 +1058,10 @@ select option {
 .electron [data-titlebar] :is(button, a, input, label, [role="slider"]) {
   -webkit-app-region: no-drag;
 }
+/* the panel handles overlap the headers, and a drag region would swallow their pointer events */
+.electron [data-panel-resize] {
+  -webkit-app-region: no-drag;
+}
 
 /* --traffic-lights-x/width match TRAFFIC_LIGHTS in desktop/main.js (native DIP, don't scale).
    the gap is rem so it grows with the header/sidebar spacing. whichever pane is leftmost
