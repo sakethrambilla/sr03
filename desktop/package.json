@@ -1,7 +1,7 @@
 {
   "name": "@sr03/desktop",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Electron shell around the sr03 server",
   "main": "main.js",
   "scripts": {
