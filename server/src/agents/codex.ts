@@ -142,6 +142,11 @@ function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+// prose and command output carry meaningful edge whitespace that stringValue would strip
+function textValue(value: unknown): string | null {
+  return typeof value === "string" && value ? value : null;
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -615,7 +620,7 @@ function completeTool(session: CodexNativeSession, item: Record<string, unknown>
   const tool = session.tools.get(callId);
   const status = stringValue(item.status);
   const isError = status === "failed" || status === "declined";
-  const streamed = stringValue(item.aggregatedOutput) ?? stringValue(tool?.output);
+  const streamed = textValue(item.aggregatedOutput) ?? textValue(tool?.output);
   const output =
     status === "declined"
       ? "Tool denied by user."
@@ -685,7 +690,7 @@ function handleItemCompleted(session: CodexNativeSession, params: unknown): void
   if (!item) return;
   const type = stringValue(item.type);
   if (type === "agentMessage") {
-    const text = stringValue(item.text);
+    const text = textValue(item.text);
     const turn = session.activeTurn;
     if (turn && text && text !== turn.text) {
       // completed payload is the full message; deltas already streamed the prefix
@@ -749,20 +754,20 @@ function registerHandlers(session: CodexNativeSession): void {
   });
   connection.registerNotificationHandler("item/agentMessage/delta", (params) => {
     if (!isRecord(params)) return;
-    const delta = stringValue(params.delta);
+    const delta = textValue(params.delta);
     if (delta) appendMessage(session, delta);
   });
   connection.registerNotificationHandler("item/commandExecution/outputDelta", (params) => {
     if (!isRecord(params)) return;
     const itemId = stringValue(params.itemId);
-    const delta = stringValue(params.delta);
+    const delta = textValue(params.delta);
     if (!itemId || !delta) return;
     const tool = session.tools.get(itemId);
     if (tool) tool.output += delta;
   });
   connection.registerNotificationHandler("item/plan/delta", (params) => {
     if (!isRecord(params)) return;
-    const delta = stringValue(params.delta);
+    const delta = textValue(params.delta);
     if (delta) appendMessage(session, delta);
   });
   connection.registerNotificationHandler("item/reasoning/summaryTextDelta", () => {

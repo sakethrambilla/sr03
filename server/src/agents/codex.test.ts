@@ -118,6 +118,18 @@ for await (const line of lines) {
       send({ method: "turn/completed", params: { threadId: "thr_1", turn: { id: "turn_1", status: "completed" } } });
       continue;
     }
+    if (text.includes("spaced")) {
+      send({ method: "item/started", params: { item: { id: "cmd-2", type: "commandExecution", command: "tree", cwd: process.cwd() }, startedAtMs: 1, threadId: "thr_1", turnId: "turn_1" } });
+      send({ method: "item/commandExecution/outputDelta", params: { itemId: "cmd-2", threadId: "thr_1", turnId: "turn_1", delta: "  indented\\n" } });
+      send({ method: "item/completed", params: { item: { id: "cmd-2", type: "commandExecution", status: "completed" }, threadId: "thr_1", turnId: "turn_1" } });
+      const pieces = ["I'll", " inspect", " the", " Mac", "\\n\\n", "- one", "\\n- two", " ", "", "end"];
+      for (const delta of pieces) {
+        send({ method: "item/agentMessage/delta", params: { itemId: "msg-1", threadId: "thr_1", turnId: "turn_1", delta } });
+      }
+      send({ method: "item/completed", params: { item: { id: "msg-1", type: "agentMessage", text: pieces.join("") }, threadId: "thr_1", turnId: "turn_1" } });
+      send({ method: "turn/completed", params: { threadId: "thr_1", turn: { id: "turn_1", status: "completed" } } });
+      continue;
+    }
     if (text.includes("blank-failure")) {
       send({ method: "turn/completed", params: { threadId: "thr_1", turn: { id: "turn_1", status: "failed" } } });
       continue;
@@ -483,6 +495,33 @@ test("completes each agent message of a multi-message turn", async (context) => 
     events.flatMap((event) => (event.type === "assistant.complete" ? [event.text] : [])),
     ["First", "Second"],
   );
+});
+
+test("keeps the whitespace Codex streams in messages and tool output", async (context) => {
+  const { directory } = await withMock(context, "sr03-codex-spaced-");
+  const { codexProvider } = await import("./codex.ts");
+  const events: AgentEvent[] = [];
+  const session = await codexProvider.open(
+    threadFor(directory, { id: "codex-spaced-test" }),
+    (event) => events.push(event),
+    new AbortController().signal,
+  );
+  context.after(() => session.close());
+
+  await session.send("spaced please");
+
+  const expected = "I'll inspect the Mac\n\n- one\n- two end";
+  assert.equal(
+    events.flatMap((event) => (event.type === "assistant.delta" ? [event.text] : [])).join(""),
+    expected,
+  );
+  assert.deepEqual(
+    events.flatMap((event) => (event.type === "assistant.complete" ? [event.text] : [])),
+    [expected],
+  );
+  assert.ok(events.every((event) => event.type !== "assistant.delta" || event.text !== ""));
+  const tool = events.find((event) => event.type === "tool.completed");
+  assert.equal(tool?.type === "tool.completed" ? tool.result : null, "  indented\n");
 });
 
 test("surfaces a failed Codex turn that carries no error message", async (context) => {
