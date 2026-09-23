@@ -419,7 +419,7 @@ export function Sidebar() {
   );
 
   return (
-    <aside style={{ width }} className="relative flex h-full shrink-0 flex-col border-r border-border/60 bg-card">
+    <aside data-surface="card" style={{ width }} className="relative flex h-full shrink-0 flex-col border-r border-border/60 bg-card">
       <header data-titlebar className="flex h-13 shrink-0 items-center gap-1 border-b border-border/60 px-3">
         <SidebarButton />
       </header>

@@ -81,7 +81,7 @@ export function EditorTabs({
   const active = activeTab(group);
 
   return (
-    <div className="flex shrink-0 items-stretch overflow-x-auto border-b border-border/60 bg-background">
+    <div data-see-through className="flex shrink-0 items-stretch overflow-x-auto border-b border-border/60 bg-background">
       {group.tabs.map((tab) => {
         const selected = sameTab(tab, active);
         const lifted = dragging !== null && sameTab(tab, dragging);

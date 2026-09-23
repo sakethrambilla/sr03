@@ -1076,3 +1076,55 @@ select option {
     var(--traffic-lights-x) + var(--traffic-lights-width) + var(--traffic-lights-gap)
   );
 }
+
+/* the wallpaper: appearance.ts puts .wallpaper on <html> only once the image has loaded.
+   the image and the dim sit on <html> itself, beneath <body> */
+html.wallpaper body {
+  background: transparent;
+}
+html.wallpaper::before,
+html.wallpaper::after {
+  content: "";
+  position: fixed;
+  z-index: -1;
+  pointer-events: none;
+}
+/* pulled out past the viewport by twice the blur, so the blurred edge never fades in */
+html.wallpaper::before {
+  inset: calc(var(--wallpaper-blur) * -2);
+  background: var(--wallpaper-image) center / cover no-repeat;
+  filter: blur(var(--wallpaper-blur));
+}
+html.wallpaper::after {
+  inset: 0;
+  background: color-mix(in oklch, black var(--wallpaper-dim), transparent);
+}
+html.wallpaper:not(.dark)::after {
+  background: color-mix(in oklch, white var(--wallpaper-dim), transparent);
+}
+
+/* the tint and blur live on a pseudo-element in the root stacking context. backdrop-filter or
+   isolation on the pane itself would trap its fixed and z-indexed descendants (the tab-drag
+   ghost, the composer's lightbox) beneath the panes that follow it */
+html.wallpaper [data-surface] {
+  background-color: transparent;
+}
+html.wallpaper [data-surface]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: color-mix(in oklch, var(--card) var(--panel-opacity), transparent);
+  backdrop-filter: blur(20px);
+}
+html.wallpaper [data-surface="background"]::before {
+  background: color-mix(in oklch, var(--background) var(--panel-opacity), transparent);
+}
+html.wallpaper [data-see-through] {
+  background-color: transparent;
+}
+/* xterm.css hard-codes #000 on the viewport; it only showed once the theme background went clear */
+html.wallpaper [data-see-through] .xterm-viewport {
+  background-color: transparent;
+}
