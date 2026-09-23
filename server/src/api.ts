@@ -29,6 +29,7 @@ import {
 } from "./fsbrowse.ts";
 import { readTable, readValues, tableKind, writeCell } from "./table.ts";
 import { releaseAllUnder } from "./watch.ts";
+import { WALLPAPER_LIMIT, readWallpaper, removeWallpaper, saveWallpaper, sniffImage } from "./wallpaper.ts";
 import type { TableFilter, TableQuery } from "./table.ts";
 import { messages, projects, settings, threads, worktreeFavorites } from "./db.ts";
 import { parseLayout } from "./layout.ts";
@@ -86,7 +87,7 @@ async function readRaw(request: IncomingMessage, limit: number): Promise<Buffer>
   let size = 0;
   for await (const chunk of request) {
     size += (chunk as Buffer).length;
-    if (size > limit) throw new HttpError(413, "File is larger than 25MB");
+    if (size > limit) throw new HttpError(413, `File is larger than ${limit / (1024 * 1024)}MB`);
     chunks.push(chunk as Buffer);
   }
   return Buffer.concat(chunks);
@@ -282,6 +283,38 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
         "cache-control": "no-store",
       });
       response.end(file.bytes);
+    },
+  },
+  {
+    method: "PUT",
+    pattern: /^\/api\/wallpaper$/,
+    handler: async ({ request }) => {
+      const bytes = await readRaw(request, WALLPAPER_LIMIT);
+      const ext = sniffImage(bytes);
+      if (!ext) throw new HttpError(415, "Wallpaper must be a PNG, JPEG or WebP image");
+      return saveWallpaper(bytes, ext);
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/wallpaper$/,
+    handler: async ({ response }) => {
+      const file = await readWallpaper();
+      if (!file) throw new HttpError(404, "No wallpaper set");
+      response.writeHead(200, {
+        "content-type": file.type,
+        "content-length": file.bytes.length,
+        "cache-control": "no-cache",
+      });
+      response.end(file.bytes);
+    },
+  },
+  {
+    method: "DELETE",
+    pattern: /^\/api\/wallpaper$/,
+    handler: async () => {
+      await removeWallpaper();
+      return { ok: true };
     },
   },
   {
