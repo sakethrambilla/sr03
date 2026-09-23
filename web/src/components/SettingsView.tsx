@@ -1,9 +1,9 @@
 // The settings page — a view beside the sessions rather than a layer over them. Two sections:
 // local provider status/catalogs and the appearance panel.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api.ts";
-import { THEMES, availableFonts } from "../lib/appearance.ts";
+import { THEMES, WALLPAPER_TYPES, availableFonts } from "../lib/appearance.ts";
 import type { FontGroups, ThemeMode } from "../lib/appearance.ts";
 import type { PermissionMode, ProviderStatus } from "../lib/types.ts";
 import { useStore } from "../store.ts";
@@ -20,6 +20,7 @@ import {
 import { ProviderLogo } from "./ProviderLogo.tsx";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -321,6 +322,140 @@ function EditorPanel() {
   );
 }
 
+function WallpaperSlider({ label, hint, value, min, max, step, unit, onChange }: {
+  label: string;
+  hint: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  unit: string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <div className="flex items-center gap-4">
+      <div className="min-w-0 flex-1">
+        <p className="text-[13px] text-foreground">{label}</p>
+        <p className="text-[11.5px] text-faint">{hint}</p>
+      </div>
+      <Slider
+        className="w-48"
+        min={min}
+        max={max}
+        step={step}
+        value={[value]}
+        onValueChange={([next]) => onChange(next!)}
+      />
+      <span className="w-12 text-right font-mono text-[12px] text-muted-foreground">
+        {value}
+        {unit}
+      </span>
+    </div>
+  );
+}
+
+function WallpaperSection() {
+  const appearance = useStore((state) => state.appearance);
+  const setAppearance = useStore((state) => state.setAppearance);
+  const setWallpaper = useStore((state) => state.setWallpaper);
+  const removeWallpaper = useStore((state) => state.removeWallpaper);
+  const picker = useRef<HTMLInputElement>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const choose = async (file?: File) => {
+    if (!file) return;
+    setBusy(true);
+    setError(await setWallpaper(file));
+    setBusy(false);
+  };
+
+  const remove = async () => {
+    setError(null);
+    setBusy(true);
+    await removeWallpaper();
+    setBusy(false);
+  };
+
+  return (
+    <section className="rounded-lg border border-border/70 bg-card/40">
+      <header className="border-b border-border/60 px-4 py-3">
+        <h2 className="text-[14px] font-medium">Wallpaper</h2>
+        <p className="mt-0.5 text-[12px] text-muted-foreground">
+          One image behind the whole app. The panels turn translucent over it.
+        </p>
+      </header>
+      <div className="flex flex-col gap-4 px-4 py-4">
+        <input
+          ref={picker}
+          type="file"
+          accept={WALLPAPER_TYPES.join(",")}
+          className="hidden"
+          onChange={(event) => {
+            void choose(event.target.files?.[0]);
+            // cleared so picking the same file again still fires change
+            event.target.value = "";
+          }}
+        />
+        <div className="flex items-center gap-3">
+          {appearance.wallpaper ? (
+            <img
+              src={appearance.wallpaper}
+              alt=""
+              className="h-16 w-28 rounded-md border border-border/70 object-cover"
+            />
+          ) : null}
+          <Button variant="secondary" disabled={busy} onClick={() => picker.current?.click()}>
+            {appearance.wallpaper ? "Replace" : "Choose image…"}
+          </Button>
+          {appearance.wallpaper ? (
+            <Button variant="ghost" disabled={busy} onClick={() => void remove()}>
+              Remove
+            </Button>
+          ) : null}
+        </div>
+        {error ? <p className="text-[12px] text-destructive">{error}</p> : null}
+        {appearance.wallpaper ? (
+          <>
+            <WallpaperSlider
+              label="Panel opacity"
+              hint="How solid the sidebar, editor and panels are"
+              value={appearance.panelOpacity}
+              min={30}
+              max={100}
+              step={5}
+              unit="%"
+              onChange={(panelOpacity) => setAppearance({ panelOpacity })}
+            />
+            <Separator />
+            <WallpaperSlider
+              label="Wallpaper blur"
+              hint="Softens the image itself"
+              value={appearance.wallpaperBlur}
+              min={0}
+              max={40}
+              step={2}
+              unit="px"
+              onChange={(wallpaperBlur) => setAppearance({ wallpaperBlur })}
+            />
+            <Separator />
+            <WallpaperSlider
+              label="Dim"
+              hint="Darkens the image in dark mode, lightens it in light"
+              value={appearance.wallpaperDim}
+              min={0}
+              max={80}
+              step={5}
+              unit="%"
+              onChange={(wallpaperDim) => setAppearance({ wallpaperDim })}
+            />
+          </>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 function AppearancePanel() {
   const appearance = useStore((state) => state.appearance);
   const setAppearance = useStore((state) => state.setAppearance);
@@ -402,6 +537,8 @@ function AppearancePanel() {
           </div>
         </div>
       </section>
+
+      <WallpaperSection />
     </>
   );
 }
