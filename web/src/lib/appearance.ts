@@ -200,12 +200,20 @@ export function wallpaperVars(appearance: Appearance): Record<string, string> | 
   return {
     "--wallpaper-image": `url("${appearance.wallpaper}")`,
     "--panel-opacity": `${appearance.panelOpacity}%`,
+    // 0% means fully clear panels, so the frosted blur goes with the tint
+    "--panel-backdrop": appearance.panelOpacity === 0 ? "none" : "blur(20px)",
     "--wallpaper-blur": `${appearance.wallpaperBlur}px`,
     "--wallpaper-dim": `${appearance.wallpaperDim}%`,
   };
 }
 
-const WALLPAPER_VARS = ["--wallpaper-image", "--panel-opacity", "--wallpaper-blur", "--wallpaper-dim"];
+const WALLPAPER_VARS = [
+  "--wallpaper-image",
+  "--panel-opacity",
+  "--panel-backdrop",
+  "--wallpaper-blur",
+  "--wallpaper-dim",
+];
 let wantedWallpaper = "";
 
 // the class, and with it the see-through panels, only lands once the image has loaded, so a
