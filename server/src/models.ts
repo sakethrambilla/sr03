@@ -221,9 +221,15 @@ export function defaultProviderId(): ProviderId {
 }
 
 async function readClaudeCatalog(): Promise<ModelOption[]> {
+  const { claudeExecutable } = await import("./agents/claudeExecutable.ts");
+  const executable = await claudeExecutable();
   const session = query({
     prompt: (async function* () {})(),
-    options: { systemPrompt: { type: "preset", preset: "claude_code" }, cwd: os.homedir() },
+    options: {
+      systemPrompt: { type: "preset", preset: "claude_code" },
+      cwd: os.homedir(),
+      ...(executable ? { pathToClaudeCodeExecutable: executable } : {}),
+    },
   });
   try {
     const models = await session.supportedModels();

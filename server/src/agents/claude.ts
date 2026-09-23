@@ -35,6 +35,7 @@ import type {
   AgentSession,
   AgentSettingsPatch,
 } from "./types.ts";
+import { claudeExecutable } from "./claudeExecutable.ts";
 import { dedupeByName, scanCommandFiles, scanSkillDirectories } from "./skillScan.ts";
 
 // `Effort` spans every provider's ladder; the SDK accepts only Claude Code's five rungs
@@ -423,12 +424,14 @@ function toCommands(commands: SlashCommand[]): SlashCommand[] {
 }
 
 async function readCommands(cwd: string): Promise<SlashCommand[]> {
+  const executable = await claudeExecutable();
   const session = query({
     prompt: (async function* () {})(),
     options: {
       cwd,
       systemPrompt: { type: "preset", preset: "claude_code" },
       settingSources: ["user", "project", "local"],
+      ...(executable ? { pathToClaudeCodeExecutable: executable } : {}),
     },
   });
   try {
@@ -716,6 +719,7 @@ async function open(
   emit: AgentEventSink,
   signal: AbortSignal,
 ): Promise<AgentSession> {
+  const executable = await claudeExecutable();
   const abort = new AbortController();
   const input = createInputQueue();
   const session: ClaudeSession = {
@@ -746,6 +750,7 @@ async function open(
       abortController: abort,
       systemPrompt: { type: "preset", preset: "claude_code" },
       settingSources: ["user", "project", "local"],
+      ...(executable ? { pathToClaudeCodeExecutable: executable } : {}),
       canUseTool: makeCanUseTool(session),
       ...(thread.sessionId ? { resume: thread.sessionId } : {}),
       stderr: (data) => {
