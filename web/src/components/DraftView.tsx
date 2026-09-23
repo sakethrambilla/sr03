@@ -302,7 +302,7 @@ export function DraftView({ draft }: { draft: Draft }) {
   const plan = resolvePlan(draft, snapshot);
 
   return (
-    <main className="flex h-full min-w-0 flex-1 flex-col">
+    <main data-surface="background" className="relative flex h-full min-w-0 flex-1 flex-col">
       <header data-titlebar className="flex h-13 shrink-0 items-center gap-2 border-b border-border/60 px-3">
         <SidebarToggle />
         <StatusDot status="idle" />

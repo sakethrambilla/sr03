@@ -772,7 +772,7 @@ export function FileTree({
   );
 
   return (
-    <aside style={{ width }} className="relative flex h-full shrink-0 flex-col border-l border-border/60 bg-card">
+    <aside data-surface="card" style={{ width }} className="relative flex h-full shrink-0 flex-col border-l border-border/60 bg-card">
       <header className="flex flex-col gap-1 border-b border-border/60 px-3 py-2.5">
         <div className="flex items-center gap-2">
         <h2 className="shrink-0 text-[12px] font-semibold tracking-wide text-muted-foreground uppercase">Files</h2>

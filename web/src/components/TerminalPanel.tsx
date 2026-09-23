@@ -27,9 +27,9 @@ function monoFamily(): string {
   return getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim();
 }
 
-function terminalTheme() {
+function terminalTheme(transparent: boolean) {
   return {
-    background: themeColor("--color-card", "#1a1a19"),
+    background: transparent ? "rgba(0, 0, 0, 0)" : themeColor("--color-card", "#1a1a19"),
     foreground: themeColor("--color-foreground", "#f0efed"),
     cursor: themeColor("--color-primary", "#d9743f"),
     selectionBackground: themeColor("--color-accent", "#3a3937"),
@@ -70,7 +70,7 @@ function TerminalView({
       lineHeight: 1.25,
       cursorBlink: true,
       scrollback: 5000,
-      theme: terminalTheme(),
+      theme: terminalTheme(Boolean(appearance.wallpaper)),
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -127,7 +127,7 @@ function TerminalView({
   useEffect(() => {
     const entry = fitted.current;
     if (!entry) return;
-    entry.term.options.theme = terminalTheme();
+    entry.term.options.theme = terminalTheme(Boolean(appearance.wallpaper));
     entry.term.options.fontFamily = monoFamily();
     if (host.current?.offsetParent === null) return;
     entry.fit.fit();
@@ -276,6 +276,7 @@ export function TerminalPanel({
   return (
     <section
       ref={section}
+      data-see-through
       // the stored height came from whatever window it was dragged in, so a smaller one now
       // must still leave the transcript something
       style={maximized ? undefined : { height: `min(${height}px, calc(100% - ${MIN_CONTENT}px))` }}
