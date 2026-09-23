@@ -1116,7 +1116,7 @@ html.wallpaper [data-surface]::before {
   z-index: -1;
   pointer-events: none;
   background: color-mix(in oklch, var(--card) var(--panel-opacity), transparent);
-  backdrop-filter: blur(20px);
+  backdrop-filter: var(--panel-backdrop);
 }
 html.wallpaper [data-surface="background"]::before {
   background: color-mix(in oklch, var(--background) var(--panel-opacity), transparent);

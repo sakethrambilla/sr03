@@ -74,7 +74,14 @@ test("wallpaperVars: a wallpaper carries its image and slider values", () => {
   assert.deepStrictEqual(vars, {
     "--wallpaper-image": 'url("/api/wallpaper?v=abc")',
     "--panel-opacity": "65%",
+    "--panel-backdrop": "blur(20px)",
     "--wallpaper-blur": "12px",
     "--wallpaper-dim": "0%",
   });
+});
+
+test("wallpaperVars: 0% panel opacity drops the panel blur too, leaving them fully clear", () => {
+  const vars = wallpaperVars({ ...NO_WALLPAPER, wallpaper: "/api/wallpaper?v=abc", panelOpacity: 0 });
+  assert.strictEqual(vars?.["--panel-opacity"], "0%");
+  assert.strictEqual(vars?.["--panel-backdrop"], "none");
 });
