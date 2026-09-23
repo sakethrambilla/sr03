@@ -1,5 +1,6 @@
-// The theme and font choice behind the appearance panel: the faces sr03 bundles, a canvas probe
-// for which further faces the machine already has, and applying the pick to the document root.
+// The theme, font and wallpaper choice behind the appearance panel: the faces sr03 bundles, a
+// canvas probe for which further faces the machine already has, and applying the pick to the
+// document root.
 export type ThemeMode = "light" | "dark" | "system";
 
 export interface Appearance {
@@ -7,6 +8,10 @@ export interface Appearance {
   uiFont: string;
   codeFont: string;
   mode: ThemeMode;
+  wallpaper: string;
+  panelOpacity: number; // percent, 30–100
+  wallpaperBlur: number; // px, 0–40
+  wallpaperDim: number; // percent, 0–80
 }
 
 export interface Theme {
@@ -180,7 +185,54 @@ export function availableFonts(): { ui: FontGroups; code: FontGroups } {
   return cache;
 }
 
-export function applyAppearance({ theme, uiFont, codeFont, mode }: Appearance): void {
+// mirror the server's accepted types and size cap
+export const WALLPAPER_TYPES: readonly string[] = ["image/png", "image/jpeg", "image/webp"];
+export const WALLPAPER_LIMIT = 20 * 1024 * 1024;
+
+export function wallpaperFileError(file: { type: string; size: number }): string | null {
+  if (!WALLPAPER_TYPES.includes(file.type)) return "Wallpaper must be a PNG, JPEG or WebP image";
+  if (file.size > WALLPAPER_LIMIT) return "Wallpaper must be 20 MB or smaller";
+  return null;
+}
+
+export function wallpaperVars(appearance: Appearance): Record<string, string> | null {
+  if (!appearance.wallpaper) return null;
+  return {
+    "--wallpaper-image": `url("${appearance.wallpaper}")`,
+    "--panel-opacity": `${appearance.panelOpacity}%`,
+    "--wallpaper-blur": `${appearance.wallpaperBlur}px`,
+    "--wallpaper-dim": `${appearance.wallpaperDim}%`,
+  };
+}
+
+const WALLPAPER_VARS = ["--wallpaper-image", "--panel-opacity", "--wallpaper-blur", "--wallpaper-dim"];
+let wantedWallpaper = "";
+
+// the class, and with it the see-through panels, only lands once the image has loaded, so a
+// wallpaper deleted from disk leaves the app opaque rather than translucent over nothing
+function showWallpaper(url: string, onMissing?: () => void): void {
+  const root = document.documentElement;
+  if (url === wantedWallpaper) return;
+  wantedWallpaper = url;
+  if (!url) {
+    root.classList.remove("wallpaper");
+    return;
+  }
+  const probe = new Image();
+  probe.onload = () => {
+    if (wantedWallpaper === url) root.classList.add("wallpaper");
+  };
+  probe.onerror = () => {
+    if (wantedWallpaper !== url) return;
+    wantedWallpaper = "";
+    root.classList.remove("wallpaper");
+    onMissing?.();
+  };
+  probe.src = url;
+}
+
+export function applyAppearance(appearance: Appearance, onWallpaperMissing?: () => void): void {
+  const { theme, uiFont, codeFont, mode } = appearance;
   const root = document.documentElement;
   if (theme && theme !== "sr03") root.setAttribute("data-theme", theme);
   else root.removeAttribute("data-theme");
@@ -191,10 +243,26 @@ export function applyAppearance({ theme, uiFont, codeFont, mode }: Appearance): 
   else root.style.removeProperty("--font-sans");
   if (codeFont) root.style.setProperty("--font-mono", `"${codeFont}", ${MONO_TAIL}`);
   else root.style.removeProperty("--font-mono");
+
+  const vars = wallpaperVars(appearance);
+  for (const name of WALLPAPER_VARS) {
+    if (vars) root.style.setProperty(name, vars[name]!);
+    else root.style.removeProperty(name);
+  }
+  showWallpaper(appearance.wallpaper, onWallpaperMissing);
 }
 
 const KEY = "sr03:appearance";
-const DEFAULTS: Appearance = { theme: "sr03", uiFont: "", codeFont: "", mode: "dark" };
+const DEFAULTS: Appearance = {
+  theme: "sr03",
+  uiFont: "",
+  codeFont: "",
+  mode: "dark",
+  wallpaper: "",
+  panelOpacity: 80,
+  wallpaperBlur: 0,
+  wallpaperDim: 20,
+};
 
 export function loadAppearance(): Appearance {
   try {

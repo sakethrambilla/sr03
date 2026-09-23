@@ -6,7 +6,13 @@ import { create } from "zustand";
 
 import { api } from "./lib/api.ts";
 import { persistable } from "./lib/layout.ts";
-import { applyAppearance, loadAppearance, saveAppearance, watchSystemMode } from "./lib/appearance.ts";
+import {
+  applyAppearance,
+  loadAppearance,
+  saveAppearance,
+  wallpaperFileError,
+  watchSystemMode,
+} from "./lib/appearance.ts";
 import type { Appearance } from "./lib/appearance.ts";
 import { PANEL_DEFAULTS } from "./lib/panels.ts";
 import type { PanelId } from "./lib/panels.ts";
@@ -176,6 +182,8 @@ interface Store extends AppState {
   loadFiles: (threadId: string, cwd: string) => Promise<void>;
   loadProviderStatuses: () => Promise<void>;
   setAppearance: (patch: Partial<Appearance>) => void;
+  setWallpaper: (file: File) => Promise<string | null>;
+  removeWallpaper: () => Promise<void>;
   restoreAppearance: () => Promise<void>;
   applyEvent: (event: ServerEvent) => void;
   toggleSidebar: () => void;
@@ -338,9 +346,14 @@ function upsertThread(threads: Thread[], thread: Thread): Thread[] {
 
 const APPEARANCE_KEY = "appearance";
 
+// a stored wallpaper whose file is gone is forgotten, so the picker offers "Choose image…" again
+function forgetMissingWallpaper(): void {
+  useStore.getState().setAppearance({ wallpaper: "" });
+}
+
 // applied as the module loads rather than from an effect, so the first paint is already themed
 const startingAppearance = loadAppearance();
-applyAppearance(startingAppearance);
+applyAppearance(startingAppearance, forgetMissingWallpaper);
 
 export const useStore = create<Store>((set, get) => ({
   ...EMPTY,
@@ -379,9 +392,30 @@ export const useStore = create<Store>((set, get) => ({
   // shell's next launch, since that arrives on a different port with empty browser storage
   setAppearance: (patch) => {
     const appearance = { ...get().appearance, ...patch };
-    applyAppearance(appearance);
+    applyAppearance(appearance, forgetMissingWallpaper);
     set({ appearance: saveAppearance(appearance) });
     void api.saveSetting(APPEARANCE_KEY, JSON.stringify(appearance)).catch(() => undefined);
+  },
+
+  setWallpaper: async (file) => {
+    const invalid = wallpaperFileError(file);
+    if (invalid) return invalid;
+    try {
+      const { url } = await api.uploadWallpaper(file);
+      get().setAppearance({ wallpaper: url });
+      return null;
+    } catch (error) {
+      return (error as Error).message;
+    }
+  },
+
+  removeWallpaper: async () => {
+    try {
+      await api.removeWallpaper();
+      get().setAppearance({ wallpaper: "" });
+    } catch (error) {
+      set({ error: (error as Error).message });
+    }
   },
 
   bootstrap: async () => {
@@ -1006,7 +1040,7 @@ export const useStore = create<Store>((set, get) => ({
 watchSystemMode(() => {
   const { appearance } = useStore.getState();
   if (appearance.mode !== "system") return;
-  applyAppearance(appearance);
+  applyAppearance(appearance, forgetMissingWallpaper);
   useStore.setState({ appearance: { ...appearance } });
 });
 

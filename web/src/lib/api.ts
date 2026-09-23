@@ -80,6 +80,13 @@ export const api = {
     if (!response.ok) throw new Error(body.error ?? response.statusText);
     return body;
   },
+  uploadWallpaper: async (file: File) => {
+    const response = await fetch("/api/wallpaper", { method: "PUT", body: file });
+    const body = (await response.json()) as { url: string; error?: string };
+    if (!response.ok) throw new Error(body.error ?? response.statusText);
+    return body;
+  },
+  removeWallpaper: () => call<{ ok: true }>("/api/wallpaper", { method: "DELETE" }),
   addProject: (path: string) => post<Project>("/api/projects", { path }),
   removeProject: (id: string) => call<{ ok: true }>(`/api/projects/${id}`, { method: "DELETE" }),
   git: (projectId: string) => call<GitSnapshot>(`/api/projects/${projectId}/git`),
