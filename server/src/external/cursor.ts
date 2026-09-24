@@ -8,14 +8,23 @@ type Meta = { agentId: string; latestRootBlobId: string; name?: string; createdA
 type Message = { role: string; content: unknown };
 type Part = Record<string, unknown>;
 
-function openChat<T>(file: string, fn: (db: DatabaseSync, meta: Meta) => T): T {
-  const db = new DatabaseSync(file, { readOnly: true });
+// even a readOnly open writes the store's -shm, so the store and its WAL are read from a copy
+async function openChat<T>(file: string, fn: (db: DatabaseSync, meta: Meta) => T): Promise<T> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sr03-cursor-"));
   try {
-    const row = db.prepare("SELECT value FROM meta WHERE key = '0'").get() as { value: string } | undefined;
-    if (!row) throw new Error("no meta");
-    return fn(db, JSON.parse(Buffer.from(row.value, "hex").toString("utf8")));
+    const copy = path.join(dir, "store.db");
+    await fs.copyFile(file, copy);
+    await fs.copyFile(file + "-wal", copy + "-wal").catch(() => {});
+    const db = new DatabaseSync(copy);
+    try {
+      const row = db.prepare("SELECT value FROM meta WHERE key = '0'").get() as { value: string } | undefined;
+      if (!row) throw new Error("no meta");
+      return fn(db, JSON.parse(Buffer.from(row.value, "hex").toString("utf8")));
+    } finally {
+      db.close();
+    }
   } finally {
-    db.close();
+    await fs.rm(dir, { recursive: true, force: true });
   }
 }
 
@@ -110,7 +119,7 @@ async function mtime(file: string): Promise<number> {
 
 async function scanFile(file: string, isKnown: (id: string) => boolean): Promise<ExternalSession | null> {
   await fs.access(file);
-  const found = openChat(file, (db, meta) => {
+  const found = await openChat(file, (db, meta) => {
     if (meta.subagentInfo || isKnown(meta.agentId)) return null;
     let cwd: string | null = null;
     let prompt: string | null = null;
