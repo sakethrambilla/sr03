@@ -3,6 +3,7 @@
 // projects, threads, messages. Nothing else in the server touches sql.
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 
 import { DB_PATH } from "./config.ts";
 import { parseLayout } from "./layout.ts";
@@ -104,6 +105,11 @@ db.exec(`
     created_at INTEGER NOT NULL,
     PRIMARY KEY (project_id, path)
   );
+  CREATE TABLE IF NOT EXISTS known_sessions (
+    provider_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    PRIMARY KEY (provider_id, session_id)
+  );
 `);
 
 // sqlite has no ADD COLUMN IF NOT EXISTS. The write lock makes the check-and-alter sequence safe
@@ -132,7 +138,13 @@ try {
   if (!threadColumns.includes("layout")) {
     db.exec("ALTER TABLE threads ADD COLUMN layout TEXT");
   }
+  if (!threadColumns.includes("external_source")) {
+    db.exec("ALTER TABLE threads ADD COLUMN external_source TEXT");
+  }
   db.exec("COMMIT");
+  db.exec(
+    "INSERT OR IGNORE INTO known_sessions (provider_id, session_id) SELECT provider_id, session_id FROM threads WHERE session_id IS NOT NULL",
+  );
 } catch (error) {
   db.exec("ROLLBACK");
   throw error;
@@ -259,6 +271,8 @@ function toThread(row: Row): Thread {
     sessionId: (row.session_id as string | null) ?? null,
     status: row.status as ThreadStatus,
     archived: Boolean(row.archived),
+    external: row.external_source != null,
+    cwdMissing: !existsSync(row.cwd as string),
     layout: parseLayout(row.layout),
     createdAt: row.created_at as number,
     updatedAt: row.updated_at as number,
@@ -307,6 +321,14 @@ const sql = {
     `INSERT INTO threads (id, project_id, provider_id, title, cwd, branch, is_worktree, model, permission_mode, effort, fast, session_id, status, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ),
+  threadInsertExternal: db.prepare(
+    `INSERT INTO threads (id, project_id, provider_id, title, cwd, branch, is_worktree, model, permission_mode, effort, fast, session_id, status, created_at, updated_at, external_source)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ),
+  threadExternalSource: db.prepare("SELECT external_source FROM threads WHERE id = ?"),
+  threadClearExternal: db.prepare("UPDATE threads SET external_source = NULL, updated_at = ? WHERE id = ?"),
+  knownSessionHas: db.prepare("SELECT 1 FROM known_sessions WHERE provider_id = ? AND session_id = ?"),
+  knownSessionAdd: db.prepare("INSERT OR IGNORE INTO known_sessions (provider_id, session_id) VALUES (?, ?)"),
   threadClaim: db.prepare(
     `UPDATE threads SET status = 'running', owner_id = ?, updated_at = ?
      WHERE id = ?
@@ -451,6 +473,15 @@ const THREAD_COLUMNS: Record<string, string> = {
 // one prepared UPDATE per distinct set of columns, since patches come in a handful of shapes
 const threadUpdates = new Map<string, ReturnType<typeof db.prepare>>();
 
+export const knownSessions = {
+  has(providerId: ProviderId, sessionId: string): boolean {
+    return Boolean(sql.knownSessionHas.get(providerId, sessionId));
+  },
+  add(providerId: ProviderId, sessionId: string): void {
+    sql.knownSessionAdd.run(providerId, sessionId);
+  },
+};
+
 export const threads = {
   list(): Thread[] {
     return sql.threadsList.all().map(toThread);
@@ -477,6 +508,8 @@ export const threads = {
       sessionId: null,
       status: "idle",
       archived: false,
+      external: false,
+      cwdMissing: false,
       layout: null,
       createdAt: now,
       updatedAt: now,
@@ -501,6 +534,48 @@ export const threads = {
     );
     return thread;
   },
+  createExternal(input: {
+    projectId: string;
+    providerId: ProviderId;
+    title: string;
+    cwd: string;
+    model: string;
+    permissionMode: PermissionMode;
+    effort: Effort;
+    sessionId: string;
+    source: string;
+    createdAt: number;
+    updatedAt: number;
+  }): Thread {
+    const id = randomUUID();
+    sql.threadInsertExternal.run(
+      id,
+      input.projectId,
+      input.providerId,
+      input.title,
+      input.cwd,
+      null,
+      0,
+      input.model,
+      input.permissionMode,
+      input.effort,
+      0,
+      input.sessionId,
+      "idle",
+      input.createdAt,
+      input.updatedAt,
+      input.source,
+    );
+    knownSessions.add(input.providerId, input.sessionId);
+    return threads.byId(id)!;
+  },
+  externalSource(id: string): string | null {
+    const row = sql.threadExternalSource.get(id) as { external_source: string | null } | undefined;
+    return row?.external_source ?? null;
+  },
+  clearExternal(id: string, updatedAt: number): void {
+    sql.threadClearExternal.run(updatedAt, id);
+  },
   claim(id: string): boolean {
     return sql.threadClaim.run(INSTANCE_ID, Date.now(), id, INSTANCE_ID).changes === 1;
   },
@@ -513,6 +588,10 @@ export const threads = {
   },
   setOwnedStatus(id: string, status: ThreadStatus, sessionId?: string | null): boolean {
     const now = Date.now();
+    if (typeof sessionId === "string" && sessionId) {
+      const row = sql.threadById.get(id) as { provider_id: ProviderId } | undefined;
+      if (row) knownSessions.add(row.provider_id, sessionId);
+    }
     if (status === "running") {
       const result =
         sessionId === undefined
@@ -541,6 +620,10 @@ export const threads = {
       >
     >,
   ): Thread | null {
+    const current = threads.byId(id);
+    if (current && typeof patch.sessionId === "string" && patch.sessionId) {
+      knownSessions.add(current.providerId, patch.sessionId);
+    }
     const sets: string[] = [];
     const values: Array<string | number | null> = [];
     for (const [key, column] of Object.entries(THREAD_COLUMNS)) {
