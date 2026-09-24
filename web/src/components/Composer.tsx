@@ -1019,8 +1019,10 @@ export function ThreadComposer({
 
   return (
     <Composer
+      blocked={thread.cwdMissing}
       above={
         <>
+          {thread.cwdMissing ? <p className="px-1 text-xs text-muted-foreground">This session's folder no longer exists, so it can be read but not continued.</p> : null}
           {approvals.map((approval) =>
             approval.questions ? (
               <QuestionPanel key={approval.id} approval={approval} />
