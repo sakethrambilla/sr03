@@ -85,17 +85,23 @@ async function rolloutFiles(sessions: string): Promise<string[]> {
 }
 
 async function scanFile(file: string, names: Map<string, string>, isKnown: (id: string) => boolean): Promise<ExternalSession | null> {
-  const lines = parseLines(await readHead(file, 65536));
-  const first = lines[0];
-  if (first?.type !== "session_meta") return null;
-  const meta = first.payload as Line | undefined;
-  if (!meta || typeof meta.id !== "string" || typeof meta.cwd !== "string") return null;
-  if (meta.originator === "sr03" || isKnown(meta.id)) return null;
+  let meta: { id: string; cwd: string; timestamp: unknown } | undefined;
   let prompt: string | null = null;
-  for (const l of lines) {
-    if (l.type === "response_item" && (prompt = userText(l.payload as Line))) break;
+  // injected AGENTS.md and plugin context can push the first prompt past 64K
+  for (const bytes of [65536, 1 << 20]) {
+    const lines = parseLines(await readHead(file, bytes));
+    const first = lines[0];
+    if (first?.type !== "session_meta") return null;
+    const payload = first.payload as Line | undefined;
+    if (!payload || typeof payload.id !== "string" || typeof payload.cwd !== "string") return null;
+    if (payload.originator === "sr03" || isKnown(payload.id)) return null;
+    meta = { id: payload.id, cwd: payload.cwd, timestamp: payload.timestamp };
+    for (const l of lines) {
+      if (l.type === "response_item" && (prompt = userText(l.payload as Line))) break;
+    }
+    if (prompt) break;
   }
-  if (!prompt) return null;
+  if (!meta || !prompt) return null;
   const st = await fs.stat(file);
   return {
     providerId: "codex",

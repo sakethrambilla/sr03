@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import { publish } from "../bus.ts";
 import { knownSessions, messages, projects, threads } from "../db.ts";
@@ -38,8 +39,10 @@ async function run(readers: ExternalReader[]): Promise<number> {
     for (const s of found) {
       try {
         if (knownSessions.has(s.providerId, s.sessionId)) continue;
-        const dir = path.resolve(s.cwd);
-        let project = projects.byPath(dir);
+        const resolved = path.resolve(s.cwd);
+        // on macOS /tmp is a symlink to /private/tmp, and providers record either spelling
+        const dir = await fs.realpath(resolved).catch(() => resolved);
+        let project = projects.byPath(dir) ?? projects.byPath(resolved);
         if (!project) {
           const { isGit } = await repoInfo(dir).catch(() => ({ isGit: false }));
           project = projects.create({ path: dir, name: path.basename(dir), isGit });

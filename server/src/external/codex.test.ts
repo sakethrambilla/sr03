@@ -82,3 +82,14 @@ test("read yields user, tool and assistant rows in order", async () => {
 test("scan of a missing root is empty", async () => {
   assert.deepEqual(await codexReader(path.join(os.tmpdir(), "sr03-codex-missing-" + Date.now())).scan(() => false), []);
 });
+
+test("scan finds a prompt that sits past the first 64K", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sr03-codex-"));
+  const day = path.join(root, "sessions", "2026", "01", "02");
+  await fs.mkdir(day, { recursive: true });
+  const padding = item({ type: "message", role: "user", content: [{ type: "input_text", text: `<recommended_plugins>${"x".repeat(100_000)}</recommended_plugins>` }] });
+  await fs.writeFile(path.join(day, "rollout-a.jsonl"), jsonl([aLines[0], padding, ...aLines.slice(1)]) + "\n");
+  const sessions = await codexReader(root).scan(() => false);
+  assert.equal(sessions.length, 1);
+  assert.equal(sessions[0].title, "rename the file");
+});

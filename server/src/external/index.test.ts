@@ -7,7 +7,8 @@ import type { ExternalReader, ExternalSession, ImportedMessage } from "./types.t
 
 const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "sr03-ext-"));
 process.env.SR03_DATA_DIR = dataDir;
-const work = await fs.mkdtemp(path.join(os.tmpdir(), "sr03-work-"));
+// os.tmpdir() sits under the /var -> /private/var symlink, and discovery stores real paths
+const work = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "sr03-work-")));
 after(async () => {
   await fs.rm(dataDir, { recursive: true, force: true });
   await fs.rm(work, { recursive: true, force: true });
@@ -100,4 +101,13 @@ test("(g) concurrent discovers share one run", async () => {
   const reader = fake([session("s3")], msgs);
   assert.deepEqual(await Promise.all([discover([reader]), discover([reader])]), [1, 1]);
   assert.equal(threads.list().filter((t) => t.sessionId === "s3").length, 1);
+});
+
+test("a cwd reached through a symlink joins the real path's project", async () => {
+  const link = path.join(dataDir, "work-link");
+  await fs.symlink(work, link);
+  const before = projects.list().length;
+  assert.equal(await discover([fake([{ ...session("s-link"), cwd: link }], msgs)]), 1);
+  assert.equal(projects.list().length, before);
+  assert.equal(externalBy("s-link")[0]?.projectId, projects.byPath(work)!.id);
 });
