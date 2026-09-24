@@ -52,7 +52,7 @@ function emptyUsage(): Usage {
   };
 }
 
-function truncate(value: string, limit = 4000): string {
+export function truncate(value: string, limit = 4000): string {
   return value.length > limit
     ? `${value.slice(0, limit)}\n… (${value.length - limit} more chars)`
     : value;
