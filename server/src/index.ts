@@ -13,6 +13,7 @@ import { handleApiRequest } from "./api.ts";
 import { pendingApprovals, pendingQuestions } from "./agents/runtime.ts";
 import { subscribe } from "./bus.ts";
 import { threads } from "./db.ts";
+import { discover } from "./external/index.ts";
 import * as metrics from "./metrics.ts";
 import { listModels } from "./models.ts";
 import * as pty from "./pty.ts";
@@ -174,6 +175,7 @@ websockets.on("connection", (socket) => {
 
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`sr03 server listening on http://127.0.0.1:${PORT}`);
+  void discover();
   // asking the CLI for its model list costs seconds, so pay it before the first page load
   void Promise.all([listModels("claude"), listModels("cursor"), listModels("codex")]);
 });

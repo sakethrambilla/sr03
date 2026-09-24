@@ -6,7 +6,7 @@ import path from "node:path";
 
 import { EFFORT_ORDER, currentProvider, findModel } from "../models.ts";
 import { findCursor } from "../providers.ts";
-import { commandCache } from "../db.ts";
+import { commandCache, messages } from "../db.ts";
 import { dedupeByName, scanSkillDirectories } from "./skillScan.ts";
 import type {
   Effort,
@@ -17,6 +17,7 @@ import type {
   PendingQuestion,
   PermissionMode,
   SlashCommand,
+  Message,
   Thread,
   ThreadTask,
   Usage,
@@ -95,6 +96,8 @@ interface ReplayGate {
 
 interface CursorNativeSession {
   threadId: string;
+  // set when session/load refused the thread's chat, so the first prompt carries its transcript
+  seedFromTranscript: boolean;
   cwd: string;
   emit: AgentEventSink;
   connection: AcpConnection;
@@ -1100,6 +1103,40 @@ function promptFailure(error: unknown): TurnCompletion {
   };
 }
 
+async function newNativeSession(session: CursorNativeSession, signal: AbortSignal): Promise<unknown> {
+  const created = await session.connection.request(
+    "session/new",
+    { cwd: session.cwd, mcpServers: [] },
+    { timeoutMs: STARTUP_TIMEOUT_MS, signal },
+  );
+  const createdSessionId = isRecord(created) ? stringValue(created.sessionId) : null;
+  if (!createdSessionId) {
+    throw new Error("Cursor ACP did not return a session id");
+  }
+  session.sessionId = createdSessionId;
+  return created;
+}
+
+// the history the new chat can't load, written out ahead of the prompt that is being sent
+export function transcriptSeed(history: Message[], text: string): string {
+  const rows = history.at(-1)?.role === "user" && history.at(-1)?.text === text ? history.slice(0, -1) : history;
+  const lines = rows.flatMap((message) => {
+    if (message.role === "user") return [`User: ${message.text}`];
+    if (message.role === "assistant") return [`Assistant: ${message.text}`];
+    if (message.role === "tool") return [`(tool call: ${String(message.meta?.toolName ?? "tool")})`];
+    return [];
+  });
+  if (lines.length === 0) return text;
+  return [
+    "This continues an earlier conversation that could not be reloaded. Its transcript:",
+    "<transcript>",
+    ...lines,
+    "</transcript>",
+    "",
+    text,
+  ].join("\n");
+}
+
 async function runPrompt(session: CursorNativeSession, text: string): Promise<void> {
   if (session.disposed || !session.sessionId) {
     throw new AcpTransportError("Cursor ACP session is closed");
@@ -1113,6 +1150,7 @@ async function runPrompt(session: CursorNativeSession, text: string): Promise<vo
     done: createDeferred<void>(),
   };
   session.activeTurn = turn;
+  const seeded = session.seedFromTranscript ? transcriptSeed(messages.list(session.threadId), text) : text;
   session.tools.clear();
   session.completedTools.clear();
 
@@ -1121,9 +1159,10 @@ async function runPrompt(session: CursorNativeSession, text: string): Promise<vo
       "session/prompt",
       {
         sessionId: session.sessionId,
-        prompt: [{ type: "text", text }],
+        prompt: [{ type: "text", text: seeded }],
       },
     );
+    session.seedFromTranscript = false;
     finishAssistant(session, turn, true);
     session.emit({ type: "turn.completed", ...promptCompletion(response) });
   } catch (error) {
@@ -1261,6 +1300,7 @@ async function open(
   });
   session = {
     threadId: thread.id,
+    seedFromTranscript: false,
     cwd: thread.cwd,
     emit,
     connection,
@@ -1322,21 +1362,19 @@ async function open(
           { timeoutMs: LOAD_TIMEOUT_MS, signal },
         );
         await drainLoadReplay(context);
+      } catch (error) {
+        // chats cursor-agent started outside ACP are rejected as invalid params
+        if (!(error instanceof AcpRpcError && error.code === -32602)) throw error;
+        setup = null;
       } finally {
         context.replayGate = null;
       }
-    } else {
-      const created = await connection.request(
-        "session/new",
-        { cwd: thread.cwd, mcpServers: [] },
-        { timeoutMs: STARTUP_TIMEOUT_MS, signal },
-      );
-      const createdSessionId = isRecord(created) ? stringValue(created.sessionId) : null;
-      if (!createdSessionId) {
-        throw new Error("Cursor ACP did not return a session id");
-      }
-      context.sessionId = createdSessionId;
-      setup = created;
+    }
+    if (thread.sessionId && setup === null) {
+      setup = await newNativeSession(context, signal);
+      context.seedFromTranscript = true;
+    } else if (!thread.sessionId) {
+      setup = await newNativeSession(context, signal);
     }
 
     if (!context.sessionId || context.disposed) {

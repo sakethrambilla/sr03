@@ -133,6 +133,9 @@ the worktree still ships without those paths.
   loaded session.
 - `session/load` replays prior updates. The adapter suppresses that replay because sr03 already owns
   the persisted transcript; replaying it would duplicate every message and tool row.
+- `session/load` rejects chats that `cursor-agent` started outside ACP (e.g. imported external
+  sessions) with -32602 Invalid params. The adapter then opens `session/new` and prefixes the first
+  prompt with sr03's transcript as text; the new session id replaces the thread's from then on.
 - Effort and fast are per-model config options, not model-id parameters: `cursor/list_available_models`
   advertises them per model (`effort`/`reasoning`/`thinking` under `thought_level`, plus `fast`), and
   `session/set_config_option` applies them after every new or loaded session. The option set belongs

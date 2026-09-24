@@ -47,6 +47,7 @@ import {
 } from "./models.ts";
 import type { Question } from "./types.ts";
 import { publish } from "./bus.ts";
+import { discover, importExternal } from "./external/index.ts";
 
 class HttpError extends Error {
   status: number;
@@ -808,10 +809,23 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
   {
     method: "GET",
     pattern: /^\/api\/threads\/([^/]+)$/,
-    handler: ({ params }) => {
+    handler: async ({ params }) => {
+      const found = requireThread(params[0]!);
+      if (found.external) {
+        try {
+          await importExternal(found);
+        } catch (error) {
+          throw new HttpError(502, (error as Error).message);
+        }
+      }
       const thread = requireThread(params[0]!);
       return { thread, messages: messages.list(thread.id), tasks: agents.threadTasks(thread.id) };
     },
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/external\/refresh$/,
+    handler: async () => ({ added: await discover() }),
   },
   {
     method: "GET",
@@ -1270,6 +1284,7 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
       const text = requireString(body, "text");
       return withThreadOperation(params[0]!, () => {
         const thread = requireThread(params[0]!);
+        if (thread.cwdMissing) throw new HttpError(409, "This session's folder no longer exists");
         if (thread.status === "running") throw new HttpError(409, "Turn already running");
         if (!agents.sendTurn(thread, text)) {
           throw new HttpError(

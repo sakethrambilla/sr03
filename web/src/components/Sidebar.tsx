@@ -3,6 +3,7 @@
 // delete), and the buttons that start a session or open a project's worktrees.
 import { useMemo, useRef, useState } from "react";
 
+import { api } from "../lib/api.ts";
 import type { Project, Thread } from "../lib/types.ts";
 import { useStore } from "../store.ts";
 import { Button } from "@/components/ui/button";
@@ -32,6 +33,7 @@ import {
   FolderIcon,
   HistoryIcon,
   PlusIcon,
+  RefreshIcon,
   SettingsIcon,
   SidebarIcon,
   StatusDot,
@@ -41,6 +43,7 @@ import {
 } from "./ui.tsx";
 import { GitGraphPanel } from "./GitGraphPanel.tsx";
 import { PanelResize } from "./PanelResize.tsx";
+import { ProviderLogo } from "./ProviderLogo.tsx";
 import { WorktreePanel } from "./WorktreePanel.tsx";
 
 function SidebarButton() {
@@ -141,9 +144,15 @@ function ThreadRow({ thread }: { thread: Thread }) {
               className="h-6 px-1 py-0 text-[13px]"
             />
           ) : (
-            <p className={cn("truncate text-[13px]", active ? "text-foreground" : "text-muted-foreground")}>
-              {thread.title}
-            </p>
+            <div className="flex min-w-0 items-center gap-1.5">
+              {thread.external ? <ProviderLogo id={thread.providerId} className="size-3.5 shrink-0" /> : null}
+              <p className={cn("truncate text-[13px]", active ? "text-foreground" : "text-muted-foreground")}>
+                {thread.title}
+              </p>
+              {thread.external ? (
+                <span className="shrink-0 rounded-md border border-border px-1 text-[10px] text-faint">external</span>
+              ) : null}
+            </div>
           )}
         </div>
 
@@ -374,6 +383,7 @@ export function Sidebar() {
   const [worktreeProject, setWorktreeProject] = useState<Project | null>(null);
   const [graphProject, setGraphProject] = useState<Project | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [projectFilter, setProjectFilter] = usePersistedState<string>("sidebar.project", ALL_PROJECTS);
   const [statusFilter, setStatusFilter] = usePersistedState<StatusFilter>("sidebar.status", "all");
 
@@ -446,6 +456,29 @@ export function Sidebar() {
         <div className="min-w-0 flex-1">
           <ProjectFilter projects={projects} selected={selected} onSelect={setProjectFilter} />
         </div>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7"
+              disabled={refreshing}
+              onClick={async () => {
+                setRefreshing(true);
+                try {
+                  await api.refreshExternal();
+                } catch (e) {
+                  useStore.setState({ error: (e as Error).message });
+                } finally {
+                  setRefreshing(false);
+                }
+              }}
+            >
+              <RefreshIcon />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Find sessions from other apps</TooltipContent>
+        </Tooltip>
         <StatusFilterMenu value={statusFilter} onSelect={setStatusFilter} />
         {selected?.isGit ? <WorktreeButton project={selected} onOpen={setWorktreeProject} /> : null}
         {selected?.isGit ? <GraphButton project={selected} onOpen={setGraphProject} /> : null}

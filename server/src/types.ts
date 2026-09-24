@@ -58,6 +58,8 @@ export interface Thread {
   sessionId: string | null;
   status: ThreadStatus;
   archived: boolean;
+  external: boolean;
+  cwdMissing: boolean;
   layout: EditorLayout | null;
   createdAt: number;
   updatedAt: number;
