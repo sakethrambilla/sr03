@@ -734,3 +734,74 @@ test("emits one task row for a Cursor subagent", async (context) => {
   assert.equal(task?.status, "done");
   assert.ok(task?.endedAt !== null && task.endedAt - task.startedAt === 4200);
 });
+
+const REJECTING_LOAD_AGENT = `#!/usr/bin/env node
+const readline = require("node:readline");
+const fs = require("node:fs");
+const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+(async () => {
+for await (const line of readline.createInterface({ input: process.stdin })) {
+  const message = JSON.parse(line);
+  fs.appendFileSync(process.env.MOCK_CURSOR_LOG, JSON.stringify(message) + "\\n");
+  if (message.id === undefined || message.method === undefined) continue;
+  if (message.method === "session/load") {
+    send({ jsonrpc: "2.0", id: message.id, error: { code: -32602, message: "Invalid params" } });
+  } else if (message.method === "session/new") {
+    send({ jsonrpc: "2.0", id: message.id, result: { sessionId: "fresh-session" } });
+  } else if (message.method === "session/prompt") {
+    send({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } });
+  } else {
+    send({ jsonrpc: "2.0", id: message.id, result: {} });
+  }
+}
+})();
+`;
+
+test("seeds a fresh session with the transcript when session/load is refused", async (context) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "sr03-cursor-seed-"));
+  const binary = path.join(directory, "cursor-agent");
+  const logPath = path.join(directory, "messages.ndjson");
+  await fs.writeFile(binary, REJECTING_LOAD_AGENT, { mode: 0o755 });
+  const previousPath = process.env.PATH;
+  const previousData = process.env.SR03_DATA_DIR;
+  const previousLog = process.env.MOCK_CURSOR_LOG;
+  process.env.PATH = `${directory}${path.delimiter}${previousPath ?? ""}`;
+  process.env.SR03_DATA_DIR = path.join(directory, "data");
+  process.env.MOCK_CURSOR_LOG = logPath;
+  context.after(async () => {
+    process.env.PATH = previousPath;
+    if (previousData === undefined) delete process.env.SR03_DATA_DIR;
+    else process.env.SR03_DATA_DIR = previousData;
+    if (previousLog === undefined) delete process.env.MOCK_CURSOR_LOG;
+    else process.env.MOCK_CURSOR_LOG = previousLog;
+    await fs.rm(directory, { recursive: true, force: true });
+  });
+
+  const { cursorProvider } = await import("./cursor.ts");
+  const { messages, projects, threads } = await import("../db.ts");
+  const project = projects.create({ path: directory, name: "seed", isGit: false });
+  const created = threads.createExternal({
+    projectId: project.id, providerId: "cursor", title: "seed", cwd: directory,
+    model: "auto", permissionMode: "ask", effort: "high",
+    sessionId: "cli-chat", source: path.join(directory, "store.db"), createdAt: 1, updatedAt: 1,
+  });
+  messages.append({ threadId: created.id, role: "user", text: "Remember OTTER." });
+  messages.append({ threadId: created.id, role: "assistant", text: "OK" });
+  messages.append({ threadId: created.id, role: "user", text: "Which word?" });
+
+  const events: AgentEvent[] = [];
+  const session = await cursorProvider.open(created, (event) => events.push(event), new AbortController().signal);
+  context.after(() => session.close());
+  await session.send("Which word?");
+  await session.send("And again?");
+
+  const started = events.find((event) => event.type === "session.started");
+  assert.equal(started?.type === "session.started" ? started.sessionId : null, "fresh-session");
+  const log = (await fs.readFile(logPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+  const prompts = log
+    .filter((message) => message.method === "session/prompt")
+    .map((message) => message.params.prompt[0].text as string);
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[0], /<transcript>\nUser: Remember OTTER\.\nAssistant: OK\n<\/transcript>\n\nWhich word\?$/);
+  assert.equal(prompts[1], "And again?");
+});
