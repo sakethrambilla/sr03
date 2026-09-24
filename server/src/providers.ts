@@ -43,7 +43,7 @@ export const findClaude = () => findExecutable(["claude"], CLAUDE_FALLBACKS);
 export const findCursor = () => findExecutable(["cursor-agent", "agent"], CURSOR_FALLBACKS);
 export const findCodex = () => findExecutable(["codex"], CODEX_FALLBACKS);
 
-async function claudeVersion(binary: string): Promise<string | null> {
+export async function claudeVersion(binary: string): Promise<string | null> {
   const { stdout } = await exec(binary, ["--version"]).catch(() => ({ stdout: "" }));
   return stdout.trim().split(/\s+/)[0] || null;
 }
