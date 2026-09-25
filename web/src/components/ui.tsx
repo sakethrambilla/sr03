@@ -59,9 +59,12 @@ import {
   Star,
   Trash2,
   Undo2,
+  Scan,
   Workflow,
   X,
   Zap,
+  ZoomIn,
+  ZoomOut,
   type LucideIcon,
 } from "lucide-react";
 
@@ -272,6 +275,9 @@ const ICONS = {
   PullIcon: ArrowDownToLine,
   PushIcon: ArrowUpFromLine,
   SpinnerIcon: LoaderCircle,
+  ZoomInIcon: ZoomIn,
+  ZoomOutIcon: ZoomOut,
+  FitIcon: Scan,
 } as const;
 
 function icon(Source: LucideIcon) {
@@ -328,6 +334,9 @@ export const FavoriteIcon = icon(ICONS.FavoriteIcon);
 export const PullIcon = icon(ICONS.PullIcon);
 export const PushIcon = icon(ICONS.PushIcon);
 export const SpinnerIcon = icon(ICONS.SpinnerIcon);
+export const ZoomInIcon = icon(ICONS.ZoomInIcon);
+export const ZoomOutIcon = icon(ICONS.ZoomOutIcon);
+export const FitIcon = icon(ICONS.FitIcon);
 
 export interface MenuItem {
   id: string;
