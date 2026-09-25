@@ -258,6 +258,7 @@ export const FileView = memo(function FileView({
   // to save from. excalidraw previewing is the opposite: it's the editor, and stays savable
   const sourceHidden = (markdown || diagram) && preview;
   const drawing = excalidraw && preview;
+  const charting = diagram && preview;
   const grid = SPREADSHEET.test(path) || (delimited && preview);
   const previewable = markdown || delimited || diagram || excalidraw;
   const previewLabel = delimited
@@ -521,6 +522,11 @@ export const FileView = memo(function FileView({
             />
           ) : null}
         </div>
+      ) : charting ? (
+        <div className="flex min-h-0 flex-1 flex-col">
+          {error ? <p className="px-4 py-4 text-[12px] text-destructive">{error}</p> : null}
+          {file && !file.binary ? <Mermaid source={text} canvas /> : null}
+        </div>
       ) : (
         <div ref={scroller} className="min-h-0 flex-1 overflow-auto">
           {error ? <p className="px-4 py-4 text-[12px] text-destructive">{error}</p> : null}
@@ -531,12 +537,6 @@ export const FileView = memo(function FileView({
           {file && !file.binary && markdown && preview ? (
             <div className="mx-auto max-w-3xl px-6 py-6">
               <Markdown text={text} className="text-[14px] leading-[1.7] text-foreground" />
-            </div>
-          ) : null}
-
-          {file && !file.binary && diagram && preview ? (
-            <div className="px-6 py-6">
-              <Mermaid source={text} />
             </div>
           ) : null}
 
