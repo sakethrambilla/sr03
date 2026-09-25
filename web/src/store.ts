@@ -750,10 +750,9 @@ export const useStore = create<Store>((set, get) => ({
     });
   },
 
-  // A cold read may spawn a CLI, so each provider-folder pair is only asked once.
+  // the server answers from cache and refreshes behind it, so asking on every "/" is cheap
   loadCommands: async (providerId, cwd) => {
     const key = commandKey(providerId, cwd);
-    if (get().commandsByCwd[key]) return;
     const commands = await api.commands(providerId, cwd).then(
       (body) => body.commands,
       () => null,
@@ -983,6 +982,11 @@ export const useStore = create<Store>((set, get) => ({
         set((state) => ({
           commandsByCwd: { ...state.commandsByCwd, [key]: event.commands },
         }));
+        return;
+      }
+      case "commands.updated": {
+        const key = commandKey(event.providerId, event.cwd);
+        set((state) => ({ commandsByCwd: { ...state.commandsByCwd, [key]: event.commands } }));
         return;
       }
       // the server is authoritative for what is still outstanding, so this replaces rather than merges

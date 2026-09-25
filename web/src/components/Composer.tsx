@@ -393,8 +393,7 @@ export function Composer({
   const typing = capabilities.slashCommands ? (/^\/(\S*)$/.exec(text)?.[1] ?? null) : null;
   const slashing = typing !== null;
 
-  // a cold read spawns a CLI of its own, so the list is asked for on the first "/" rather than
-  // on every mount — most sessions never type one
+  // asked for on each "/" rather than on mount — most sessions never type one
   useEffect(() => {
     if (cwd && slashing) void loadCommands(providerId, cwd);
   }, [providerId, cwd, slashing, loadCommands]);
