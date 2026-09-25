@@ -30,6 +30,17 @@ export interface RepoInfo {
   dirty: number;
 }
 
+// the main checkout a worktree belongs to, or the repo root itself; null outside git or in a bare repo
+export async function mainRepoRoot(dir: string): Promise<string | null> {
+  try {
+    const common = (await git(dir, ["rev-parse", "--path-format=absolute", "--git-common-dir"])).trim();
+    if (path.basename(common) !== ".git") return null;
+    return await fs.realpath(path.dirname(common));
+  } catch {
+    return null;
+  }
+}
+
 export async function repoInfo(dir: string): Promise<RepoInfo> {
   try {
     const root = (await git(dir, ["rev-parse", "--show-toplevel"])).trim();

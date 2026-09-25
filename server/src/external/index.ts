@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { publish } from "../bus.ts";
 import { knownSessions, messages, projects, threads } from "../db.ts";
-import { repoInfo } from "../git.ts";
+import { mainRepoRoot } from "../git.ts";
 import { currentProvider, defaultEffortFor } from "../models.ts";
 import { truncate } from "../agents/runtime.ts";
 import type { ProviderId, Thread } from "../types.ts";
@@ -27,8 +27,63 @@ export function discover(readers: ExternalReader[] = defaultReaders()): Promise<
   return running;
 }
 
+const TEMP_ROOTS = ["/tmp", "/private/tmp"];
+
+function isTemp(dir: string): boolean {
+  return TEMP_ROOTS.some((root) => dir === root || dir.startsWith(root + path.sep));
+}
+
+async function exists(dir: string): Promise<boolean> {
+  return fs.stat(dir).then((s) => s.isDirectory(), () => false);
+}
+
+// where a session's folder belongs: the main checkout for a worktree (even a deleted one, via its
+// nearest surviving ancestor), the folder itself outside git, or null for temp and vanished folders
+async function placement(cwd: string): Promise<{ dir: string; root: string } | null> {
+  const resolved = path.resolve(cwd);
+  // on macOS /tmp is a symlink to /private/tmp, and providers record either spelling
+  const dir = await fs.realpath(resolved).catch(() => resolved);
+  if (isTemp(dir) || isTemp(resolved)) return null;
+  if (await exists(dir)) return { dir, root: (await mainRepoRoot(dir)) ?? dir };
+  let ancestor = path.dirname(dir);
+  while (ancestor !== path.dirname(ancestor) && !(await exists(ancestor))) ancestor = path.dirname(ancestor);
+  const root = await mainRepoRoot(ancestor);
+  return root ? { dir, root } : null;
+}
+
+async function projectFor(root: string) {
+  const existing = projects.byPath(root);
+  if (existing) return existing;
+  const isGit = (await mainRepoRoot(root)) === root;
+  return projects.create({ path: root, name: path.basename(root), isGit });
+}
+
+// folds projects an earlier discovery made per worktree or temp folder into their main repo;
+// projects holding any thread sr03 started itself are left alone
+async function consolidate(): Promise<boolean> {
+  let changed = false;
+  const all = threads.list();
+  for (const project of projects.list()) {
+    const own = all.filter((t) => t.projectId === project.id);
+    if (own.length === 0 || own.some((t) => !t.external)) continue;
+    const place = await placement(project.path);
+    if (place && place.root === project.path) continue;
+    if (place) {
+      const target = await projectFor(place.root);
+      for (const t of own) threads.move(t.id, target.id, t.cwd !== place.root);
+    }
+    projects.remove(project.id);
+    changed = true;
+  }
+  return changed;
+}
+
 async function run(readers: ExternalReader[]): Promise<number> {
   let added = 0;
+  const consolidated = await consolidate().catch((error) => {
+    console.error(`[external] consolidate failed: ${(error as Error).message}`);
+    return false;
+  });
   for (const reader of readers) {
     let found: ExternalSession[] = [];
     try {
@@ -39,20 +94,16 @@ async function run(readers: ExternalReader[]): Promise<number> {
     for (const s of found) {
       try {
         if (knownSessions.has(s.providerId, s.sessionId)) continue;
-        const resolved = path.resolve(s.cwd);
-        // on macOS /tmp is a symlink to /private/tmp, and providers record either spelling
-        const dir = await fs.realpath(resolved).catch(() => resolved);
-        let project = projects.byPath(dir) ?? projects.byPath(resolved);
-        if (!project) {
-          const { isGit } = await repoInfo(dir).catch(() => ({ isGit: false }));
-          project = projects.create({ path: dir, name: path.basename(dir), isGit });
-        }
+        const place = await placement(s.cwd);
+        if (!place) continue;
+        const project = await projectFor(place.root);
         const defaults = currentProvider(s.providerId).defaults;
         const thread = threads.createExternal({
           projectId: project.id,
           providerId: s.providerId,
           title: s.title,
-          cwd: dir,
+          cwd: place.dir,
+          isWorktree: place.dir !== place.root,
           model: defaults.model,
           permissionMode: defaults.permissionMode,
           effort: defaultEffortFor(s.providerId, defaults.model),
@@ -68,7 +119,7 @@ async function run(readers: ExternalReader[]): Promise<number> {
       }
     }
   }
-  if (added > 0) publish({ type: "projects.changed" });
+  if (added > 0 || consolidated) publish({ type: "projects.changed" });
   return added;
 }
 
