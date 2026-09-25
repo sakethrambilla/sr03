@@ -1,10 +1,11 @@
-// Renders a mermaid diagram from its source text. Used by both the .mmd file preview and any
-// ```mermaid fence in markdown (assistant replies and .md previews share the same component).
+// Renders a mermaid diagram from its source text. The .mmd file preview renders through a pan/zoom
+// canvas; any ```mermaid fence in markdown (assistant replies and .md previews) renders inline.
 import { useEffect, useState } from "react";
 import type { Mermaid as MermaidApi } from "mermaid";
 
 import { resolveDark, systemPrefersDark } from "../lib/appearance.ts";
 import { useStore } from "../store.ts";
+import { DiagramCanvas } from "./DiagramCanvas.tsx";
 import { cn } from "./ui.tsx";
 
 // debounced past a keystroke so retyping doesn't queue a render per character
@@ -60,7 +61,15 @@ function themeVariables(key: string): Record<string, string> {
   return variables;
 }
 
-export function Mermaid({ source, className }: { source: string; className?: string }) {
+export function Mermaid({
+  source,
+  className,
+  canvas,
+}: {
+  source: string;
+  className?: string;
+  canvas?: boolean;
+}) {
   const [svg, setSvg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // an already-rendered diagram has no other reason to re-run once its source stops changing,
@@ -114,6 +123,21 @@ export function Mermaid({ source, className }: { source: string; className?: str
 
   if (!svg && !error) {
     return <p className={cn("text-[12px] text-faint", className)}>Nothing to render yet.</p>;
+  }
+
+  const errorBanner = error ? (
+    <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 font-mono text-[12px] whitespace-pre-wrap text-destructive">
+      {error}
+    </p>
+  ) : null;
+
+  if (canvas) {
+    return (
+      <div className={cn("flex min-h-0 flex-1 flex-col", className)}>
+        {errorBanner ? <div className="px-4 pt-3">{errorBanner}</div> : null}
+        {svg ? <DiagramCanvas svg={svg} dimmed={!!error} /> : null}
+      </div>
+    );
   }
 
   return (

@@ -272,6 +272,7 @@ export type ServerEvent =
   | { type: "thread.questions"; questions: PendingQuestion[] }
   | { type: "thread.tasks"; threadId: string; tasks: ThreadTask[] }
   | { type: "thread.commands"; threadId: string; commands: SlashCommand[] }
+  | { type: "commands.updated"; providerId: ProviderId; cwd: string; commands: SlashCommand[] }
   | { type: "usage"; threadId: string | null; usage: Usage }
   | { type: "resources"; resources: Resources }
   | { type: "thread.updated"; thread: Thread }
@@ -283,7 +284,8 @@ export type ServerEvent =
   | { type: "pty.created"; threadId: string; terminalId: string }
   | { type: "pty.exit"; threadId: string; terminalId: string; code: number }
   | { type: "fs.changed"; threadId: string }
-  | { type: "projects.changed" };
+  | { type: "projects.changed" }
+  | { type: "settings.changed"; key: string; value: string };
 
 // the only traffic that flows client -> server over the socket; everything else is REST
 export type ClientMessage =

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
+import { execSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -110,4 +111,45 @@ test("a cwd reached through a symlink joins the real path's project", async () =
   assert.equal(await discover([fake([{ ...session("s-link"), cwd: link }], msgs)]), 1);
   assert.equal(projects.list().length, before);
   assert.equal(externalBy("s-link")[0]?.projectId, projects.byPath(work)!.id);
+});
+
+const repo = path.join(work, "repo");
+const wt = path.join(work, "repo-wt");
+const sh = (cwd: string, cmd: string) => execSync(cmd, { cwd, stdio: "ignore" });
+
+test("a worktree session joins its main repo's project", async () => {
+  await fs.mkdir(repo);
+  sh(repo, "git init -q -b main && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init");
+  sh(repo, `git worktree add -q ${wt}`);
+  assert.equal(await discover([fake([{ ...session("s-wt"), cwd: wt }], msgs)]), 1);
+  const [t] = externalBy("s-wt");
+  assert.equal(t!.projectId, projects.byPath(repo)!.id);
+  assert.equal(t!.cwd, wt);
+  assert.equal(t!.isWorktree, true);
+  assert.equal(projects.byPath(wt), null);
+});
+
+test("a session in a deleted worktree still joins its repo", async () => {
+  const gone = path.join(repo, ".claude", "worktrees", "gone");
+  assert.equal(await discover([fake([{ ...session("s-gone"), cwd: gone }], msgs)]), 1);
+  assert.equal(externalBy("s-gone")[0]!.projectId, projects.byPath(repo)!.id);
+});
+
+test("sessions in temp or vanished folders are skipped", async () => {
+  const before = projects.list().length;
+  const sessions = [{ ...session("s-tmp"), cwd: "/tmp/sr03-x" }, { ...session("s-void"), cwd: path.join(dataDir, "nope") }];
+  assert.equal(await discover([fake(sessions, msgs)]), 0);
+  assert.equal(projects.list().length, before);
+});
+
+test("an earlier per-worktree project is folded into the repo", async () => {
+  const stray = projects.create({ path: wt, name: "repo-wt", isGit: true });
+  const t = threads.createExternal({
+    projectId: stray.id, providerId: "claude", title: "old", cwd: wt, isWorktree: false, model: "m",
+    permissionMode: "default", effort: "medium", sessionId: "s-old", source: "x", createdAt: 1, updatedAt: 1,
+  });
+  await discover([fake([], msgs)]);
+  assert.equal(projects.byId(stray.id), null);
+  assert.equal(threads.byId(t.id)!.projectId, projects.byPath(repo)!.id);
+  assert.equal(threads.byId(t.id)!.isWorktree, true);
 });

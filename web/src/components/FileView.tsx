@@ -6,6 +6,8 @@ import { Fragment, memo, useEffect, useMemo, useRef, useState, type KeyboardEven
 import { api } from "../lib/api.ts";
 import type { FileLinks, LineLink } from "../lib/fileref.ts";
 import type { ChangedFile, Thread } from "../lib/types.ts";
+import { matchesStroke, resolveBindings } from "../lib/shortcuts.ts";
+import { useShortcut } from "../lib/useShortcut.ts";
 import { useStore } from "../store.ts";
 import { ExcalidrawView } from "./ExcalidrawView.tsx";
 import { Markdown } from "./Markdown.tsx";
@@ -258,6 +260,7 @@ export const FileView = memo(function FileView({
   // to save from. excalidraw previewing is the opposite: it's the editor, and stays savable
   const sourceHidden = (markdown || diagram) && preview;
   const drawing = excalidraw && preview;
+  const charting = diagram && preview;
   const grid = SPREADSHEET.test(path) || (delimited && preview);
   const previewable = markdown || delimited || diagram || excalidraw;
   const previewLabel = delimited
@@ -390,23 +393,15 @@ export const FileView = memo(function FileView({
   useEffect(() => {
     if (!active) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
-        event.preventDefault();
-        void save();
-        return;
-      }
-      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "v") {
-        if (!previewable) return;
-        event.preventDefault();
-        togglePreview(!preview);
-        return;
-      }
       // undo and redo belong to the textarea, so only Escape is handled here
       if (event.key === "Escape" && !syncDrawing()) onClose(path);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [active, onClose, dirty, saving, path, thread.id, previewable, preview, drawing, excalidraw]);
+
+  useShortcut("save", () => void save(), active);
+  useShortcut("togglePreview", () => togglePreview(!preview), active && previewable);
 
   // applied through insertText rather than by assigning value, so the textarea's own
   // undo stack survives an indent or a comment toggle
@@ -426,7 +421,7 @@ export const FileView = memo(function FileView({
     const sel = { start: area.selectionStart, end: area.selectionEnd };
     const unit = indentUnit(area.value, path);
     const mod = event.metaKey || event.ctrlKey;
-    if (mod && event.key === "/") {
+    if (matchesStroke(event, resolveBindings(useStore.getState().shortcuts).toggleComment)) {
       const edit = comment(area.value, sel, path);
       if (!edit) return;
       event.preventDefault();
@@ -521,6 +516,11 @@ export const FileView = memo(function FileView({
             />
           ) : null}
         </div>
+      ) : charting ? (
+        <div className="flex min-h-0 flex-1 flex-col">
+          {error ? <p className="px-4 py-4 text-[12px] text-destructive">{error}</p> : null}
+          {file && !file.binary ? <Mermaid source={text} canvas /> : null}
+        </div>
       ) : (
         <div ref={scroller} className="min-h-0 flex-1 overflow-auto">
           {error ? <p className="px-4 py-4 text-[12px] text-destructive">{error}</p> : null}
@@ -531,12 +531,6 @@ export const FileView = memo(function FileView({
           {file && !file.binary && markdown && preview ? (
             <div className="mx-auto max-w-3xl px-6 py-6">
               <Markdown text={text} className="text-[14px] leading-[1.7] text-foreground" />
-            </div>
-          ) : null}
-
-          {file && !file.binary && diagram && preview ? (
-            <div className="px-6 py-6">
-              <Mermaid source={text} />
             </div>
           ) : null}
 

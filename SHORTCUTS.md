@@ -4,13 +4,16 @@ Every shortcut sr03 handles. `⌘` is `Ctrl` on Linux and Windows — each bindi
 The desktop app receives all of these. In a browser tab (`pnpm dev`) the browser claims some of
 them first — Chrome keeps `⌘⇧N`, `⌘W` and `⌘N` for itself — so test those in the packaged app.
 
+The `⌘` shortcuts under **Anywhere** and **Session view**, and the File editor's `⌘S`, `⌘/` and `⌘⇧V`,
+are defaults: change, unbind or reset them under **Settings → Shortcuts**.
+
 ## Anywhere
 
 | Shortcut | Action | Code |
 | --- | --- | --- |
-| `⌘⇧N` | New session — same as the sidebar's **New** button, opens the draft where you pick a folder | `web/src/App.tsx` |
-| `⌘⇧B` | Show / hide the sidebar | `web/src/App.tsx` |
-| `⌘⇧X` | Archive every idle session in the open session's folder, or in the sidebar's picked folder | `web/src/App.tsx` |
+| `⌘⇧N` | New session — same as the sidebar's **New** button, opens the draft where you pick a folder | `web/src/App.tsx`, `web/src/lib/shortcuts.ts` |
+| `⌘⇧B` | Show / hide the sidebar | `web/src/App.tsx`, `web/src/lib/shortcuts.ts` |
+| `⌘⇧X` | Archive every idle session in the open session's folder, or in the sidebar's picked folder | `web/src/App.tsx`, `web/src/lib/shortcuts.ts` |
 | `Esc` | Close settings | `web/src/components/SettingsView.tsx` |
 
 ## Session view
@@ -19,16 +22,16 @@ Active while a session is open.
 
 | Shortcut | Action | Code |
 | --- | --- | --- |
-| `⌘O` | Open the session's folder in the preferred app (the one marked in the **Open** menu) | `web/src/components/ChatView.tsx` |
-| `⌘P` | Quick open — files by name, `%` for text across the folder | `web/src/components/ChatView.tsx` |
-| `⌘⇧F` | Quick open, already switched to text | `web/src/components/ChatView.tsx` |
-| `⌘B` | Show / hide the file tree | `web/src/components/ChatView.tsx` |
-| `⌘J` | Show / hide the terminal | `web/src/components/ChatView.tsx` |
-| `⌘⇧A` | Show / hide the agents panel, when the provider reports subagent tasks | `web/src/components/ChatView.tsx` |
-| `⌘\` | Split the focused group's active tab into a new group, along the session's axis | `web/src/components/ChatView.tsx` |
-| `⌘K` then `←` / `→` | Move focus to the previous / next editor group | `web/src/components/ChatView.tsx` |
-| `⌘W` | Close the focused group's active file or subagent tab — the chat tab is pinned | `web/src/components/ChatView.tsx` |
-| `⌘K` then `W` | Close every file tab, in every group | `web/src/components/ChatView.tsx` |
+| `⌘O` | Open the session's folder in the preferred app (the one marked in the **Open** menu) | `web/src/components/ChatView.tsx`, `web/src/lib/shortcuts.ts` |
+| `⌘P` | Quick open — files by name, `%` for text across the folder | `web/src/components/ChatView.tsx`, `web/src/lib/shortcuts.ts` |
+| `⌘⇧F` | Quick open, already switched to text | `web/src/components/ChatView.tsx`, `web/src/lib/shortcuts.ts` |
+| `⌘B` | Show / hide the file tree | `web/src/components/ChatView.tsx`, `web/src/lib/shortcuts.ts` |
+| `⌘J` | Show / hide the terminal | `web/src/components/ChatView.tsx`, `web/src/lib/shortcuts.ts` |
+| `⌘⇧A` | Show / hide the agents panel, when the provider reports subagent tasks | `web/src/components/ChatView.tsx`, `web/src/lib/shortcuts.ts` |
+| `⌘\` | Split the focused group's active tab into a new group, along the session's axis | `web/src/components/ChatView.tsx`, `web/src/lib/shortcuts.ts` |
+| `⌘K` then `←` / `→` | Move focus to the previous / next editor group | `web/src/components/ChatView.tsx`, `web/src/lib/shortcuts.ts` |
+| `⌘W` | Close the focused group's active file or subagent tab — the chat tab is pinned | `web/src/components/ChatView.tsx`, `web/src/lib/shortcuts.ts` |
+| `⌘K` then `W` | Close every file tab, in every group | `web/src/components/ChatView.tsx`, `web/src/lib/shortcuts.ts` |
 | `Esc` | Cancel a tab drag, leaving the layout untouched | `web/src/components/EditorGroups.tsx` |
 
 ## Quick open
@@ -58,11 +61,11 @@ group only — the other groups' files ignore them.
 
 | Shortcut | Action | Code |
 | --- | --- | --- |
-| `⌘S` | Save | `web/src/components/FileView.tsx` |
+| `⌘S` | Save | `web/src/components/FileView.tsx`, `web/src/lib/shortcuts.ts` |
 | `Tab` / `⇧Tab` | Indent / outdent the caret's line, or every selected line | `web/src/components/FileView.tsx` |
 | `⏎` | Keep the line's indent, one level deeper after `:` (Python) or an open bracket | `web/src/components/FileView.tsx` |
-| `⌘/` | Comment / uncomment the selected lines | `web/src/components/FileView.tsx` |
-| `⌘⇧V` | Toggle preview — Markdown, Mermaid, Excalidraw, CSV and TSV only | `web/src/components/FileView.tsx` |
+| `⌘/` | Comment / uncomment the selected lines | `web/src/components/FileView.tsx`, `web/src/lib/shortcuts.ts` |
+| `⌘⇧V` | Toggle preview — Markdown, Mermaid, Excalidraw, CSV and TSV only | `web/src/components/FileView.tsx`, `web/src/lib/shortcuts.ts` |
 | `Esc` | Close the file, only when it has no unsaved changes | `web/src/components/FileView.tsx` |
 | `⌘`-click an import | Open that file | `web/src/components/FileView.tsx` |
 

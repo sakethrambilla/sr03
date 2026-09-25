@@ -14,6 +14,8 @@ import {
   watchSystemMode,
 } from "./lib/appearance.ts";
 import type { Appearance } from "./lib/appearance.ts";
+import { parseOverrides } from "./lib/shortcuts.ts";
+import type { Binding, CommandId, Overrides } from "./lib/shortcuts.ts";
 import { PANEL_DEFAULTS } from "./lib/panels.ts";
 import type { PanelId } from "./lib/panels.ts";
 import type {
@@ -148,6 +150,7 @@ interface Store extends AppState {
   // its cache and pushes each fresh probe, so this is empty only until the first load resolves.
   providerStatuses: ProviderStatus[];
   appearance: Appearance;
+  shortcuts: Overrides;
   // threads whose turn ended while you were somewhere else, cleared when you open them
   finished: Record<string, true>;
   error: string | null;
@@ -186,6 +189,10 @@ interface Store extends AppState {
   setWallpaper: (file: File) => Promise<string | null>;
   removeWallpaper: () => Promise<void>;
   restoreAppearance: () => Promise<void>;
+  restoreShortcuts: () => Promise<void>;
+  setShortcut: (id: CommandId, binding: Binding | null) => void;
+  resetShortcut: (id: CommandId) => void;
+  resetAllShortcuts: () => void;
   applyEvent: (event: ServerEvent) => void;
   toggleSidebar: () => void;
   setPanelWidth: (panel: PanelId, width: number) => void;
@@ -346,6 +353,12 @@ function upsertThread(threads: Thread[], thread: Thread): Thread[] {
 }
 
 const APPEARANCE_KEY = "appearance";
+const SHORTCUTS_KEY = "shortcuts";
+const EMPTY_OVERRIDES: Overrides = {};
+
+function saveShortcuts(next: Overrides): void {
+  void api.saveSetting(SHORTCUTS_KEY, JSON.stringify(next)).catch(() => undefined);
+}
 
 // a stored wallpaper whose file is gone is forgotten, so the picker offers "Choose image…" again
 function forgetMissingWallpaper(): void {
@@ -379,6 +392,7 @@ export const useStore = create<Store>((set, get) => ({
   resources: null,
   providerStatuses: [],
   appearance: startingAppearance,
+  shortcuts: EMPTY_OVERRIDES,
   finished: loadFinished(),
   error: null,
   booted: false,
@@ -420,7 +434,7 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   bootstrap: async () => {
-    await Promise.all([get().restoreAppearance(), get().refreshState()]);
+    await Promise.all([get().restoreAppearance(), get().restoreShortcuts(), get().refreshState()]);
     const { threads, activeThreadId } = get();
     const next = activeThreadId ?? threads[0]?.id ?? null;
     if (next) await get().openThread(next);
@@ -760,10 +774,9 @@ export const useStore = create<Store>((set, get) => ({
     });
   },
 
-  // A cold read may spawn a CLI, so each provider-folder pair is only asked once.
+  // the server answers from cache and refreshes behind it, so asking on every "/" is cheap
   loadCommands: async (providerId, cwd) => {
     const key = commandKey(providerId, cwd);
-    if (get().commandsByCwd[key]) return;
     const commands = await api.commands(providerId, cwd).then(
       (body) => body.commands,
       () => null,
@@ -784,6 +797,29 @@ export const useStore = create<Store>((set, get) => ({
     } catch {
       // a value we can't read is a value we leave alone
     }
+  },
+
+  restoreShortcuts: async () => {
+    const body = await api.settings().catch(() => null);
+    if (body) set({ shortcuts: parseOverrides(body.settings[SHORTCUTS_KEY]) });
+  },
+
+  setShortcut: (id, binding) => {
+    const next = { ...get().shortcuts, [id]: binding };
+    set({ shortcuts: next });
+    saveShortcuts(next);
+  },
+
+  resetShortcut: (id) => {
+    const next = { ...get().shortcuts };
+    delete next[id];
+    set({ shortcuts: next });
+    saveShortcuts(next);
+  },
+
+  resetAllShortcuts: () => {
+    set({ shortcuts: EMPTY_OVERRIDES });
+    saveShortcuts(EMPTY_OVERRIDES);
   },
 
   // a turn can add or delete files, so this is re-read rather than cached for the session
@@ -995,6 +1031,11 @@ export const useStore = create<Store>((set, get) => ({
         }));
         return;
       }
+      case "commands.updated": {
+        const key = commandKey(event.providerId, event.cwd);
+        set((state) => ({ commandsByCwd: { ...state.commandsByCwd, [key]: event.commands } }));
+        return;
+      }
       // the server is authoritative for what is still outstanding, so this replaces rather than merges
       case "thread.approvals": {
         const byThread: Record<string, PendingApproval[]> = {};
@@ -1036,6 +1077,10 @@ export const useStore = create<Store>((set, get) => ({
       }
       case "projects.changed": {
         void get().refreshState();
+        return;
+      }
+      case "settings.changed": {
+        if (event.key === SHORTCUTS_KEY) set({ shortcuts: parseOverrides(event.value) });
         return;
       }
     }
