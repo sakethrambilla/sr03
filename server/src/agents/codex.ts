@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 
+import { publish } from "../bus.ts";
 import { commandCache } from "../db.ts";
 import { currentProvider, findModel } from "../models.ts";
 import { findCodex } from "../providers.ts";
@@ -22,6 +23,7 @@ import type {
   Usage,
 } from "../types.ts";
 import { spawnAcp, type AcpConnection } from "./acp.ts";
+import { createCommandCatalog } from "./commandCatalog.ts";
 import { dedupeByName, scanSkillDirectories } from "./skillScan.ts";
 import type {
   AgentEventSink,
@@ -114,8 +116,6 @@ const EMPTY_USAGE: Usage = {
 const CODEX_SKILL_ROOTS = [".codex/skills", ".agents/skills"];
 const sessions = new Map<string, CodexNativeSession>();
 const commandsByCwd = new Map<string, SlashCommand[]>();
-const liveRefreshes = new Map<string, Promise<void>>();
-const probesByCwd = new Map<string, Promise<SlashCommand[]>>();
 const usageByThread = new Map<string, Usage>();
 
 function createDeferred<T>(): Deferred<T> {
@@ -439,19 +439,6 @@ async function refreshUsage(session: CodexNativeSession): Promise<void> {
   }
 }
 
-function commandCacheKey(cwd: string): string {
-  return `codex:${cwd}`;
-}
-
-function readCommandCache(cwd: string): SlashCommand[] | null {
-  const row = commandCache.get(commandCacheKey(cwd));
-  return row ? (JSON.parse(row.json) as SlashCommand[]) : null;
-}
-
-function writeCommandCache(cwd: string, commands: SlashCommand[]): void {
-  commandCache.set(commandCacheKey(cwd), JSON.stringify(commands));
-}
-
 async function scanCodexCommands(cwd: string): Promise<SlashCommand[]> {
   const home = os.homedir();
   const roots = [
@@ -501,47 +488,25 @@ async function probeCommands(cwd: string): Promise<SlashCommand[]> {
   }
 }
 
-function refreshLiveCommands(cwd: string): void {
-  if (liveRefreshes.has(cwd)) return;
-  const pending = probeCommands(cwd)
-    .then((live) => {
-      if (live.length) writeCommandCache(cwd, dedupeByName([readCommandCache(cwd) ?? [], live]));
-    })
-    .catch((error) => console.error(`[commands:codex] ${errorMessage(error)}`))
-    .finally(() => liveRefreshes.delete(cwd));
-  liveRefreshes.set(cwd, pending);
-}
+const catalog = createCommandCatalog({
+  providerId: "codex",
+  scan: scanCodexCommands,
+  probe: probeCommands,
+  store: commandCache,
+  publish,
+});
 
 async function warmCommands(cwd: string): Promise<void> {
-  const scanned = await scanCodexCommands(cwd);
-  if (scanned.length) writeCommandCache(cwd, dedupeByName([readCommandCache(cwd) ?? [], scanned]));
-  refreshLiveCommands(cwd);
+  return catalog.refresh(cwd);
 }
 
+// a live session's own list wins; once it closes the catalog does
 function listCommands(cwd: string): Promise<SlashCommand[]> {
   const pushed = commandsByCwd.get(cwd);
-  if (pushed) return Promise.resolve(pushed);
-  const cached = readCommandCache(cwd);
-  if (cached) {
-    refreshLiveCommands(cwd);
-    return Promise.resolve(cached);
+  if (pushed && [...sessions.values()].some((session) => session.cwd === cwd)) {
+    return Promise.resolve(pushed);
   }
-  const known = probesByCwd.get(cwd);
-  if (known) return known;
-  return scanCodexCommands(cwd).then((scanned) => {
-    if (scanned.length) {
-      writeCommandCache(cwd, scanned);
-      refreshLiveCommands(cwd);
-      return scanned;
-    }
-    const pending = probeCommands(cwd).then((commands) => {
-      if (commands.length) writeCommandCache(cwd, commands);
-      else probesByCwd.delete(cwd);
-      return commands;
-    });
-    probesByCwd.set(cwd, pending);
-    return pending;
-  });
+  return catalog.list(cwd);
 }
 
 function completeMessage(session: CodexNativeSession, turn: ActiveTurn): void {
@@ -791,7 +756,7 @@ function registerHandlers(session: CodexNativeSession): void {
     publishUsage(session, params);
   });
   connection.registerNotificationHandler("skills/changed", () => {
-    refreshLiveCommands(session.cwd);
+    catalog.refresh(session.cwd);
   });
 
   connection.registerRequestHandler("item/commandExecution/requestApproval", (params) =>
@@ -1163,7 +1128,7 @@ async function open(
         const commands = parseSkills(listed);
         if (!commands.length || context.disposed) return;
         commandsByCwd.set(thread.cwd, commands);
-        writeCommandCache(thread.cwd, commands);
+        catalog.remember(thread.cwd, commands);
         emit({ type: "commands.changed", commands });
       })
       .catch((error) => console.error(`[codex:${thread.id}] ${errorMessage(error)}`));

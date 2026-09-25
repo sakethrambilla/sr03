@@ -6,7 +6,9 @@ import path from "node:path";
 
 import { EFFORT_ORDER, currentProvider, findModel } from "../models.ts";
 import { findCursor } from "../providers.ts";
+import { publish } from "../bus.ts";
 import { commandCache, messages } from "../db.ts";
+import { createCommandCatalog } from "./commandCatalog.ts";
 import { dedupeByName, scanSkillDirectories } from "./skillScan.ts";
 import type {
   Effort,
@@ -512,38 +514,9 @@ async function scanCursorCommands(cwd: string): Promise<SlashCommand[]> {
   return dedupeByName(lists);
 }
 
-function commandCacheKey(cwd: string): string {
-  return `cursor:${cwd}`;
-}
-
-function readCommandCache(cwd: string): SlashCommand[] | null {
-  const row = commandCache.get(commandCacheKey(cwd));
-  return row ? (JSON.parse(row.json) as SlashCommand[]) : null;
-}
-
-function writeCommandCache(cwd: string, commands: SlashCommand[]): void {
-  commandCache.set(commandCacheKey(cwd), JSON.stringify(commands));
-}
-
-// A cold probe spawns the actual cursor-agent ACP process, so it always runs in the
-// background and merges into the cache rather than being awaited by a request.
-const liveRefreshes = new Map<string, Promise<void>>();
-function refreshLiveCommands(cwd: string): void {
-  if (liveRefreshes.has(cwd)) return;
-  const pending = probeCommands(cwd)
-    .then((live) => {
-      if (live.length) writeCommandCache(cwd, dedupeByName([readCommandCache(cwd) ?? [], live]));
-    })
-    .catch((error) => console.error(`[commands:cursor] ${errorMessage(error)}`))
-    .finally(() => liveRefreshes.delete(cwd));
-  liveRefreshes.set(cwd, pending);
-}
-
-// Populates the disk cache ahead of the first "/" — called when a thread is created.
+// Populates the cache ahead of the first "/" — called when a thread is created.
 async function warmCommands(cwd: string): Promise<void> {
-  const scanned = await scanCursorCommands(cwd);
-  if (scanned.length) writeCommandCache(cwd, dedupeByName([readCommandCache(cwd) ?? [], scanned]));
-  refreshLiveCommands(cwd);
+  return catalog.refresh(cwd);
 }
 
 function handleSessionUpdate(session: CursorNativeSession, params: unknown): void {
@@ -1718,33 +1691,21 @@ async function probeCommands(cwd: string): Promise<SlashCommand[]> {
   }
 }
 
-const probesByCwd = new Map<string, Promise<SlashCommand[]>>();
+const catalog = createCommandCatalog({
+  providerId: "cursor",
+  scan: scanCursorCommands,
+  probe: probeCommands,
+  store: commandCache,
+  publish,
+});
 
+// a live session's own list wins; once it closes the catalog does
 function listCommands(cwd: string): Promise<SlashCommand[]> {
   const pushed = commandsByCwd.get(cwd);
-  if (pushed) return Promise.resolve(pushed);
-  const cached = readCommandCache(cwd);
-  if (cached) {
-    refreshLiveCommands(cwd);
-    return Promise.resolve(cached);
+  if (pushed && [...sessions.values()].some((session) => session.cwd === cwd)) {
+    return Promise.resolve(pushed);
   }
-  const known = probesByCwd.get(cwd);
-  if (known) return known;
-  return scanCursorCommands(cwd).then((scanned) => {
-    if (scanned.length) {
-      writeCommandCache(cwd, scanned);
-      refreshLiveCommands(cwd);
-      return scanned;
-    }
-    // no filesystem match: fall back to the original synchronous live probe
-    const pending = probeCommands(cwd).then((commands) => {
-      if (commands.length) writeCommandCache(cwd, commands);
-      else probesByCwd.delete(cwd);
-      return commands;
-    });
-    probesByCwd.set(cwd, pending);
-    return pending;
-  });
+  return catalog.list(cwd);
 }
 
 export const cursorProvider: AgentProvider = {
