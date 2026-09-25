@@ -46,6 +46,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
   Shapes,
   Sparkles,
@@ -246,6 +247,7 @@ const ICONS = {
   CheckIcon: Check,
   ChevronIcon: ChevronDown,
   RefreshIcon: RefreshCw,
+  ResetIcon: RotateCcw,
   WorktreeIcon: SquareStack,
   SparkleIcon: Sparkles,
   PlusIcon: Plus,
@@ -301,6 +303,7 @@ export const RunIcon = icon(ICONS.RunIcon);
 export const CheckIcon = icon(ICONS.CheckIcon);
 export const ChevronIcon = icon(ICONS.ChevronIcon);
 export const RefreshIcon = icon(ICONS.RefreshIcon);
+export const ResetIcon = icon(ICONS.ResetIcon);
 export const WorktreeIcon = icon(ICONS.WorktreeIcon);
 export const SparkleIcon = icon(ICONS.SparkleIcon);
 export const PlusIcon = icon(ICONS.PlusIcon);

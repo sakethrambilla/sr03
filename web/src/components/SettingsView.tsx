@@ -5,7 +5,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api.ts";
 import { THEMES, WALLPAPER_TYPES, availableFonts } from "../lib/appearance.ts";
 import type { FontGroups, ThemeMode } from "../lib/appearance.ts";
+import { COMMANDS, findConflicts, formatBinding, resolveBindings, strokeFromEvent } from "../lib/shortcuts.ts";
+import type { CommandId, Stroke } from "../lib/shortcuts.ts";
 import type { PermissionMode, ProviderStatus } from "../lib/types.ts";
+import { suspendShortcuts } from "../lib/useShortcut.ts";
 import { useStore } from "../store.ts";
 import { SidebarToggle } from "./Sidebar.tsx";
 import {
@@ -13,12 +16,16 @@ import {
   CloseIcon,
   Dialog,
   RefreshIcon,
+  ResetIcon,
+  SearchIcon,
   SettingsIcon,
   cn,
   usePersistedState,
 } from "./ui.tsx";
 import { ProviderLogo } from "./ProviderLogo.tsx";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -543,9 +550,140 @@ function AppearancePanel() {
   );
 }
 
+const CHORD_MS = 1000;
+
+function ShortcutsPanel() {
+  const shortcuts = useStore((state) => state.shortcuts);
+  const setShortcut = useStore((state) => state.setShortcut);
+  const resetShortcut = useStore((state) => state.resetShortcut);
+  const resetAllShortcuts = useStore((state) => state.resetAllShortcuts);
+  const bindings = useMemo(() => resolveBindings(shortcuts), [shortcuts]);
+  const conflicts = useMemo(() => findConflicts(bindings), [bindings]);
+  const mac = document.documentElement.classList.contains("mac");
+  const [query, setQuery] = useState("");
+  const [recording, setRecording] = useState<CommandId | null>(null);
+  const first = useRef<Stroke | null>(null);
+  const timer = useRef<number | undefined>(undefined);
+
+  const stop = () => {
+    window.clearTimeout(timer.current);
+    first.current = null;
+    setRecording(null);
+    suspendShortcuts(false);
+  };
+
+  useEffect(() => () => {
+    window.clearTimeout(timer.current);
+    suspendShortcuts(false);
+  }, []);
+
+  const commit = (id: CommandId, binding: Stroke[]) => {
+    setShortcut(id, binding);
+    stop();
+  };
+
+  const onRecordKey = (id: CommandId, e: React.KeyboardEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const stroke = strokeFromEvent(e);
+    const head = first.current;
+    if (head === null && e.key === "Escape") return stop();
+    if (stroke === null) return;
+    if (head === null) {
+      if (!e.metaKey && !e.ctrlKey && !e.altKey) return;
+      first.current = stroke;
+      timer.current = window.setTimeout(() => commit(id, [stroke]), CHORD_MS);
+      return;
+    }
+    window.clearTimeout(timer.current);
+    commit(id, [head, stroke]);
+  };
+
+  const q = query.trim().toLowerCase();
+  const visible = COMMANDS.filter(
+    (c) => !q || c.label.toLowerCase().includes(q) || formatBinding(bindings[c.id], mac).toLowerCase().includes(q),
+  );
+  const groups = [...new Set(visible.map((c) => c.group))];
+
+  return (
+    <>
+      <div className="flex items-center gap-4">
+        <div className="min-w-0 flex-1">
+          <h2 className="text-[14px] font-medium">Shortcuts</h2>
+          <p className="mt-0.5 text-[12px] text-muted-foreground">Click a shortcut to record a new one.</p>
+        </div>
+        <Button variant="ghost" disabled={Object.keys(shortcuts).length === 0} onClick={resetAllShortcuts}>
+          Reset all
+        </Button>
+      </div>
+      <div className="relative">
+        <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search shortcuts"
+          className="pl-8"
+        />
+      </div>
+      {groups.map((group) => (
+        <section key={group} className="rounded-lg border border-border/70 bg-card/40">
+          <header className="border-b border-border/60 px-4 py-3">
+            <h2 className="text-[14px] font-medium">{group}</h2>
+          </header>
+          {visible
+            .filter((c) => c.group === group)
+            .map((c) => {
+              const binding = bindings[c.id];
+              return (
+                <div
+                  key={c.id}
+                  className="flex items-center gap-2 border-b border-border/60 px-4 py-2 last:border-b-0"
+                >
+                  <p className="min-w-0 flex-1 truncate text-[13px] text-foreground">{c.label}</p>
+                  {conflicts.has(c.id) ? <Badge variant="destructive">Conflict</Badge> : null}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="min-w-24 font-mono"
+                    onClick={() => {
+                      first.current = null;
+                      setRecording(c.id);
+                      suspendShortcuts(true);
+                    }}
+                    onKeyDown={recording === c.id ? (e) => onRecordKey(c.id, e) : undefined}
+                    onBlur={recording === c.id ? stop : undefined}
+                  >
+                    {recording === c.id ? (
+                      "Press keys…"
+                    ) : binding ? (
+                      formatBinding(binding, mac)
+                    ) : (
+                      <span className="text-faint">Unbound</span>
+                    )}
+                  </Button>
+                  {binding ? (
+                    <Button variant="ghost" size="icon" title="Unbind" onClick={() => setShortcut(c.id, null)}>
+                      <CloseIcon />
+                    </Button>
+                  ) : null}
+                  {c.id in shortcuts ? (
+                    <Button variant="ghost" size="icon" title="Reset to default" onClick={() => resetShortcut(c.id)}>
+                      <ResetIcon />
+                    </Button>
+                  ) : null}
+                </div>
+              );
+            })}
+        </section>
+      ))}
+    </>
+  );
+}
+
 const SECTIONS = [
   { id: "providers", label: "Providers" },
   { id: "appearance", label: "Appearance" },
+  { id: "shortcuts", label: "Shortcuts" },
 ] as const;
 
 type Section = (typeof SECTIONS)[number]["id"];
@@ -652,6 +790,7 @@ export function SettingsView() {
                 <EditorPanel />
               </>
             ) : null}
+            {section === "shortcuts" ? <ShortcutsPanel /> : null}
             {section === "providers" ? (
               <>
                 <section className="rounded-lg border border-border/70 bg-card/40 px-4 py-3">
