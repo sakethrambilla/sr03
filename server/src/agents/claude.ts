@@ -16,6 +16,7 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 
+import { publish } from "../bus.ts";
 import { commandCache, usage as usageStore } from "../db.ts";
 import type {
   ApprovalDecision,
@@ -36,6 +37,7 @@ import type {
   AgentSettingsPatch,
 } from "./types.ts";
 import { claudeExecutable } from "./claudeExecutable.ts";
+import { createCommandCatalog } from "./commandCatalog.ts";
 import { dedupeByName, scanCommandFiles, scanSkillDirectories } from "./skillScan.ts";
 
 // `Effort` spans every provider's ladder; the SDK accepts only Claude Code's five rungs
@@ -454,55 +456,23 @@ async function scanClaudeCommands(cwd: string): Promise<SlashCommand[]> {
   return dedupeByName([projectCommands, userCommands, userSkills, projectSkills]);
 }
 
-function commandCacheKey(cwd: string): string {
-  return `claude:${cwd}`;
-}
+const catalog = createCommandCatalog({
+  providerId: "claude",
+  scan: scanClaudeCommands,
+  probe: readCommands,
+  store: commandCache,
+  publish,
+});
 
-function readCommandCache(cwd: string): SlashCommand[] | null {
-  const row = commandCache.get(commandCacheKey(cwd));
-  return row ? (JSON.parse(row.json) as SlashCommand[]) : null;
-}
-
-function writeCommandCache(cwd: string, commands: SlashCommand[]): void {
-  commandCache.set(commandCacheKey(cwd), JSON.stringify(commands));
-}
-
-// A cold live probe spawns a whole SDK session, so it always runs in the background and
-// merges into the cache rather than being awaited by a request. Claude's built-in commands
-// (/clear, /compact, ...) have no file to scan, so this is what supplies them.
-const liveRefreshes = new Map<string, Promise<void>>();
-function refreshLiveCommands(cwd: string): void {
-  if (liveRefreshes.has(cwd)) return;
-  const pending = readCommands(cwd)
-    .then((live) => writeCommandCache(cwd, dedupeByName([readCommandCache(cwd) ?? [], live])))
-    .catch((error: Error) => console.error(`[commands:claude] ${error.message}`))
-    .finally(() => liveRefreshes.delete(cwd));
-  liveRefreshes.set(cwd, pending);
-}
-
-// Populates the disk cache ahead of the first "/" — called when a thread is created.
+// Populates the cache ahead of the first "/" — called when a thread is created.
 async function warmCommands(cwd: string): Promise<void> {
-  const scanned = await scanClaudeCommands(cwd);
-  if (scanned.length) writeCommandCache(cwd, dedupeByName([readCommandCache(cwd) ?? [], scanned]));
-  refreshLiveCommands(cwd);
-}
-
-async function listCommandsCold(cwd: string): Promise<SlashCommand[]> {
-  const cached = readCommandCache(cwd);
-  if (cached) {
-    refreshLiveCommands(cwd);
-    return cached;
-  }
-  const scanned = await scanClaudeCommands(cwd);
-  writeCommandCache(cwd, scanned);
-  refreshLiveCommands(cwd);
-  return scanned;
+  return catalog.refresh(cwd);
 }
 
 function listCommands(cwd: string): Promise<SlashCommand[]> {
   const live = [...sessions.values()].find((session) => session.cwd === cwd);
-  if (!live) return listCommandsCold(cwd);
-  return live.query.supportedCommands().then(toCommands).catch(() => listCommandsCold(cwd));
+  if (!live) return catalog.list(cwd);
+  return live.query.supportedCommands().then(toCommands).catch(() => catalog.list(cwd));
 }
 
 // the CLI routes this one through canUseTool in every permission mode, unlike every other tool —
