@@ -89,6 +89,8 @@ export const api = {
   removeWallpaper: () => call<{ ok: true }>("/api/wallpaper", { method: "DELETE" }),
   addProject: (path: string) => post<Project>("/api/projects", { path }),
   removeProject: (id: string) => call<{ ok: true }>(`/api/projects/${id}`, { method: "DELETE" }),
+  archiveIdle: (projectId: string, exceptThreadId: string | null) =>
+    post<Thread[]>(`/api/projects/${projectId}/archive-idle`, { exceptThreadId }),
   git: (projectId: string) => call<GitSnapshot>(`/api/projects/${projectId}/git`),
   addWorktree: (projectId: string, input: { branch: string; createBranch: boolean; base?: string }) =>
     post<Worktree>(`/api/projects/${projectId}/worktrees`, input),
