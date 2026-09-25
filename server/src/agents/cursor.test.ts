@@ -781,7 +781,7 @@ test("seeds a fresh session with the transcript when session/load is refused", a
   const { messages, projects, threads } = await import("../db.ts");
   const project = projects.create({ path: directory, name: "seed", isGit: false });
   const created = threads.createExternal({
-    projectId: project.id, providerId: "cursor", title: "seed", cwd: directory,
+    projectId: project.id, providerId: "cursor", title: "seed", cwd: directory, isWorktree: false,
     model: "auto", permissionMode: "ask", effort: "high",
     sessionId: "cli-chat", source: path.join(directory, "store.db"), createdAt: 1, updatedAt: 1,
   });

@@ -38,6 +38,7 @@ test("external threads round-trip and every stored session id is remembered", as
     projectId: project.id,
     providerId: "claude" as const,
     title: "t",
+    isWorktree: false,
     model: "m",
     permissionMode: "default" as const,
     effort: "high" as const,

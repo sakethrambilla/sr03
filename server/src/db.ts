@@ -325,6 +325,7 @@ const sql = {
     `INSERT INTO threads (id, project_id, provider_id, title, cwd, branch, is_worktree, model, permission_mode, effort, fast, session_id, status, created_at, updated_at, external_source)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ),
+  threadMove: db.prepare("UPDATE threads SET project_id = ?, is_worktree = ? WHERE id = ?"),
   threadExternalSource: db.prepare("SELECT external_source FROM threads WHERE id = ?"),
   threadClearExternal: db.prepare("UPDATE threads SET external_source = NULL, updated_at = ? WHERE id = ?"),
   knownSessionHas: db.prepare("SELECT 1 FROM known_sessions WHERE provider_id = ? AND session_id = ?"),
@@ -539,6 +540,7 @@ export const threads = {
     providerId: ProviderId;
     title: string;
     cwd: string;
+    isWorktree: boolean;
     model: string;
     permissionMode: PermissionMode;
     effort: Effort;
@@ -555,7 +557,7 @@ export const threads = {
       input.title,
       input.cwd,
       null,
-      0,
+      input.isWorktree ? 1 : 0,
       input.model,
       input.permissionMode,
       input.effort,
@@ -568,6 +570,9 @@ export const threads = {
     );
     knownSessions.add(input.providerId, input.sessionId);
     return threads.byId(id)!;
+  },
+  move(id: string, projectId: string, isWorktree: boolean): void {
+    sql.threadMove.run(projectId, isWorktree ? 1 : 0, id);
   },
   externalSource(id: string): string | null {
     const row = sql.threadExternalSource.get(id) as { external_source: string | null } | undefined;
