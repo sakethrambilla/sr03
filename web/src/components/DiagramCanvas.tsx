@@ -44,7 +44,7 @@ export function DiagramCanvas({ svg, dimmed }: { svg: string; dimmed: boolean })
       if (e.ctrlKey || e.metaKey) {
         const rect = node.getBoundingClientRect();
         const point = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-        setView((v) => zoomAt(v, Math.exp(-e.deltaY * 0.01), point));
+        setView((v) => zoomAt(v, Math.exp(-e.deltaY * 0.002), point));
       } else {
         setView((v) => panBy(v, -e.deltaX, -e.deltaY));
       }
