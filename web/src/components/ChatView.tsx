@@ -23,6 +23,7 @@ import {
   trackOf,
 } from "../lib/layout.ts";
 import { sendClientMessage } from "../lib/ws.ts";
+import { useShortcut } from "../lib/useShortcut.ts";
 import { EMPTY_PROVIDER, useStore } from "../store.ts";
 import { AgentsPanel } from "./AgentsPanel.tsx";
 import { EditorGroups } from "./EditorGroups.tsx";
@@ -156,16 +157,7 @@ function OpenMenu({ thread }: { thread: Thread }) {
     api.openIn(thread.id, id).catch((cause: Error) => setError(cause.message));
   };
 
-  useEffect(() => {
-    if (!primary) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.shiftKey || event.key.toLowerCase() !== "o") return;
-      event.preventDefault();
-      launch(primary.id);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [primary?.id, thread.id]);
+  useShortcut("openInApp", () => primary && launch(primary.id), !!primary);
 
   if (!primary) return null;
 
@@ -483,75 +475,18 @@ export function ChatView({ thread }: { thread: Thread }) {
     wasWorking.current = working;
   }, [provider.capabilities.tasks, working]);
 
-  const chord = useRef<number | null>(null);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      const meta = event.metaKey || event.ctrlKey;
-      const key = event.key.toLowerCase();
-
-      // cmd+k arms a chord; the next key decides what it meant
-      if (chord.current !== null) {
-        window.clearTimeout(chord.current);
-        chord.current = null;
-        if (key === "w") {
-          event.preventDefault();
-          closeAll();
-          return;
-        }
-        if (key === "arrowleft" || key === "arrowright") {
-          event.preventDefault();
-          moveFocus(key === "arrowleft" ? -1 : 1);
-          return;
-        }
-      }
-      if (!meta) return;
-
-      if (key === "k") {
-        event.preventDefault();
-        chord.current = window.setTimeout(() => (chord.current = null), 2000);
-        return;
-      }
-      if (key === "b" && !event.shiftKey) {
-        event.preventDefault();
-        setTreeOpen(!treeOpen);
-        return;
-      }
-      if (key === "a" && event.shiftKey && provider.capabilities.tasks) {
-        event.preventDefault();
-        setAgentsOpen(!agentsOpen);
-        return;
-      }
-      if (key === "j" && !event.shiftKey) {
-        event.preventDefault();
-        setTerminalOpen(!terminalOpen);
-        return;
-      }
-      // a browser tab would print instead, so this one is taken back by hand
-      if (key === "p" && !event.shiftKey) {
-        event.preventDefault();
-        setPalette("files");
-        return;
-      }
-      if (key === "f" && event.shiftKey) {
-        event.preventDefault();
-        setPalette("text");
-        return;
-      }
-      if (key === "\\" && !event.shiftKey) {
-        event.preventDefault();
-        splitFocused();
-        return;
-      }
-      // the chat tab is pinned, so cmd+w only ever closes a file or subagent — and only in the focused group
-      if (key === "w" && !event.shiftKey) {
-        event.preventDefault();
-        closeTabRequest(focusedTab);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [active, focusedTab, treeOpen, terminalOpen, agentsOpen, openFiles, dirty, layout, focused, provider.capabilities.tasks]);
+  useShortcut("toggleFileTree", () => setTreeOpen(!treeOpen));
+  useShortcut("toggleAgents", () => setAgentsOpen(!agentsOpen), provider.capabilities.tasks);
+  useShortcut("toggleTerminal", () => setTerminalOpen(!terminalOpen));
+  // a browser tab would print instead, so this one is taken back by hand
+  useShortcut("quickOpen", () => setPalette("files"));
+  useShortcut("quickOpenText", () => setPalette("text"));
+  useShortcut("splitGroup", () => splitFocused());
+  // the chat tab is pinned, so cmd+w only ever closes a file or subagent — and only in the focused group
+  useShortcut("closeTab", () => closeTabRequest(focusedTab));
+  useShortcut("closeAllFiles", () => closeAll());
+  useShortcut("focusPrevGroup", () => moveFocus(-1));
+  useShortcut("focusNextGroup", () => moveFocus(1));
 
   const renamed = (from: string, to: string) => {
     const moved = (path: string) =>
