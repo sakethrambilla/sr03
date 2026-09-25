@@ -6,6 +6,8 @@ import { Fragment, memo, useEffect, useMemo, useRef, useState, type KeyboardEven
 import { api } from "../lib/api.ts";
 import type { FileLinks, LineLink } from "../lib/fileref.ts";
 import type { ChangedFile, Thread } from "../lib/types.ts";
+import { matchesStroke, resolveBindings } from "../lib/shortcuts.ts";
+import { useShortcut } from "../lib/useShortcut.ts";
 import { useStore } from "../store.ts";
 import { ExcalidrawView } from "./ExcalidrawView.tsx";
 import { Markdown } from "./Markdown.tsx";
@@ -390,23 +392,15 @@ export const FileView = memo(function FileView({
   useEffect(() => {
     if (!active) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
-        event.preventDefault();
-        void save();
-        return;
-      }
-      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "v") {
-        if (!previewable) return;
-        event.preventDefault();
-        togglePreview(!preview);
-        return;
-      }
       // undo and redo belong to the textarea, so only Escape is handled here
       if (event.key === "Escape" && !syncDrawing()) onClose(path);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [active, onClose, dirty, saving, path, thread.id, previewable, preview, drawing, excalidraw]);
+
+  useShortcut("save", () => void save(), active);
+  useShortcut("togglePreview", () => togglePreview(!preview), active && previewable);
 
   // applied through insertText rather than by assigning value, so the textarea's own
   // undo stack survives an indent or a comment toggle
@@ -426,7 +420,7 @@ export const FileView = memo(function FileView({
     const sel = { start: area.selectionStart, end: area.selectionEnd };
     const unit = indentUnit(area.value, path);
     const mod = event.metaKey || event.ctrlKey;
-    if (mod && event.key === "/") {
+    if (matchesStroke(event, resolveBindings(useStore.getState().shortcuts).toggleComment)) {
       const edit = comment(area.value, sel, path);
       if (!edit) return;
       event.preventDefault();

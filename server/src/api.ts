@@ -1019,7 +1019,9 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
     handler: async ({ request }) => {
       const body = await readBody(request);
       if (typeof body.value !== "string") throw new HttpError(400, "`value` is required");
-      settings.set(requireString(body, "key"), body.value);
+      const key = requireString(body, "key");
+      settings.set(key, body.value);
+      publish({ type: "settings.changed", key, value: body.value });
       return { ok: true };
     },
   },

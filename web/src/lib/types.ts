@@ -346,7 +346,8 @@ export type ServerEvent =
   | { type: "pty.created"; threadId: string; terminalId: string }
   | { type: "pty.exit"; threadId: string; terminalId: string; code: number }
   | { type: "fs.changed"; threadId: string }
-  | { type: "projects.changed" };
+  | { type: "projects.changed" }
+  | { type: "settings.changed"; key: string; value: string };
 
 export type ClientMessage =
   | { type: "resources.watch"; on: boolean }

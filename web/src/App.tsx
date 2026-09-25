@@ -5,6 +5,7 @@ import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 
 import { connectEvents } from "./lib/ws.ts";
+import { useShortcut } from "./lib/useShortcut.ts";
 import { useActiveThread, useStore } from "./store.ts";
 import { ChatView } from "./components/ChatView.tsx";
 import { DraftView } from "./components/DraftView.tsx";
@@ -44,21 +45,8 @@ export function App() {
   }, [applyEvent, bootstrap]);
 
   // the sidebar and the draft live in the store, so their shortcuts work even with nothing open
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || !event.shiftKey) return;
-      const key = event.key.toLowerCase();
-      if (key === "b") {
-        event.preventDefault();
-        toggleSidebar();
-      } else if (key === "n") {
-        event.preventDefault();
-        startDraft();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [toggleSidebar, startDraft]);
+  useShortcut("toggleSidebar", toggleSidebar);
+  useShortcut("newSession", startDraft);
 
   // the store carries one error at a time; sonner decides how long it stays on screen
   useEffect(() => {
