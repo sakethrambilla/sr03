@@ -26,6 +26,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
+  ArchiveIcon,
   CheckIcon,
   ChevronIcon,
   DotsIcon,
@@ -264,6 +265,42 @@ function NewSessionButton({ project, hover }: { project: Project; hover?: boolea
   );
 }
 
+function ArchiveIdleButton({ project, hover }: { project: Project; hover?: boolean }) {
+  const threads = useStore((state) => state.threads);
+  const activeThreadId = useStore((state) => state.activeThreadId);
+  const archiveIdle = useStore((state) => state.archiveIdle);
+  const count = useMemo(
+    () =>
+      threads.filter(
+        (thread) =>
+          thread.projectId === project.id &&
+          !thread.archived &&
+          thread.status !== "running" &&
+          thread.id !== activeThreadId,
+      ).length,
+    [threads, project.id, activeThreadId],
+  );
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          disabled={count === 0}
+          onClick={() => void archiveIdle(project.id)}
+          aria-label="Archive idle sessions"
+          className={cn("size-6 shrink-0 text-faint", hover && "opacity-0 group-hover:opacity-100")}
+        >
+          <ArchiveIcon className="size-3.5" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>
+        Archive idle sessions <span className="text-faint">⌘⇧X</span>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 const ALL_PROJECTS = "all";
 
 type StatusFilter = "all" | "active" | "archived";
@@ -482,6 +519,7 @@ export function Sidebar() {
         <StatusFilterMenu value={statusFilter} onSelect={setStatusFilter} />
         {selected?.isGit ? <WorktreeButton project={selected} onOpen={setWorktreeProject} /> : null}
         {selected?.isGit ? <GraphButton project={selected} onOpen={setGraphProject} /> : null}
+        {selected ? <ArchiveIdleButton project={selected} /> : null}
         {selected ? <NewSessionButton project={selected} /> : null}
       </div>
 
@@ -525,6 +563,7 @@ export function Sidebar() {
                   {project.isGit ? (
                     <GraphButton project={project} onOpen={setGraphProject} hover />
                   ) : null}
+                  <ArchiveIdleButton project={project} hover />
                   <NewSessionButton project={project} />
                 </div>
               )}

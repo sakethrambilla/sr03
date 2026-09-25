@@ -78,3 +78,61 @@ test("external threads round-trip and every stored session id is remembered", as
   });
   assert.equal(gone.cwdMissing, true);
 });
+
+test("archiveIdle archives idle and errored threads, skipping running, archived and the excepted one", async (context) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "sr03-db-"));
+  const previous = process.env.SR03_DATA_DIR;
+  process.env.SR03_DATA_DIR = directory;
+  context.after(async () => {
+    if (previous === undefined) delete process.env.SR03_DATA_DIR;
+    else process.env.SR03_DATA_DIR = previous;
+    await fs.rm(directory, { recursive: true, force: true });
+  });
+
+  const { projects, threads } = await import("./db.ts");
+  const a = projects.create({ path: directory, name: "a", isGit: false });
+  const b = projects.create({ path: path.join(directory, "b"), name: "b", isGit: false });
+
+  const makeThread = (title: string, projectId: string) =>
+    threads.create({
+      projectId,
+      providerId: "claude",
+      title,
+      cwd: directory,
+      branch: null,
+      isWorktree: false,
+      model: "m",
+      permissionMode: "default",
+      effort: "high",
+      fast: false,
+    });
+
+  const idle1 = makeThread("idle1", a.id);
+  const idle2 = makeThread("idle2", a.id);
+  const errored = makeThread("errored", a.id);
+  const running = makeThread("running", a.id);
+  const alreadyArchived = makeThread("alreadyArchived", a.id);
+  const open = makeThread("open", a.id);
+  const other = makeThread("other", b.id);
+
+  threads.update(errored.id, { status: "error" });
+  threads.update(running.id, { status: "running" });
+  threads.update(alreadyArchived.id, { archived: true });
+
+  const archived = threads.archiveIdle(a.id, open.id);
+  assert.deepEqual(
+    archived.map((t) => t.id).sort(),
+    [idle1.id, idle2.id, errored.id].sort(),
+  );
+  assert.ok(archived.every((t) => t.archived === true));
+
+  assert.equal(threads.byId(running.id)!.archived, false);
+  assert.equal(threads.byId(open.id)!.archived, false);
+  assert.equal(threads.byId(other.id)!.archived, false);
+
+  const rest = threads.archiveIdle(a.id, null);
+  assert.deepEqual(rest.map((t) => t.id), [open.id]);
+
+  const none = threads.archiveIdle(a.id, null);
+  assert.deepEqual(none, []);
+});

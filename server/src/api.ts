@@ -370,6 +370,21 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
     },
   },
   {
+    method: "POST",
+    pattern: /^\/api\/projects\/([^/]+)\/archive-idle$/,
+    handler: async ({ params, request }) => {
+      const body = await readBody(request);
+      const project = requireProject(params[0]!);
+      const except = body.exceptThreadId ?? null;
+      if (except !== null && typeof except !== "string") {
+        throw new HttpError(400, "`exceptThreadId` must be a string");
+      }
+      const archived = threads.archiveIdle(project.id, except);
+      for (const thread of archived) publish({ type: "thread.updated", thread });
+      return archived;
+    },
+  },
+  {
     method: "GET",
     pattern: /^\/api\/projects\/([^/]+)\/git$/,
     handler: async ({ params }) => {

@@ -28,6 +28,8 @@ export function App() {
   const sidebarOpen = useStore((state) => state.sidebarOpen);
   const settingsOpen = useStore((state) => state.settingsOpen);
   const toggleSidebar = useStore((state) => state.toggleSidebar);
+  const projects = useStore((state) => state.projects);
+  const archiveIdle = useStore((state) => state.archiveIdle);
   const thread = useActiveThread();
 
   // a reconnect after any real gap (sleep, a server restart) may have missed events entirely,
@@ -47,6 +49,12 @@ export function App() {
   // the sidebar and the draft live in the store, so their shortcuts work even with nothing open
   useShortcut("toggleSidebar", toggleSidebar);
   useShortcut("newSession", startDraft);
+  useShortcut("archiveIdleSessions", () => {
+    // the sidebar owns the folder filter and unmounts when hidden, so read its persisted value
+    const filtered = localStorage.getItem("sr03:sidebar.project");
+    const projectId = thread?.projectId ?? projects.find((project) => project.id === filtered)?.id ?? null;
+    if (projectId) void archiveIdle(projectId);
+  });
 
   // the store carries one error at a time; sonner decides how long it stays on screen
   useEffect(() => {

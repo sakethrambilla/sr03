@@ -13,6 +13,7 @@ are defaults: change, unbind or reset them under **Settings → Shortcuts**.
 | --- | --- | --- |
 | `⌘⇧N` | New session — same as the sidebar's **New** button, opens the draft where you pick a folder | `web/src/App.tsx`, `web/src/lib/shortcuts.ts` |
 | `⌘⇧B` | Show / hide the sidebar | `web/src/App.tsx`, `web/src/lib/shortcuts.ts` |
+| `⌘⇧X` | Archive every idle session in the open session's folder, or in the sidebar's picked folder | `web/src/App.tsx`, `web/src/lib/shortcuts.ts` |
 | `Esc` | Close settings | `web/src/components/SettingsView.tsx` |
 
 ## Session view

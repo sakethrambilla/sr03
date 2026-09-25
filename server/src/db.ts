@@ -375,6 +375,9 @@ const sql = {
     "DELETE FROM worktree_favorites WHERE project_id = ? AND path = ?",
   ),
   threadSetCwd: db.prepare("UPDATE threads SET cwd = ?, updated_at = ? WHERE id = ?"),
+  threadsArchiveIdle: db.prepare(
+    "UPDATE threads SET archived = 1, updated_at = ? WHERE project_id = ? AND archived = 0 AND status != 'running' AND id IS NOT ? RETURNING id",
+  ),
 };
 
 // the desktop shell loads a new port every launch, so the browser's own storage starts empty
@@ -655,6 +658,11 @@ export const threads = {
   },
   remove(id: string): void {
     sql.threadRemove.run(id);
+  },
+  // exceptThreadId null makes "IS NOT ?" match nothing, so every idle row still qualifies
+  archiveIdle(projectId: string, exceptThreadId: string | null): Thread[] {
+    const rows = sql.threadsArchiveIdle.all(Date.now(), projectId, exceptThreadId) as Array<{ id: string }>;
+    return rows.flatMap((row) => threads.byId(row.id) ?? []);
   },
 };
 

@@ -166,6 +166,7 @@ interface Store extends AppState {
   renameThread: (id: string, title: string) => Promise<void>;
   forkThread: (id: string) => Promise<void>;
   setArchived: (id: string, archived: boolean) => Promise<void>;
+  archiveIdle: (projectId: string) => Promise<void>;
   setLayout: (id: string, layout: EditorLayout) => void;
   removeThread: (id: string) => Promise<void>;
   send: (text: string) => Promise<void>;
@@ -609,6 +610,15 @@ export const useStore = create<Store>((set, get) => ({
       const thread = await api.forkThread(id);
       set((state) => ({ threads: upsertThread(state.threads, thread) }));
       await get().openThread(thread.id);
+    } catch (error) {
+      set({ error: (error as Error).message });
+    }
+  },
+
+  archiveIdle: async (projectId) => {
+    try {
+      const archived = await api.archiveIdle(projectId, get().activeThreadId);
+      set((state) => ({ threads: archived.reduce(upsertThread, state.threads) }));
     } catch (error) {
       set({ error: (error as Error).message });
     }

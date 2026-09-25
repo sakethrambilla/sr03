@@ -5,6 +5,7 @@ export type Overrides = Record<string, Binding | null>;
 export type CommandId =
   | "newSession"
   | "toggleSidebar"
+  | "archiveIdleSessions"
   | "openInApp"
   | "quickOpen"
   | "quickOpenText"
@@ -25,6 +26,7 @@ type KeyEvent = { key: string; metaKey: boolean; ctrlKey: boolean; altKey: boole
 export const COMMANDS: ReadonlyArray<{ id: CommandId; label: string; group: string; binding: Binding }> = [
   { id: "newSession", label: "New session", group: "Anywhere", binding: ["mod+shift+n"] },
   { id: "toggleSidebar", label: "Toggle sidebar", group: "Anywhere", binding: ["mod+shift+b"] },
+  { id: "archiveIdleSessions", label: "Archive idle sessions", group: "Anywhere", binding: ["mod+shift+x"] },
   { id: "openInApp", label: "Open in app", group: "Session view", binding: ["mod+o"] },
   { id: "quickOpen", label: "Quick open file", group: "Session view", binding: ["mod+p"] },
   { id: "quickOpenText", label: "Search file contents", group: "Session view", binding: ["mod+shift+f"] },
