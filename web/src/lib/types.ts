@@ -335,6 +335,7 @@ export type ServerEvent =
   | { type: "thread.questions"; questions: PendingQuestion[] }
   | { type: "thread.tasks"; threadId: string; tasks: ThreadTask[] }
   | { type: "thread.commands"; threadId: string; commands: SlashCommand[] }
+  | { type: "commands.updated"; providerId: ProviderId; cwd: string; commands: SlashCommand[] }
   | { type: "usage"; threadId: string | null; usage: Usage }
   | { type: "resources"; resources: Resources }
   | { type: "thread.updated"; thread: Thread }
