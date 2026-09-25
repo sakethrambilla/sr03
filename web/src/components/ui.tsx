@@ -5,6 +5,7 @@
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
+  Archive,
   ArrowDownToLine,
   ArrowUp,
   ArrowUpFromLine,
@@ -223,6 +224,7 @@ export function CopyButton({
 }
 
 const ICONS = {
+  ArchiveIcon: Archive,
   AgentIcon: Bot,
   FolderIcon: Folder,
   RevealIcon: FolderOpen,
@@ -278,6 +280,7 @@ function icon(Source: LucideIcon) {
   };
 }
 
+export const ArchiveIcon = icon(ICONS.ArchiveIcon);
 export const AgentIcon = icon(ICONS.AgentIcon);
 export const FolderIcon = icon(ICONS.FolderIcon);
 export const RevealIcon = icon(ICONS.RevealIcon);

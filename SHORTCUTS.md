@@ -10,6 +10,7 @@ them first — Chrome keeps `⌘⇧N`, `⌘W` and `⌘N` for itself — so test 
 | --- | --- | --- |
 | `⌘⇧N` | New session — same as the sidebar's **New** button, opens the draft where you pick a folder | `web/src/App.tsx` |
 | `⌘⇧B` | Show / hide the sidebar | `web/src/App.tsx` |
+| `⌘⇧X` | Archive every idle session in the open session's folder, or in the sidebar's picked folder | `web/src/App.tsx` |
 | `Esc` | Close settings | `web/src/components/SettingsView.tsx` |
 
 ## Session view

@@ -27,6 +27,8 @@ export function App() {
   const sidebarOpen = useStore((state) => state.sidebarOpen);
   const settingsOpen = useStore((state) => state.settingsOpen);
   const toggleSidebar = useStore((state) => state.toggleSidebar);
+  const projects = useStore((state) => state.projects);
+  const archiveIdle = useStore((state) => state.archiveIdle);
   const thread = useActiveThread();
 
   // a reconnect after any real gap (sleep, a server restart) may have missed events entirely,
@@ -54,11 +56,18 @@ export function App() {
       } else if (key === "n") {
         event.preventDefault();
         startDraft();
+      } else if (key === "x") {
+        event.preventDefault();
+        // the sidebar owns the folder filter and unmounts when hidden, so read its persisted value
+        const filtered = localStorage.getItem("sr03:sidebar.project");
+        const projectId =
+          thread?.projectId ?? projects.find((project) => project.id === filtered)?.id ?? null;
+        if (projectId) void archiveIdle(projectId);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [toggleSidebar, startDraft]);
+  }, [toggleSidebar, startDraft, thread?.projectId, projects, archiveIdle]);
 
   // the store carries one error at a time; sonner decides how long it stays on screen
   useEffect(() => {
