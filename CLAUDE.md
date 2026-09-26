@@ -190,6 +190,10 @@ the worktree still ships without those paths.
 - Electron 44 ships no postinstall, so its binary never lands from a plain install — `desktop`'s own
   `postinstall` runs `install-electron` to fetch it. electron-builder downloads its own copy anyway,
   so this only matters for `pnpm -C desktop dev`.
+- The app menu's "Install 'sr03' command" writes a shell script to `/usr/local/bin` (falling back to
+  `~/.local/bin`) that runs `open -n -a sr03.app --args <dir>`. `-n` makes the single-instance lock
+  route the path to a running app via `second-instance`, and the shell forwards it as `?open=` or a
+  `sr03:open` event.
 - `desktop/build/icon.png` is the app icon (1024², the red-sky panda squircle); electron-builder
   picks it up by convention and converts it to `.icns` and `.ico` itself.
 - `payload.mjs` deploys the server with a filtered `--prod` install, which pnpm records as the
