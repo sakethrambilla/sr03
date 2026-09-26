@@ -3,6 +3,7 @@
 // per-thread caches (messages, streaming text, approvals, subagents) and the streaming buffer
 // that lets a reply out a slice per frame instead of in paragraph-sized lumps.
 import { create } from "zustand";
+import { toast } from "sonner";
 
 import { api } from "./lib/api.ts";
 import { persistable } from "./lib/layout.ts";
@@ -17,6 +18,7 @@ import type { Appearance } from "./lib/appearance.ts";
 import { parseOverrides } from "./lib/shortcuts.ts";
 import type { Binding, CommandId, Overrides } from "./lib/shortcuts.ts";
 import { PANEL_DEFAULTS } from "./lib/panels.ts";
+import { exitDelays, exitTotalMs } from "./lib/archive.ts";
 import type { PanelId } from "./lib/panels.ts";
 import type {
   AppState,
@@ -167,6 +169,7 @@ interface Store extends AppState {
   forkThread: (id: string) => Promise<void>;
   setArchived: (id: string, archived: boolean) => Promise<void>;
   archiveIdle: (projectId: string) => Promise<void>;
+  leaving: Record<string, number | null>;
   setLayout: (id: string, layout: EditorLayout) => void;
   removeThread: (id: string) => Promise<void>;
   send: (text: string) => Promise<void>;
@@ -355,6 +358,15 @@ function upsertThread(threads: Thread[], thread: Thread): Thread[] {
 const APPEARANCE_KEY = "appearance";
 const SHORTCUTS_KEY = "shortcuts";
 const EMPTY_OVERRIDES: Overrides = {};
+const NO_LEAVING: Record<string, number | null> = {};
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function withoutKeys(map: Record<string, number | null>, ids: string[]) {
+  const next = { ...map };
+  for (const id of ids) delete next[id];
+  return Object.keys(next).length ? next : NO_LEAVING;
+}
 
 function saveShortcuts(next: Overrides): void {
   void api.saveSetting(SHORTCUTS_KEY, JSON.stringify(next)).catch(() => undefined);
@@ -393,6 +405,7 @@ export const useStore = create<Store>((set, get) => ({
   providerStatuses: [],
   appearance: startingAppearance,
   shortcuts: EMPTY_OVERRIDES,
+  leaving: NO_LEAVING,
   finished: loadFinished(),
   error: null,
   booted: false,
@@ -616,24 +629,68 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   archiveIdle: async (projectId) => {
+    const { threads, activeThreadId } = get();
+    const candidates = threads
+      .filter(
+        (thread) =>
+          thread.projectId === projectId &&
+          !thread.archived &&
+          thread.status !== "running" &&
+          thread.id !== activeThreadId,
+      )
+      .map((thread) => thread.id);
+    if (candidates.length === 0) return;
+    set((state) => ({
+      leaving: { ...state.leaving, ...Object.fromEntries(candidates.map((id) => [id, null])) },
+    }));
+    let archived: Thread[];
     try {
-      const archived = await api.archiveIdle(projectId, get().activeThreadId);
-      set((state) => ({ threads: archived.reduce(upsertThread, state.threads) }));
+      archived = await api.archiveIdle(projectId, activeThreadId);
     } catch (error) {
-      set({ error: (error as Error).message });
+      set((state) => ({ leaving: withoutKeys(state.leaving, candidates), error: (error as Error).message }));
+      return;
+    }
+    const returned = new Set(archived.map((thread) => thread.id));
+    const ids = get().threads.filter((thread) => returned.has(thread.id)).map((thread) => thread.id);
+    const delays = exitDelays(ids.length);
+    set((state) => ({
+      leaving: {
+        ...withoutKeys(state.leaving, candidates.filter((id) => !returned.has(id))),
+        ...Object.fromEntries(ids.map((id, i) => [id, delays[i]])),
+      },
+    }));
+    await sleep(exitTotalMs(ids.length));
+    set((state) => ({
+      leaving: withoutKeys(state.leaving, ids),
+      threads: archived.reduce(upsertThread, state.threads),
+    }));
+    if (ids.length > 0) {
+      toast(`Archived ${ids.length} ${ids.length === 1 ? "session" : "sessions"}`, {
+        action: {
+          label: "Undo",
+          onClick: () => void Promise.all(ids.map((id) => get().setArchived(id, false))),
+        },
+      });
     }
   },
 
   setArchived: async (id, archived) => {
+    if (archived) set((state) => ({ leaving: { ...state.leaving, [id]: null } }));
     try {
       const thread = await api.patchThread(id, { archived });
-      set((state) => ({ threads: upsertThread(state.threads, thread) }));
-      if (!archived || get().activeThreadId !== id) return;
+      if (!archived) {
+        set((state) => ({ threads: upsertThread(state.threads, thread) }));
+        return;
+      }
+      set((state) => ({ leaving: { ...state.leaving, [id]: 0 } }));
+      await sleep(exitTotalMs(1));
+      set((state) => ({ leaving: withoutKeys(state.leaving, [id]), threads: upsertThread(state.threads, thread) }));
+      if (get().activeThreadId !== id) return;
       const next = get().threads.find((item) => item.id !== id && !item.archived);
       if (next) await get().openThread(next.id);
       else get().startDraft();
     } catch (error) {
-      set({ error: (error as Error).message });
+      set((state) => ({ leaving: withoutKeys(state.leaving, [id]), error: (error as Error).message }));
     }
   },
 
@@ -957,6 +1014,8 @@ export const useStore = create<Store>((set, get) => ({
         return;
       }
       case "thread.updated": {
+        // a leaving row is upserted once its exit ends — re-sorting it now would jump it mid-list
+        if (event.thread.id in get().leaving) return;
         set((state) => ({ threads: upsertThread(state.threads, event.thread) }));
         return;
       }
