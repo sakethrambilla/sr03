@@ -118,7 +118,11 @@ export function ContextBar() {
             className="absolute inset-x-0 -bottom-px h-2"
           />
         </TooltipTrigger>
-        <TooltipContent>
+        <TooltipContent
+          sideOffset={6}
+          // the arrow keeps the inverted colours, and Radix sets display:block inline on it
+          className="border border-border bg-popover px-2 py-1 text-[11px] text-popover-foreground shadow-md [&_svg]:hidden!"
+        >
           {context
             ? `${Math.round(context.percentage)}% · ${tokens(context.used)} / ${tokens(context.max)} tokens`
             : "No context data yet"}
