@@ -160,6 +160,7 @@ interface Store extends AppState {
   bootstrap: () => Promise<void>;
   refreshState: () => Promise<void>;
   openThread: (id: string) => Promise<void>;
+  openFolder: (path: string) => Promise<void>;
   startDraft: (input?: { projectId?: string; branch?: string; worktreePath?: string; locked?: boolean }) => void;
   patchDraft: (patch: Partial<Draft>) => void;
   startFromDraft: (text: string) => Promise<void>;
@@ -439,6 +440,12 @@ export const useStore = create<Store>((set, get) => ({
     const next = activeThreadId ?? threads[0]?.id ?? null;
     if (next) await get().openThread(next);
     else get().startDraft();
+    // the desktop shell passes a folder from the `sr03` command on the first load
+    const open = new URLSearchParams(location.search).get("open");
+    if (open) {
+      history.replaceState(null, "", location.pathname);
+      await get().openFolder(open);
+    }
     set({ booted: true });
   },
 
@@ -496,6 +503,16 @@ export const useStore = create<Store>((set, get) => ({
         loadedThreads: { ...state.loadedThreads, [id]: true },
       }));
       void get().refreshUsage();
+    } catch (error) {
+      set({ error: (error as Error).message });
+    }
+  },
+
+  openFolder: async (path) => {
+    try {
+      const project = await api.addProject(path);
+      await get().refreshState();
+      get().startDraft({ projectId: project.id });
     } catch (error) {
       set({ error: (error as Error).message });
     }
