@@ -657,10 +657,12 @@ export const useStore = create<Store>((set, get) => ({
         ...withoutKeys(state.leaving, candidates.filter((id) => !returned.has(id))),
         ...Object.fromEntries(ids.map((id, i) => [id, delays[i]])),
       },
-      threads: archived.reduce(upsertThread, state.threads),
     }));
     await sleep(exitTotalMs(ids.length));
-    set((state) => ({ leaving: withoutKeys(state.leaving, ids) }));
+    set((state) => ({
+      leaving: withoutKeys(state.leaving, ids),
+      threads: archived.reduce(upsertThread, state.threads),
+    }));
   },
 
   setArchived: async (id, archived) => {
@@ -671,9 +673,9 @@ export const useStore = create<Store>((set, get) => ({
         set((state) => ({ threads: upsertThread(state.threads, thread) }));
         return;
       }
-      set((state) => ({ leaving: { ...state.leaving, [id]: 0 }, threads: upsertThread(state.threads, thread) }));
+      set((state) => ({ leaving: { ...state.leaving, [id]: 0 } }));
       await sleep(exitTotalMs(1));
-      set((state) => ({ leaving: withoutKeys(state.leaving, [id]) }));
+      set((state) => ({ leaving: withoutKeys(state.leaving, [id]), threads: upsertThread(state.threads, thread) }));
       if (get().activeThreadId !== id) return;
       const next = get().threads.find((item) => item.id !== id && !item.archived);
       if (next) await get().openThread(next.id);
@@ -1003,6 +1005,8 @@ export const useStore = create<Store>((set, get) => ({
         return;
       }
       case "thread.updated": {
+        // a leaving row is upserted once its exit ends — re-sorting it now would jump it mid-list
+        if (event.thread.id in get().leaving) return;
         set((state) => ({ threads: upsertThread(state.threads, event.thread) }));
         return;
       }
