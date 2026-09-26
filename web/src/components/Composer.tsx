@@ -20,7 +20,7 @@ import type {
 import { commandKey, EMPTY_PROVIDER, findModel, useStore } from "../store.ts";
 import { MentionInput } from "./MentionInput.tsx";
 import type { MentionInputHandle } from "./MentionInput.tsx";
-import { UsageMeter } from "./UsageMeter.tsx";
+import { ContextBar, UsageMeter } from "./UsageMeter.tsx";
 import { Button } from "@/components/ui/button";
 import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Input } from "@/components/ui/input";
@@ -615,6 +615,7 @@ export function Composer({
           </div>
         </div>
 
+        <ContextBar />
         {/* the controls are all shrink-0, so in a narrow editor group they wrap to a second line
             rather than spilling past the group's edge */}
         <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-0.5 px-1">
