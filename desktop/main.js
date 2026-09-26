@@ -14,6 +14,8 @@ const PAYLOAD = app.isPackaged
 const ENTRY = path.join(PAYLOAD, "server", "src", "index.ts");
 
 let server = null;
+let pendingFolder = folderArg(process.argv);
+let appUrl = null;
 
 const WINDOWS = process.platform === "win32";
 const SHELL_BIN = process.env.SHELL || "/bin/zsh";
@@ -157,6 +159,18 @@ function openWindow() {
   return window;
 }
 
+// argv carries Chromium switches and, unpackaged, the app dir — the folder is the last
+// plain argument that is an existing directory
+function folderArg(argv) {
+  for (const value of argv.slice(1).reverse()) {
+    if (value.startsWith("-") || !path.isAbsolute(value)) continue;
+    try {
+      if (fs.statSync(value).isDirectory()) return value;
+    } catch {}
+  }
+  return null;
+}
+
 async function start() {
   const searchPath = resolveSearchPath();
   const nodeBin = findNode(searchPath);
@@ -198,15 +212,33 @@ async function start() {
     return;
   }
 
-  if (!window.isDestroyed()) void window.loadURL(`http://127.0.0.1:${port}`);
+  appUrl = `http://127.0.0.1:${port}`;
+  const query = pendingFolder ? `/?open=${encodeURIComponent(pendingFolder)}` : "";
+  pendingFolder = null;
+  if (!window.isDestroyed()) void window.loadURL(appUrl + query);
 }
 
 if (!app.requestSingleInstanceLock()) {
   app.exit(0);
 } else {
-  app.on("second-instance", () => {
+  app.on("second-instance", (_event, argv) => {
     const [window] = BrowserWindow.getAllWindows();
-    if (window) window.focus();
+    if (!window) return;
+    if (window.isMinimized()) window.restore();
+    // the launching process already exited, so macOS won't hand focus back on its own
+    app.focus({ steal: true });
+    window.focus();
+    const folder = folderArg(argv);
+    if (!folder) return;
+    // still on the splash: the first loadURL will carry it
+    if (!appUrl) {
+      pendingFolder = folder;
+      return;
+    }
+    const detail = JSON.stringify(folder);
+    void window.webContents.executeJavaScript(
+      `window.dispatchEvent(new CustomEvent("sr03:open", { detail: ${detail} }))`,
+    );
   });
   app.whenReady().then(start);
   app.on("window-all-closed", () => app.quit());
