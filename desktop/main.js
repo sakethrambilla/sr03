@@ -1,11 +1,12 @@
 // A window over the ordinary sr03 server: the server runs as a child process under the
 // machine's own Node, exactly as `pnpm start` would. Electron's bundled Node can't host it
 // (type stripping, node:sqlite and node-pty's ABI all want the real thing).
-const { app, BrowserWindow, dialog, shell } = require("electron");
+const { app, BrowserWindow, Menu, dialog, shell } = require("electron");
 const { execFile, execFileSync, spawn } = require("node:child_process");
 const fs = require("node:fs");
 const http = require("node:http");
 const net = require("node:net");
+const os = require("node:os");
 const path = require("node:path");
 
 const PAYLOAD = app.isPackaged
@@ -14,6 +15,8 @@ const PAYLOAD = app.isPackaged
 const ENTRY = path.join(PAYLOAD, "server", "src", "index.ts");
 
 let server = null;
+let pendingFolder = folderArg(process.argv);
+let appUrl = null;
 
 const WINDOWS = process.platform === "win32";
 const SHELL_BIN = process.env.SHELL || "/bin/zsh";
@@ -157,6 +160,90 @@ function openWindow() {
   return window;
 }
 
+// argv carries Chromium switches and, unpackaged, the app dir — the folder is the last
+// plain argument that is an existing directory
+function folderArg(argv) {
+  for (const value of argv.slice(1).reverse()) {
+    if (value.startsWith("-") || !path.isAbsolute(value)) continue;
+    try {
+      if (fs.statSync(value).isDirectory()) return value;
+    } catch {}
+  }
+  return null;
+}
+
+const CLI_MARKER = "# installed by sr03";
+const CLI_DIRS = ["/usr/local/bin", path.join(os.homedir(), ".local", "bin")];
+
+// exe is sr03.app/Contents/MacOS/sr03
+function cliScript() {
+  const bundle = path.resolve(app.getPath("exe"), "../../..");
+  return [
+    "#!/bin/sh",
+    CLI_MARKER,
+    `APP=${JSON.stringify(bundle)}`,
+    'if [ $# -eq 0 ]; then exec open -a "$APP"; fi',
+    'dir=$(cd "$1" 2>/dev/null && pwd -P) || { echo "sr03: $1: not a directory" >&2; exit 1; }',
+    'exec open -n -a "$APP" --args "$dir"',
+    "",
+  ].join("\n");
+}
+
+function installCli() {
+  let lastError = null;
+  for (const dir of CLI_DIRS) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, "sr03"), cliScript(), { mode: 0o755 });
+      const onPath = loginPath().split(path.delimiter).includes(dir);
+      dialog.showMessageBox({
+        message: `Installed sr03 at ${path.join(dir, "sr03")}`,
+        detail: onPath ? "Open a new terminal and run `sr03 .`" : `${dir} is not on your PATH — add it to your shell profile.`,
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  dialog.showErrorBox("Could not install sr03", String(lastError?.message ?? lastError));
+}
+
+function uninstallCli() {
+  const removed = [];
+  for (const dir of CLI_DIRS) {
+    const file = path.join(dir, "sr03");
+    try {
+      if (!fs.readFileSync(file, "utf8").includes(CLI_MARKER)) continue;
+      fs.rmSync(file);
+      removed.push(file);
+    } catch {}
+  }
+  dialog.showMessageBox({ message: removed.length ? `Removed ${removed.join(", ")}` : "The sr03 command was not installed." });
+}
+
+function setMenu() {
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    {
+      role: "appMenu",
+      submenu: [
+        { role: "about" },
+        { type: "separator" },
+        { label: "Install 'sr03' command in PATH", click: installCli },
+        { label: "Uninstall 'sr03' command", click: uninstallCli },
+        { type: "separator" },
+        { role: "hide" },
+        { role: "hideOthers" },
+        { role: "unhide" },
+        { type: "separator" },
+        { role: "quit" },
+      ],
+    },
+    { role: "editMenu" },
+    { role: "viewMenu" },
+    { role: "windowMenu" },
+  ]));
+}
+
 async function start() {
   const searchPath = resolveSearchPath();
   const nodeBin = findNode(searchPath);
@@ -198,17 +285,38 @@ async function start() {
     return;
   }
 
-  if (!window.isDestroyed()) void window.loadURL(`http://127.0.0.1:${port}`);
+  appUrl = `http://127.0.0.1:${port}`;
+  const query = pendingFolder ? `/?open=${encodeURIComponent(pendingFolder)}` : "";
+  pendingFolder = null;
+  if (!window.isDestroyed()) void window.loadURL(appUrl + query);
 }
 
 if (!app.requestSingleInstanceLock()) {
   app.exit(0);
 } else {
-  app.on("second-instance", () => {
+  app.on("second-instance", (_event, argv) => {
     const [window] = BrowserWindow.getAllWindows();
-    if (window) window.focus();
+    if (!window) return;
+    if (window.isMinimized()) window.restore();
+    // the launching process already exited, so macOS won't hand focus back on its own
+    app.focus({ steal: true });
+    window.focus();
+    const folder = folderArg(argv);
+    if (!folder) return;
+    // still on the splash: the first loadURL will carry it
+    if (!appUrl) {
+      pendingFolder = folder;
+      return;
+    }
+    const detail = JSON.stringify(folder);
+    void window.webContents.executeJavaScript(
+      `window.dispatchEvent(new CustomEvent("sr03:open", { detail: ${detail} }))`,
+    );
   });
-  app.whenReady().then(start);
+  app.whenReady().then(() => {
+    if (!WINDOWS && app.isPackaged) setMenu();
+    return start();
+  });
   app.on("window-all-closed", () => app.quit());
   app.on("before-quit", () => {
     app.isQuitting = true;

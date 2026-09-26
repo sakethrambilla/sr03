@@ -30,6 +30,7 @@ export function App() {
   const toggleSidebar = useStore((state) => state.toggleSidebar);
   const projects = useStore((state) => state.projects);
   const archiveIdle = useStore((state) => state.archiveIdle);
+  const openFolder = useStore((state) => state.openFolder);
   const thread = useActiveThread();
 
   // a reconnect after any real gap (sleep, a server restart) may have missed events entirely,
@@ -45,6 +46,12 @@ export function App() {
     void bootstrap();
     return connectEvents({ onEvent: applyEvent, onConnected });
   }, [applyEvent, bootstrap]);
+
+  useEffect(() => {
+    const onOpen = (event: Event) => void openFolder((event as CustomEvent<string>).detail);
+    window.addEventListener("sr03:open", onOpen);
+    return () => window.removeEventListener("sr03:open", onOpen);
+  }, [openFolder]);
 
   // the sidebar and the draft live in the store, so their shortcuts work even with nothing open
   useShortcut("toggleSidebar", toggleSidebar);
