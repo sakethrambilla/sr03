@@ -86,36 +86,45 @@ function Ring({ percentage }: { percentage: number }) {
   );
 }
 
-const BAND_FILL = { ok: "bg-git-added", warn: "bg-git-modified", hot: "bg-destructive" } as const;
+const BAND_BORDER = {
+  ok: "border-git-added",
+  warn: "border-git-modified",
+  hot: "border-destructive",
+} as const;
 
 export function ContextBar() {
   const context = useStore((state) => state.usage?.context ?? null);
   const { width, band } = contextBand(context?.percentage ?? 0);
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <div
-          role="meter"
-          aria-label="Context window"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={Math.round(context?.percentage ?? 0)}
-          // sits over the input box's bottom border, which doubles as the empty track; the extra
-          // height above the line is only a hover target for the tooltip
-          className="absolute inset-x-2 -bottom-px flex h-2 items-end"
-        >
+    <>
+      {/* redraws the input box's bottom border in the band colour, so the fill follows its rounded
+          corners; the clip reveals it left to right */}
+      <div
+        aria-hidden
+        className={cn(
+          "pointer-events-none absolute -inset-px rounded-lg border-b transition-[clip-path,border-color] duration-300",
+          BAND_BORDER[band],
+        )}
+        style={{ clipPath: `inset(0 ${100 - width}% 0 0)` }}
+      />
+      <Tooltip>
+        <TooltipTrigger asChild>
           <div
-            className={cn("h-px transition-[width,background-color] duration-300", BAND_FILL[band])}
-            style={{ width: `${width}%` }}
+            role="meter"
+            aria-label="Context window"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(context?.percentage ?? 0)}
+            className="absolute inset-x-0 -bottom-px h-2"
           />
-        </div>
-      </TooltipTrigger>
-      <TooltipContent>
-        {context
-          ? `${Math.round(context.percentage)}% · ${tokens(context.used)} / ${tokens(context.max)} tokens`
-          : "No context data yet"}
-      </TooltipContent>
-    </Tooltip>
+        </TooltipTrigger>
+        <TooltipContent>
+          {context
+            ? `${Math.round(context.percentage)}% · ${tokens(context.used)} / ${tokens(context.max)} tokens`
+            : "No context data yet"}
+        </TooltipContent>
+      </Tooltip>
+    </>
   );
 }
 
