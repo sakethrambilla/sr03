@@ -1,8 +1,9 @@
-// The composer's usage button and the popover behind it: the session's context ring and cost,
-// the account's plan rate-limit windows, and the process resource sample — which the server only
-// takes while this is open.
+// The composer's usage button, the context bar under its input, and the popover behind it: the
+// session's context ring and cost, the account's plan rate-limit windows, and the process resource
+// sample — which the server only takes while this is open.
 import { useEffect, useState } from "react";
 
+import { contextBand } from "../lib/context.ts";
 import { sendClientMessage } from "../lib/ws.ts";
 import { useStore } from "../store.ts";
 import { Button } from "@/components/ui/button";
@@ -82,6 +83,37 @@ function Ring({ percentage }: { percentage: number }) {
         WebkitMask: RING_MASK,
       }}
     />
+  );
+}
+
+const BAND_FILL = { ok: "bg-git-added", warn: "bg-git-modified", hot: "bg-destructive" } as const;
+
+export function ContextBar() {
+  const context = useStore((state) => state.usage?.context ?? null);
+  const { width, band } = contextBand(context?.percentage ?? 0);
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div
+          role="meter"
+          aria-label="Context window"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(context?.percentage ?? 0)}
+          className="mt-1.5 h-1 w-full overflow-hidden rounded-md bg-accent"
+        >
+          <div
+            className={cn("h-full rounded-md transition-[width,background-color] duration-300", BAND_FILL[band])}
+            style={{ width: `${width}%` }}
+          />
+        </div>
+      </TooltipTrigger>
+      <TooltipContent>
+        {context
+          ? `${Math.round(context.percentage)}% · ${tokens(context.used)} / ${tokens(context.max)} tokens`
+          : "No context data yet"}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
