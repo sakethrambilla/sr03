@@ -85,6 +85,7 @@ function ThreadRow({ thread }: { thread: Thread }) {
   const renameThread = useStore((state) => state.renameThread);
   const forkThread = useStore((state) => state.forkThread);
   const setArchived = useStore((state) => state.setArchived);
+  const exitDelay = useStore((state) => state.leaving[thread.id]);
   const canFork = useStore(
     (state) =>
       state.providers.find((provider) => provider.id === thread.providerId)?.capabilities.fork ??
@@ -113,93 +114,104 @@ function ThreadRow({ thread }: { thread: Thread }) {
   );
 
   return (
-    <li className="group">
-      <div
-        className={cn(
-          "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 transition",
-          active ? "bg-accent" : "hover:bg-accent/50",
-        )}
-        onClick={() => void openThread(thread.id)}
-      >
-        <StatusDot status={thread.status} done={done} />
-        <div className="min-w-0 flex-1">
-          {renaming ? (
-            <Input
-              ref={renameRef}
-              autoFocus
-              defaultValue={thread.title}
-              spellCheck={false}
+    <li
+      data-leaving={typeof exitDelay === "number" || undefined}
+      style={typeof exitDelay === "number" ? { transitionDelay: `${exitDelay}ms` } : undefined}
+      className={cn(
+        "group grid transition-[grid-template-rows,opacity,translate] duration-200 ease-[cubic-bezier(0.32,0.72,0,1)]",
+        typeof exitDelay === "number"
+          ? "pointer-events-none -translate-x-3 grid-rows-[0fr] opacity-0"
+          : "grid-rows-[1fr]",
+      )}
+    >
+      <div className="min-h-0 overflow-hidden">
+        <div
+          className={cn(
+            "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 transition",
+            active ? "bg-accent" : "hover:bg-accent/50",
+          )}
+          onClick={() => void openThread(thread.id)}
+        >
+          <StatusDot status={thread.status} done={done} />
+          <div className="min-w-0 flex-1">
+            {renaming ? (
+              <Input
+                ref={renameRef}
+                autoFocus
+                defaultValue={thread.title}
+                spellCheck={false}
+                onClick={(event) => event.stopPropagation()}
+                onBlur={(event) => {
+                  setRenaming(false);
+                  const value = event.target.value.trim();
+                  if (value && value !== thread.title) void renameThread(thread.id, value);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.currentTarget.blur();
+                  if (event.key === "Escape") {
+                    event.currentTarget.value = thread.title;
+                    event.currentTarget.blur();
+                  }
+                }}
+                className="h-6 px-1 py-0 text-[13px]"
+              />
+            ) : (
+              <div className="flex min-w-0 items-center gap-1.5">
+                {thread.external ? <ProviderLogo id={thread.providerId} className="size-3.5 shrink-0" /> : null}
+                <p className={cn("truncate text-[13px]", active ? "text-foreground" : "text-muted-foreground")}>
+                  {thread.title}
+                </p>
+                {thread.external ? (
+                  <span className="shrink-0 rounded-md border border-border px-1 text-[10px] text-faint">external</span>
+                ) : null}
+              </div>
+            )}
+          </div>
+
+          <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                title="Options"
+                onClick={(event) => event.stopPropagation()}
+                className={cn(
+                  "size-6 shrink-0 text-faint",
+                  menuOpen ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+                )}
+              >
+                <DotsIcon />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              className="min-w-44"
               onClick={(event) => event.stopPropagation()}
-              onBlur={(event) => {
-                setRenaming(false);
-                const value = event.target.value.trim();
-                if (value && value !== thread.title) void renameThread(thread.id, value);
+              // the menu's focus trap outlives its own close animation, so it takes focus off the
+              // freshly mounted rename input. taking it back here is what lets a click on another
+              // session blur the input, and so put the rename away
+              onCloseAutoFocus={(event) => {
+                event.preventDefault();
+                renameRef.current?.focus();
               }}
               onKeyDown={(event) => {
-                if (event.key === "Enter") event.currentTarget.blur();
-                if (event.key === "Escape") {
-                  event.currentTarget.value = thread.title;
-                  event.currentTarget.blur();
-                }
+                const action = actions.find((item) => item.key === event.key.toLowerCase());
+                if (!action) return;
+                event.preventDefault();
+                setMenuOpen(false);
+                action.run();
               }}
-              className="h-6 px-1 py-0 text-[13px]"
-            />
-          ) : (
-            <div className="flex min-w-0 items-center gap-1.5">
-              {thread.external ? <ProviderLogo id={thread.providerId} className="size-3.5 shrink-0" /> : null}
-              <p className={cn("truncate text-[13px]", active ? "text-foreground" : "text-muted-foreground")}>
-                {thread.title}
-              </p>
-              {thread.external ? (
-                <span className="shrink-0 rounded-md border border-border px-1 text-[10px] text-faint">external</span>
-              ) : null}
-            </div>
-          )}
-        </div>
-
-        <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              title="Options"
-              onClick={(event) => event.stopPropagation()}
-              className={cn(
-                "size-6 shrink-0 text-faint",
-                menuOpen ? "opacity-100" : "opacity-0 group-hover:opacity-100",
-              )}
             >
-              <DotsIcon />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="end"
-            className="min-w-44"
-            onClick={(event) => event.stopPropagation()}
-            // the menu's focus trap outlives its own close animation, so it takes focus off the
-            // freshly mounted rename input. taking it back here is what lets a click on another
-            // session blur the input, and so put the rename away
-            onCloseAutoFocus={(event) => {
-              event.preventDefault();
-              renameRef.current?.focus();
-            }}
-            onKeyDown={(event) => {
-              const action = actions.find((item) => item.key === event.key.toLowerCase());
-              if (!action) return;
-              event.preventDefault();
-              setMenuOpen(false);
-              action.run();
-            }}
-          >
-            {actions.map((action) => (
-              <DropdownMenuItem key={action.key} onSelect={action.run}>
-                {action.label}
-                <DropdownMenuShortcut className="uppercase">{action.key}</DropdownMenuShortcut>
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+              {actions.map((action) => (
+                <DropdownMenuItem key={action.key} onSelect={action.run}>
+                  {action.label}
+                  <DropdownMenuShortcut className="uppercase">{action.key}</DropdownMenuShortcut>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
 
+        </div>
       </div>
     </li>
   );
@@ -410,6 +422,7 @@ function ProjectFilter({
 }
 
 export function Sidebar() {
+  const leaving = useStore((state) => state.leaving);
   const projects = useStore((state) => state.projects);
   const threads = useStore((state) => state.threads);
   const connected = useStore((state) => state.connected);
@@ -447,11 +460,13 @@ export function Sidebar() {
           threads: threads.filter(
             (thread) =>
               thread.projectId === project.id &&
-              (statusFilter === "archived" ? thread.archived : !thread.archived),
+              (statusFilter === "archived"
+                ? thread.archived && !(thread.id in leaving)
+                : !thread.archived || thread.id in leaving),
           ),
         }))
         .filter((group) => group.threads.length > 0),
-    [projects, threads, selected, statusFilter],
+    [projects, threads, selected, statusFilter, leaving],
   );
 
   // under "all" the archived ones keep their own collapsed section below the active folders
@@ -459,10 +474,10 @@ export function Sidebar() {
     () =>
       statusFilter === "all"
         ? threads.filter(
-            (thread) => thread.archived && (!selected || thread.projectId === selected.id),
+            (thread) => thread.archived && !(thread.id in leaving) && (!selected || thread.projectId === selected.id),
           )
         : [],
-    [threads, selected, statusFilter],
+    [threads, selected, statusFilter, leaving],
   );
 
   return (
