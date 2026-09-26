@@ -1,6 +1,6 @@
-// The composer's usage button, the context bar under its input, and the popover behind it: the
-// session's context ring and cost, the account's plan rate-limit windows, and the process resource
-// sample — which the server only takes while this is open.
+// The composer's usage button, the context bar along its input's border, and the popover behind
+// it: the session's context ring and cost, the account's plan rate-limit windows, and the process
+// resource sample — which the server only takes while this is open.
 import { useEffect, useState } from "react";
 
 import { contextBand } from "../lib/context.ts";
@@ -100,10 +100,12 @@ export function ContextBar() {
           aria-valuemin={0}
           aria-valuemax={100}
           aria-valuenow={Math.round(context?.percentage ?? 0)}
-          className="mt-1.5 h-1 w-full overflow-hidden rounded-md bg-accent"
+          // sits over the input box's bottom border, which doubles as the empty track; the extra
+          // height above the line is only a hover target for the tooltip
+          className="absolute inset-x-2 -bottom-px flex h-2 items-end"
         >
           <div
-            className={cn("h-full rounded-md transition-[width,background-color] duration-300", BAND_FILL[band])}
+            className={cn("h-px transition-[width,background-color] duration-300", BAND_FILL[band])}
             style={{ width: `${width}%` }}
           />
         </div>

@@ -511,7 +511,7 @@ export function Composer({
 
         <div
           className={cn(
-            "rounded-lg border bg-input/30 shadow-lg shadow-black/20 transition",
+            "relative rounded-lg border bg-input/30 shadow-lg shadow-black/20 transition",
             dragging ? "border-primary" : "border-border focus-within:border-border/90",
           )}
         >
@@ -613,9 +613,9 @@ export function Composer({
               </Tooltip>
             )}
           </div>
+          <ContextBar />
         </div>
 
-        <ContextBar />
         {/* the controls are all shrink-0, so in a narrow editor group they wrap to a second line
             rather than spilling past the group's edge */}
         <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-0.5 px-1">
