@@ -3,6 +3,7 @@
 // per-thread caches (messages, streaming text, approvals, subagents) and the streaming buffer
 // that lets a reply out a slice per frame instead of in paragraph-sized lumps.
 import { create } from "zustand";
+import { toast } from "sonner";
 
 import { api } from "./lib/api.ts";
 import { persistable } from "./lib/layout.ts";
@@ -663,6 +664,14 @@ export const useStore = create<Store>((set, get) => ({
       leaving: withoutKeys(state.leaving, ids),
       threads: archived.reduce(upsertThread, state.threads),
     }));
+    if (ids.length > 0) {
+      toast(`Archived ${ids.length} ${ids.length === 1 ? "session" : "sessions"}`, {
+        action: {
+          label: "Undo",
+          onClick: () => void Promise.all(ids.map((id) => get().setArchived(id, false))),
+        },
+      });
+    }
   },
 
   setArchived: async (id, archived) => {
