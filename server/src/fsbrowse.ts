@@ -87,6 +87,72 @@ export function linuxPickerCommands(kind: "folder" | "file", title: string): Pic
   ];
 }
 
+// Windows PowerShell's FolderBrowserDialog is the old tree view; IFileOpenDialog is the Explorer one
+const WINDOWS_PICKER = `$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+Add-Type -ReferencedAssemblies System.Windows.Forms, System.Drawing -TypeDefinition @'
+using System;
+using System.Drawing;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+public static class Sr03Picker {
+  [ComImport, Guid("DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7")] class FileOpenDialog {}
+  // vtable order matters: unused slots are declared only to keep later ones at the right offset
+  [ComImport, Guid("42f85136-db7e-439c-85f1-e4075d135fc8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  interface IFileOpenDialog {
+    [PreserveSig] int Show(IntPtr parent);
+    void SetFileTypes(); void SetFileTypeIndex(); void GetFileTypeIndex(); void Advise(); void Unadvise();
+    void SetOptions(uint fos); void GetOptions(out uint fos);
+    void SetDefaultFolder(); void SetFolder(); void GetFolder(); void GetCurrentSelection();
+    void SetFileName(); void GetFileName();
+    void SetTitle([MarshalAs(UnmanagedType.LPWStr)] string title);
+    void SetOkButtonLabel(); void SetFileNameLabel();
+    void GetResult(out IShellItem item);
+  }
+  [ComImport, Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  interface IShellItem {
+    void BindToHandler(); void GetParent();
+    void GetDisplayName(uint sigdn, [MarshalAs(UnmanagedType.LPWStr)] out string name);
+  }
+  public static string Pick(string kind, string title) {
+    var owner = new Form { TopMost = true, ShowInTaskbar = false, FormBorderStyle = FormBorderStyle.None,
+      Opacity = 0, StartPosition = FormStartPosition.Manual, Location = new Point(-32000, -32000), Size = new Size(1, 1) };
+    owner.Show();
+    owner.Activate();
+    try {
+      if (kind == "file") {
+        var files = new OpenFileDialog { Title = title };
+        return files.ShowDialog(owner) == DialogResult.OK ? files.FileName : null;
+      }
+      var dialog = (IFileOpenDialog)new FileOpenDialog();
+      // FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM
+      dialog.SetOptions(0x20 | 0x40);
+      dialog.SetTitle(title);
+      if (dialog.Show(owner.Handle) != 0) return null;
+      IShellItem item;
+      dialog.GetResult(out item);
+      string chosen;
+      // SIGDN_FILESYSPATH
+      item.GetDisplayName(0x80058000, out chosen);
+      return chosen;
+    } finally {
+      owner.Close();
+    }
+  }
+}
+'@
+`;
+
+export function windowsPickerCommand(kind: "folder" | "file", title: string): PickerCommand {
+  const quoted = `'${title.replaceAll("'", "''")}'`;
+  const script = `${WINDOWS_PICKER}\n$chosen = [Sr03Picker]::Pick('${kind}', ${quoted})\nif ($chosen) { $chosen }\n`;
+  return {
+    cmd: "powershell.exe",
+    args: ["-NoProfile", "-NonInteractive", "-Sta", "-ExecutionPolicy", "Bypass", "-EncodedCommand",
+      Buffer.from(script, "utf16le").toString("base64")],
+  };
+}
+
 async function runPicker(commands: PickerCommand[]): Promise<string | null> {
   for (const { cmd, args, cancelCode } of commands) {
     try {
@@ -126,7 +192,7 @@ export async function choosePath(kind: "folder" | "file"): Promise<string | null
   const prompt = kind === "folder" ? "sr03 — choose a project folder" : "sr03 — choose a file";
   if (process.platform === "darwin") return chooseMac(kind, prompt);
   if (process.platform === "linux") return runPicker(linuxPickerCommands(kind, prompt));
-  if (process.platform === "win32") throw new Error("The native picker needs macOS");
+  if (process.platform === "win32") return runPicker([windowsPickerCommand(kind, prompt)]);
   throw new Error("No native picker on this platform");
 }
 
