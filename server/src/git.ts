@@ -279,6 +279,10 @@ export async function removeWorktree(input: {
   await git(input.root, args);
 }
 
+export async function deleteBranch(root: string, branch: string): Promise<void> {
+  await git(root, ["branch", "-D", branch]);
+}
+
 export async function pruneWorktrees(root: string): Promise<void> {
   await git(root, ["worktree", "prune"]);
 }

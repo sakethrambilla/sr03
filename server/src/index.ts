@@ -18,6 +18,7 @@ import { listModels } from "./models.ts";
 import * as pty from "./pty.ts";
 import { watchThread } from "./watch.ts";
 import type { ClientMessage, ServerEvent } from "./types.ts";
+import { startPrWatch } from "./prs.ts";
 
 const WEB_DIST = path.resolve(fileURLToPath(new URL("../../web/dist", import.meta.url)));
 
@@ -174,6 +175,7 @@ websockets.on("connection", (socket) => {
 
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`sr03 server listening on http://127.0.0.1:${PORT}`);
+  startPrWatch();
   // asking the CLI for its model list costs seconds, so pay it before the first page load
   void Promise.all([listModels("claude"), listModels("cursor"), listModels("codex")]);
 });
