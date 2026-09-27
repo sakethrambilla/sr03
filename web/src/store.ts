@@ -1032,7 +1032,25 @@ export const useStore = create<Store>((set, get) => ({
       }
       case "thread.updated": {
         // a leaving row is upserted once its exit ends — re-sorting it now would jump it mid-list
-        if (event.thread.id in get().leaving) return;
+        const id = event.thread.id;
+        const stored = get().threads.find((thread) => thread.id === id);
+        if (stored && !stored.archived && event.thread.archived && event.thread.pr === "merged" && !(id in get().leaving)) {
+          const merged = event.thread;
+          void (async () => {
+            set((state) => ({ leaving: { ...state.leaving, [id]: 0 } }));
+            await sleep(exitTotalMs(1));
+            set((state) => ({ leaving: withoutKeys(state.leaving, [id]), threads: upsertThread(state.threads, merged) }));
+            toast(`PR merged — archived "${merged.title}"`, {
+              action: { label: "Undo", onClick: () => void get().setArchived(id, false) },
+            });
+            if (get().activeThreadId !== id) return;
+            const next = get().threads.find((item) => item.id !== id && !item.archived);
+            if (next) await get().openThread(next.id);
+            else get().startDraft();
+          })();
+          return;
+        }
+        if (id in get().leaving) return;
         set((state) => ({ threads: upsertThread(state.threads, event.thread) }));
         return;
       }

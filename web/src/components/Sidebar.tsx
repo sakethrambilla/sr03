@@ -33,6 +33,9 @@ import {
   FolderIcon,
   HistoryIcon,
   PlusIcon,
+  PrDraftIcon,
+  PrMergedIcon,
+  PrOpenIcon,
   SettingsIcon,
   SidebarIcon,
   StatusDot,
@@ -129,7 +132,15 @@ function ThreadRow({ thread }: { thread: Thread }) {
           )}
           onClick={() => void openThread(thread.id)}
         >
-          <StatusDot status={thread.status} done={done} />
+          {thread.pr === "merged" ? (
+            <PrMergedIcon className="size-3.5 shrink-0 text-merged" />
+          ) : thread.status === "idle" && thread.pr === "open" ? (
+            <PrOpenIcon className="size-3.5 shrink-0 text-git-added" />
+          ) : thread.status === "idle" && thread.pr === "draft" ? (
+            <PrDraftIcon className="size-3.5 shrink-0 text-faint" />
+          ) : (
+            <StatusDot status={thread.status} done={done} />
+          )}
           <div className="min-w-0 flex-1">
             {renaming ? (
               <Input
