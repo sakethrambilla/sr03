@@ -309,7 +309,6 @@ function threadFor(directory: string, extra: Partial<Thread> = {}): Thread {
     sessionId: extra.sessionId ?? null,
     status: "idle",
     archived: false,
-    external: false,
     cwdMissing: false,
     layout: null,
     createdAt: Date.now(),

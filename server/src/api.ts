@@ -47,7 +47,6 @@ import {
 } from "./models.ts";
 import type { Question } from "./types.ts";
 import { publish } from "./bus.ts";
-import { discover, importExternal } from "./external/index.ts";
 
 class HttpError extends Error {
   status: number;
@@ -824,23 +823,10 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
   {
     method: "GET",
     pattern: /^\/api\/threads\/([^/]+)$/,
-    handler: async ({ params }) => {
-      const found = requireThread(params[0]!);
-      if (found.external) {
-        try {
-          await importExternal(found);
-        } catch (error) {
-          throw new HttpError(502, (error as Error).message);
-        }
-      }
+    handler: ({ params }) => {
       const thread = requireThread(params[0]!);
       return { thread, messages: messages.list(thread.id), tasks: agents.threadTasks(thread.id) };
     },
-  },
-  {
-    method: "POST",
-    pattern: /^\/api\/external\/refresh$/,
-    handler: async () => ({ added: await discover() }),
   },
   {
     method: "GET",
