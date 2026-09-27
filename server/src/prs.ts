@@ -13,10 +13,7 @@ import type { PrState, Thread } from "./types.ts";
 const exec = promisify(execFile);
 const POLL_MS = 60_000;
 
-type KnownPr = Exclude<PrState, "none">;
-export type PrLister = (root: string, since: number) => Promise<Map<string, KnownPr> | null>;
-
-interface GhPr {
+export interface GhPr {
   headRefName: string;
   headRepositoryOwner: { login: string } | null;
   state: "OPEN" | "CLOSED" | "MERGED";
@@ -25,19 +22,23 @@ interface GhPr {
   updatedAt: string;
 }
 
-export function parsePrList(json: string, owner: string, since: number): Map<string, KnownPr> {
-  const latest = new Map<string, GhPr>();
-  for (const pr of JSON.parse(json) as GhPr[]) {
-    if (pr.headRepositoryOwner?.login !== owner || Date.parse(pr.createdAt) < since) continue;
-    const seen = latest.get(pr.headRefName);
-    if (!seen || Date.parse(pr.updatedAt) > Date.parse(seen.updatedAt)) latest.set(pr.headRefName, pr);
+// null means the PR list is unknown (no gh, no auth, not GitHub), so nothing changes
+export type PrLister = (root: string) => Promise<GhPr[] | null>;
+
+export function parsePrList(json: string, owner: string): GhPr[] {
+  return (JSON.parse(json) as GhPr[]).filter((pr) => pr.headRepositoryOwner?.login === owner);
+}
+
+// PRs opened before the thread existed belong to an earlier use of the same branch name
+export function prStateFor(prs: GhPr[], branch: string, since: number): PrState {
+  let latest: GhPr | null = null;
+  for (const pr of prs) {
+    if (pr.headRefName !== branch || Date.parse(pr.createdAt) < since) continue;
+    if (!latest || Date.parse(pr.updatedAt) > Date.parse(latest.updatedAt)) latest = pr;
   }
-  const result = new Map<string, KnownPr>();
-  for (const [branch, pr] of latest) {
-    if (pr.state === "MERGED") result.set(branch, "merged");
-    else if (pr.state === "OPEN") result.set(branch, pr.isDraft ? "draft" : "open");
-  }
-  return result;
+  if (latest?.state === "MERGED") return "merged";
+  if (latest?.state === "OPEN") return latest.isDraft ? "draft" : "open";
+  return "none";
 }
 
 const logged = new Set<string>();
@@ -50,7 +51,7 @@ function logOnce(message: string): void {
 let gh: string | null | undefined;
 const owners = new Map<string, string>();
 
-async function ghListPrs(root: string, since: number): Promise<Map<string, KnownPr> | null> {
+async function ghListPrs(root: string): Promise<GhPr[] | null> {
   if (gh === undefined) gh = await findExecutable(["gh"]);
   if (!gh) {
     logOnce("gh not found on PATH");
@@ -68,7 +69,7 @@ async function ghListPrs(root: string, since: number): Promise<Map<string, Known
       ["pr", "list", "--state", "all", "--limit", "200", "--json", "headRefName,headRepositoryOwner,state,isDraft,createdAt,updatedAt"],
       { cwd: root, maxBuffer: 16 * 1024 * 1024 },
     );
-    return parsePrList(stdout, owner, since);
+    return parsePrList(stdout, owner);
   } catch (error) {
     logOnce((error as { stderr?: string }).stderr?.trim() || (error as Error).message);
     return null;
@@ -103,11 +104,11 @@ export async function pollPrs(listPrs: PrLister = ghListPrs): Promise<void> {
 
   for (const [projectId, group] of byProject) {
     const root = projects.byId(projectId)!.path;
-    const prs = await listPrs(root, Math.min(...group.map((thread) => thread.createdAt)));
+    const prs = await listPrs(root);
     if (prs === null) continue;
     for (const thread of group) {
       try {
-        const next = prs.get(thread.branch!) ?? "none";
+        const next = prStateFor(prs, thread.branch!, thread.createdAt);
         if (next === thread.pr) continue;
         threads.update(thread.id, { pr: next });
         publish({ type: "thread.updated", thread: threads.byId(thread.id)! });

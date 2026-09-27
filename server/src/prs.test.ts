@@ -15,13 +15,13 @@ after(() => {
   fs.rmSync(dataDir, { recursive: true, force: true });
 });
 
-const { parsePrList, pollPrs } = await import("./prs.ts");
+const { parsePrList, pollPrs, prStateFor } = await import("./prs.ts");
 const { projects, threads } = await import("./db.ts");
 const git = await import("./git.ts");
 
 type Lister = NonNullable<Parameters<typeof pollPrs>[0]>;
 
-test("parsePrList keeps the newest same-owner PR per branch and drops closed ones", () => {
+test("prStateFor picks the newest same-owner PR opened since the thread and drops closed ones", () => {
   const since = Date.parse("2026-01-01T00:00:00Z");
   const pr = (headRefName: string, state: string, updatedAt: string, extra: Record<string, unknown> = {}) => ({
     headRefName,
@@ -32,23 +32,33 @@ test("parsePrList keeps the newest same-owner PR per branch and drops closed one
     updatedAt,
     ...extra,
   });
-  const json = JSON.stringify([
-    pr("open", "OPEN", "2026-03-01T00:00:00Z"),
-    pr("draft", "OPEN", "2026-03-01T00:00:00Z", { isDraft: true }),
-    pr("merged", "MERGED", "2026-03-01T00:00:00Z"),
-    pr("closed", "CLOSED", "2026-03-01T00:00:00Z"),
-    pr("reopened", "CLOSED", "2026-03-01T00:00:00Z"),
-    pr("reopened", "OPEN", "2026-03-02T00:00:00Z"),
-    pr("reclosed", "MERGED", "2026-03-01T00:00:00Z"),
-    pr("reclosed", "CLOSED", "2026-03-02T00:00:00Z"),
-    pr("fork", "OPEN", "2026-03-01T00:00:00Z", { headRepositoryOwner: { login: "someone" } }),
-    pr("old", "MERGED", "2026-03-01T00:00:00Z", { createdAt: "2025-06-01T00:00:00Z" }),
-  ]);
-  const result = parsePrList(json, "me", since);
-  assert.deepEqual(
-    Object.fromEntries(result),
-    { open: "open", draft: "draft", merged: "merged", reopened: "open" },
+  const prs = parsePrList(
+    JSON.stringify([
+      pr("open", "OPEN", "2026-03-01T00:00:00Z"),
+      pr("draft", "OPEN", "2026-03-01T00:00:00Z", { isDraft: true }),
+      pr("merged", "MERGED", "2026-03-01T00:00:00Z"),
+      pr("closed", "CLOSED", "2026-03-01T00:00:00Z"),
+      pr("reopened", "CLOSED", "2026-03-01T00:00:00Z"),
+      pr("reopened", "OPEN", "2026-03-02T00:00:00Z"),
+      pr("reclosed", "MERGED", "2026-03-01T00:00:00Z"),
+      pr("reclosed", "CLOSED", "2026-03-02T00:00:00Z"),
+      pr("fork", "OPEN", "2026-03-01T00:00:00Z", { headRepositoryOwner: { login: "someone" } }),
+      pr("old", "MERGED", "2026-03-01T00:00:00Z", { createdAt: "2025-06-01T00:00:00Z" }),
+    ]),
+    "me",
   );
+  const branches = ["open", "draft", "merged", "closed", "reopened", "reclosed", "fork", "old", "missing"];
+  assert.deepEqual(Object.fromEntries(branches.map((branch) => [branch, prStateFor(prs, branch, since)])), {
+    open: "open",
+    draft: "draft",
+    merged: "merged",
+    closed: "none",
+    reopened: "open",
+    reclosed: "none",
+    fork: "none",
+    old: "none",
+    missing: "none",
+  });
 });
 
 let counter = 0;
@@ -78,8 +88,18 @@ async function setup(options: { worktree?: boolean } = {}) {
   return { root, branch, worktreePath: worktree?.path ?? root, thread, branchListed };
 }
 
-const lister = (entries: Record<string, "open" | "draft" | "merged">): Lister =>
-  async () => new Map(Object.entries(entries));
+const STATES = { open: ["OPEN", false], draft: ["OPEN", true], merged: ["MERGED", false] } as const;
+
+const lister = (entries: Record<string, keyof typeof STATES>, createdAt = new Date().toISOString()): Lister =>
+  async () =>
+    Object.entries(entries).map(([headRefName, key]) => ({
+      headRefName,
+      headRepositoryOwner: { login: "me" },
+      state: STATES[key][0],
+      isDraft: STATES[key][1],
+      createdAt,
+      updatedAt: createdAt,
+    }));
 
 function archiveOthers(keep: string) {
   for (const thread of threads.list()) if (thread.id !== keep) threads.update(thread.id, { archived: true });
@@ -165,7 +185,20 @@ test("non-worktree threads never reach the lister", async () => {
   let calls = 0;
   await pollPrs(async () => {
     calls++;
-    return new Map();
+    return [];
   });
   assert.equal(calls, 0);
+});
+
+test("a merged PR from before the thread existed is ignored, even beside an older thread", async () => {
+  const older = await setup();
+  const s = await setup();
+  archiveOthers(s.thread.id);
+  threads.update(older.thread.id, { archived: false });
+  const between = new Date((older.thread.createdAt + s.thread.createdAt) / 2 - 1).toISOString();
+  await pollPrs(lister({ [s.branch]: "merged" }, between));
+  const thread = threads.byId(s.thread.id)!;
+  assert.equal(thread.pr, "none");
+  assert.equal(thread.archived, false);
+  assert.ok(fs.existsSync(s.worktreePath));
 });
