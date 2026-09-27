@@ -213,8 +213,8 @@ the worktree still ships without those paths.
   production install and every later `pnpm <script>` fails in `runDepsStatusCheck`. Recover with
   `pnpm install --config.confirmModulesPurge=false`.
 - Windows gets the server's POSIX-only features degraded, not ported. The native folder and file
-  pickers and reveal-in-Finder throw, and "open in <editor>" lists nothing; browsing to a project
-  path by hand still works. Provider executables are resolved from PATH with PATHEXT support. The
+  pickers go through PowerShell (an Add-Type IFileOpenDialog shim); reveal-in-Finder throws, and
+  "open in <editor>" lists nothing; browsing to a project path by hand still works. Provider executables are resolved from PATH with PATHEXT support. The
   resources meter shells out to `ps` and `lsof`, so while it is open each tick logs
   `spawn ps ENOENT` and publishes no sample.
 
