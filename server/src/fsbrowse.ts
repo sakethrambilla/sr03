@@ -1,4 +1,4 @@
-// Filesystem work that isn't git: the folder picker's directory listing and the native macOS
+// Filesystem work that isn't git: the folder picker's directory listing and the native OS
 // dialog behind it, dropped-file uploads, the session folder's own tree — read, write, create,
 // rename, trash, reveal — the "open in Cursor/VS Code/Zed/Finder" app list, and the file walk and
 // text scan a folder falls back to when git can't index it. Every path that names something inside
@@ -69,10 +69,41 @@ export async function isDirectory(target: string): Promise<boolean> {
     .catch(() => false);
 }
 
-// the browser can't hand us a real path, but the server shares the machine, so ask macOS itself
-export async function choosePath(kind: "folder" | "file"): Promise<string | null> {
-  if (process.platform !== "darwin") throw new Error("The native picker needs macOS");
-  const prompt = kind === "folder" ? "sr03 — choose a project folder" : "sr03 — choose a file";
+export type PickerCommand = { cmd: string; args: string[]; cancelCode?: number };
+
+export function linuxPickerCommands(kind: "folder" | "file", title: string): PickerCommand[] {
+  const folder = kind === "folder";
+  return [
+    {
+      cmd: "zenity",
+      args: folder ? ["--file-selection", "--directory", `--title=${title}`] : ["--file-selection", `--title=${title}`],
+      cancelCode: 1,
+    },
+    {
+      cmd: "kdialog",
+      args: ["--title", title, folder ? "--getexistingdirectory" : "--getopenfilename", os.homedir()],
+      cancelCode: 1,
+    },
+  ];
+}
+
+async function runPicker(commands: PickerCommand[]): Promise<string | null> {
+  for (const { cmd, args, cancelCode } of commands) {
+    try {
+      const { stdout } = await exec(cmd, args);
+      const chosen = stdout.trim();
+      return chosen ? path.resolve(chosen) : null;
+    } catch (error) {
+      const { code, stderr = "" } = error as { code?: unknown; stderr?: string };
+      if (code === "ENOENT") continue;
+      if (code === cancelCode && !stderr.trim()) return null;
+      throw new Error(stderr.trim() || "The native picker closed unexpectedly");
+    }
+  }
+  throw new Error(`No native picker found (tried ${commands.map((c) => c.cmd).join(", ")})`);
+}
+
+async function chooseMac(kind: "folder" | "file", prompt: string): Promise<string | null> {
   try {
     // bare `activate` turns osascript itself into a GUI app, which costs ~2s before the dialog shows
     const { stdout } = await exec("osascript", [
@@ -88,6 +119,15 @@ export async function choosePath(kind: "folder" | "file"): Promise<string | null
     if (stderr.includes("-128")) return null;
     throw new Error(stderr.trim() || "The native picker closed unexpectedly");
   }
+}
+
+// the browser can't hand us a real path, but the server shares the machine, so ask the OS itself
+export async function choosePath(kind: "folder" | "file"): Promise<string | null> {
+  const prompt = kind === "folder" ? "sr03 — choose a project folder" : "sr03 — choose a file";
+  if (process.platform === "darwin") return chooseMac(kind, prompt);
+  if (process.platform === "linux") return runPicker(linuxPickerCommands(kind, prompt));
+  if (process.platform === "win32") throw new Error("The native picker needs macOS");
+  throw new Error("No native picker on this platform");
 }
 
 // dropped and pasted files have no path of their own, so they get one under the data dir
