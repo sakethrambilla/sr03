@@ -43,6 +43,8 @@ export interface EditorLayout {
   sizes: number[];
 }
 
+export type PrState = "none" | "open" | "draft" | "merged";
+
 export interface Thread {
   id: string;
   projectId: string;
@@ -58,6 +60,7 @@ export interface Thread {
   sessionId: string | null;
   status: ThreadStatus;
   archived: boolean;
+  pr: PrState;
   cwdMissing: boolean;
   layout: EditorLayout | null;
   createdAt: number;

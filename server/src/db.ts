@@ -13,6 +13,7 @@ import type {
   Message,
   MessageRole,
   PermissionMode,
+  PrState,
   Project,
   ProviderId,
   Thread,
@@ -123,6 +124,9 @@ try {
   }
   if (!threadColumns.includes("archived")) {
     db.exec("ALTER TABLE threads ADD COLUMN archived INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!threadColumns.includes("pr_state")) {
+    db.exec("ALTER TABLE threads ADD COLUMN pr_state TEXT NOT NULL DEFAULT 'none'");
   }
   if (!threadColumns.includes("provider_id")) {
     db.exec("ALTER TABLE threads ADD COLUMN provider_id TEXT NOT NULL DEFAULT 'claude'");
@@ -270,6 +274,7 @@ function toThread(row: Row): Thread {
     sessionId: (row.session_id as string | null) ?? null,
     status: row.status as ThreadStatus,
     archived: Boolean(row.archived),
+    pr: (row.pr_state as PrState | null) ?? "none",
     cwdMissing: !existsSync(row.cwd as string),
     layout: parseLayout(row.layout),
     createdAt: row.created_at as number,
@@ -461,6 +466,7 @@ const THREAD_COLUMNS: Record<string, string> = {
   sessionId: "session_id",
   status: "status",
   archived: "archived",
+  pr: "pr_state",
 };
 
 // one prepared UPDATE per distinct set of columns, since patches come in a handful of shapes
@@ -492,6 +498,7 @@ export const threads = {
       sessionId: null,
       status: "idle",
       archived: false,
+      pr: "none",
       cwdMissing: false,
       layout: null,
       createdAt: now,
@@ -553,7 +560,7 @@ export const threads = {
     patch: Partial<
       Pick<
         Thread,
-        "title" | "model" | "permissionMode" | "effort" | "fast" | "sessionId" | "status" | "archived"
+        "title" | "model" | "permissionMode" | "effort" | "fast" | "sessionId" | "status" | "archived" | "pr"
       >
     >,
   ): Thread | null {

@@ -108,3 +108,32 @@ test("archiveIdle archives idle and errored threads, skipping running, archived 
   const none = threads.archiveIdle(a.id, null);
   assert.deepEqual(none, []);
 });
+
+test("threads.update round-trips pr state", async (context) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "sr03-db-"));
+  const previous = process.env.SR03_DATA_DIR;
+  process.env.SR03_DATA_DIR = directory;
+  context.after(async () => {
+    if (previous === undefined) delete process.env.SR03_DATA_DIR;
+    else process.env.SR03_DATA_DIR = previous;
+    await fs.rm(directory, { recursive: true, force: true });
+  });
+
+  const { projects, threads } = await import("./db.ts");
+  const project = projects.create({ path: path.join(directory, "pr"), name: "pr", isGit: false });
+  const thread = threads.create({
+    projectId: project.id,
+    providerId: "claude",
+    title: "t",
+    cwd: directory,
+    branch: null,
+    isWorktree: false,
+    model: "m",
+    permissionMode: "default",
+    effort: "high",
+    fast: false,
+  });
+  assert.equal(threads.byId(thread.id)!.pr, "none");
+  threads.update(thread.id, { pr: "merged" });
+  assert.equal(threads.byId(thread.id)!.pr, "merged");
+});
