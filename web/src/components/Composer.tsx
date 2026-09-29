@@ -1002,11 +1002,9 @@ function collect(
 export function ThreadComposer({
   thread,
   restore,
-  status,
 }: {
   thread: Thread;
   restore?: { text: string; key: number } | null;
-  status?: ReactNode;
 }) {
   const send = useStore((state) => state.send);
   const interrupt = useStore((state) => state.interrupt);
@@ -1024,7 +1022,6 @@ export function ThreadComposer({
       blocked={thread.cwdMissing}
       above={
         <>
-          {status}
           {thread.cwdMissing ? <p className="px-1 text-xs text-muted-foreground">This session's folder no longer exists, so it can be read but not continued.</p> : null}
           {approvals.map((approval) =>
             approval.questions ? (

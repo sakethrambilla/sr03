@@ -40,7 +40,7 @@ function label(ref: FileRef): string {
   return `Open ${ref.path}${ref.line ? `:${ref.line}` : ""}`;
 }
 
-const CODE = "rounded bg-accent/70 px-1 py-0.5 font-mono text-[0.86em] text-foreground/90";
+const CODE = "rounded bg-accent/70 px-1 py-0.5 font-mono text-[0.86em] text-code-inline";
 
 function CodeSpan({ text }: { text: string }) {
   const hit = useTarget(text);
@@ -67,7 +67,7 @@ function PathSpan({ text }: { text: string }) {
       type="button"
       onClick={() => links.open(target)}
       title={label(target)}
-      className="cursor-pointer align-baseline font-mono text-[0.92em] leading-[inherit] text-foreground underline decoration-muted-foreground/40 decoration-dotted underline-offset-2 hover:decoration-solid"
+      className="cursor-pointer align-baseline font-mono text-[0.92em] leading-[inherit] text-primary underline decoration-dotted underline-offset-2 hover:decoration-solid"
     >
       {text}
     </button>
@@ -83,7 +83,7 @@ function LinkSpan({ href, children }: { href: string; children: ReactNode }) {
         type="button"
         onClick={() => links.open(target)}
         title={label(target)}
-        className="cursor-pointer align-baseline leading-[inherit] text-foreground underline decoration-muted-foreground/40 underline-offset-2 hover:decoration-foreground"
+        className="cursor-pointer align-baseline leading-[inherit] text-primary underline underline-offset-2"
       >
         {children}
       </button>
@@ -92,7 +92,7 @@ function LinkSpan({ href, children }: { href: string; children: ReactNode }) {
   // a relative href that resolves to nothing would navigate away from the app
   if (!SCHEME.test(href)) return <>{children}</>;
   return (
-    <a href={href} target="_blank" rel="noreferrer" className="text-foreground underline decoration-muted-foreground/40 underline-offset-2 hover:decoration-foreground">
+    <a href={href} target="_blank" rel="noreferrer" className="text-primary underline underline-offset-2">
       {children}
     </a>
   );
@@ -222,7 +222,7 @@ function inline(text: string, key: string): ReactNode[] {
       );
     } else if (bare !== undefined) {
       out.push(
-        <a key={k} href={bare} target="_blank" rel="noreferrer" className="text-foreground underline decoration-muted-foreground/40 underline-offset-2 hover:decoration-foreground">
+        <a key={k} href={bare} target="_blank" rel="noreferrer" className="text-primary underline underline-offset-2">
           {bare}
         </a>,
       );

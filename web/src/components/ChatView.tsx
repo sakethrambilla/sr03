@@ -34,7 +34,9 @@ import { SearchPalette } from "./SearchPalette.tsx";
 import type { PaletteMode } from "./SearchPalette.tsx";
 import { Timeline } from "./Timeline.tsx";
 import { SubagentView } from "./SubagentView.tsx";
+import { ProviderLogo } from "./ProviderLogo.tsx";
 import { SidebarToggle } from "./Sidebar.tsx";
+import { Separator } from "@/components/ui/separator";
 import {
   AgentIcon,
   BranchIcon,
@@ -123,49 +125,23 @@ function AppIcon({ id }: { id: string }) {
   );
 }
 
-type DiffStat = { files: number; insertions: number; deletions: number };
-
 // the worktree/branch icon pair matches the file tree's footer, so the two never disagree
-function GitBar({
-  project,
-  branch,
-  isWorktree,
-  diff,
-  onOpenFiles,
-}: {
-  project: string;
-  branch: string;
-  isWorktree: boolean;
-  diff: DiffStat | null;
-  onOpenFiles: () => void;
-}) {
+function BranchChip({ branch, isWorktree }: { branch: string; isWorktree: boolean }) {
   return (
-    <div className="mb-2 flex h-9 items-center gap-2.5 rounded-lg border border-border/60 bg-card/60 px-3 text-[12.5px]">
-      <span className="truncate text-muted-foreground">{project}</span>
-      <span
-        title={isWorktree ? `Worktree on ${branch}` : `On ${branch}`}
-        className="flex min-w-0 items-center gap-1 font-mono text-[12px] text-faint"
-      >
-        {isWorktree ? (
-          <WorktreeIcon className="size-3 shrink-0" />
-        ) : (
-          <BranchIcon className="size-3 shrink-0" />
-        )}
-        <span className="truncate">{branch}</span>
-      </span>
-      <div className="flex-1" />
-      {diff && diff.files > 0 ? (
-        <Button
-          variant="ghost"
-          onClick={onOpenFiles}
-          title={`${diff.files} file${diff.files === 1 ? "" : "s"} changed`}
-          className="h-6 gap-1.5 px-1.5 font-mono text-[12px] font-normal"
-        >
-          <span className="text-git-added">+{diff.insertions}</span>
-          <span className="text-destructive">−{diff.deletions}</span>
-        </Button>
-      ) : null}
-    </div>
+    <span
+      title={isWorktree ? `Worktree on ${branch}` : `On ${branch}`}
+      className={cn(
+        "flex min-w-0 max-w-48 items-center gap-1 rounded-md border border-border/70 px-1.5 py-0.5 font-mono text-[10.5px]",
+        isWorktree ? "text-primary" : "text-faint",
+      )}
+    >
+      {isWorktree ? (
+        <WorktreeIcon className="size-2.5 shrink-0" />
+      ) : (
+        <BranchIcon className="size-2.5 shrink-0" />
+      )}
+      <span className="truncate">{branch}</span>
+    </span>
   );
 }
 
@@ -186,22 +162,23 @@ function OpenMenu({ thread }: { thread: Thread }) {
   if (!primary) return null;
 
   return (
-    <div className="flex h-7 shrink-0 items-center">
+    <div className="flex h-7 shrink-0 items-center rounded-md border border-border/70 bg-accent/40">
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
             variant="ghost"
             onClick={() => launch(primary.id)}
-            aria-label={`Open in ${primary.label}`}
-            className="h-full rounded-r-none px-1.5 text-muted-foreground"
+            className="h-full gap-1.5 rounded-r-none px-2 text-[12px] font-normal text-muted-foreground"
           >
             <AppIcon id={primary.id} />
+            Open
           </Button>
         </TooltipTrigger>
         <TooltipContent>
           Open in {primary.label} <span className="text-faint">⌘O</span>
         </TooltipContent>
       </Tooltip>
+      <Separator orientation="vertical" className="h-4" />
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
@@ -280,10 +257,6 @@ export function ChatView({ thread }: { thread: Thread }) {
   // seeded from the stored value so the chip paints on the first frame, then kept live: the
   // column is written once at creation and any checkout since would leave it stale
   const [branch, setBranch] = useState<string | null>(thread.branch);
-  const [diff, setDiff] = useState<DiffStat | null>(null);
-  const projectName = useStore(
-    (state) => state.projects.find((entry) => entry.id === thread.projectId)?.name ?? "",
-  );
 
   // each open FileView registers its own save, since only it holds the edited text
   const savers = useRef(new Map<string, () => Promise<boolean>>());
@@ -451,13 +424,10 @@ export function ChatView({ thread }: { thread: Thread }) {
   useEffect(() => {
     let cancelled = false;
     setBranch(thread.branch);
-    setDiff(null);
     api
       .threadGit(thread.id)
       .then((info) => {
-        if (cancelled) return;
-        setBranch(info.branch);
-        setDiff(info.diff);
+        if (!cancelled) setBranch(info.branch);
       })
       .catch(() => undefined);
     return () => {
@@ -550,6 +520,11 @@ export function ChatView({ thread }: { thread: Thread }) {
           <h1 className="min-w-0 truncate text-[13.5px] font-medium" title={thread.cwd}>
             {thread.title}
           </h1>
+          <span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border/70 px-1.5 py-0.5 text-[10.5px] text-faint">
+            <ProviderLogo id={thread.providerId} className="size-3" />
+            {provider.label}
+          </span>
+          {branch ? <BranchChip branch={branch} isWorktree={thread.isWorktree} /> : null}
           <div className="flex-1" />
           {/* the toggles are icon buttons with padding of their own, so they sit tighter than the header gap */}
           <div className="flex items-center gap-1">
@@ -624,21 +599,7 @@ export function ChatView({ thread }: { thread: Thread }) {
                           onRewind={setPendingRewind}
                           onOpenSubagent={openSubagent}
                         />
-                        <ThreadComposer
-                          thread={thread}
-                          restore={restore}
-                          status={
-                            branch ? (
-                              <GitBar
-                                project={projectName}
-                                branch={branch}
-                                isWorktree={thread.isWorktree}
-                                diff={diff}
-                                onOpenFiles={() => setTreeOpen(true)}
-                              />
-                            ) : null
-                          }
-                        />
+                        <ThreadComposer thread={thread} restore={restore} />
                       </>
                     ) : tab.kind === "subagent" ? (
                       <SubagentView
