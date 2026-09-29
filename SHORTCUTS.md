@@ -75,6 +75,7 @@ group only — the other groups' files ignore them.
 | --- | --- | --- |
 | `⏎` | Send | `web/src/components/Composer.tsx` |
 | `⇧⏎` | New line | `web/src/components/Composer.tsx` |
+| `Tab` or `→` | Empty prompt with a suggested next message: fill it in (doesn't send) | `web/src/components/Composer.tsx` |
 | `↑` / `↓` | Slash-command menu: move the highlight | `web/src/components/Composer.tsx` |
 | `⏎` or `Tab` | Slash-command menu: pick the highlighted command | `web/src/components/Composer.tsx` |
 | `Esc` | Slash-command menu: dismiss; image preview: close | `web/src/components/Composer.tsx` |
