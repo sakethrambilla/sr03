@@ -198,8 +198,8 @@ const ToolGroup = memo(function ToolGroup({
         type="button"
         onClick={openMatched ?? (() => setOpen(!open))}
         className={cn(
-          "flex w-fit max-w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-[13.5px] outline-none transition hover:text-foreground focus-visible:bg-accent",
-          messages.some(toolFailed) ? "text-destructive" : "text-faint",
+          "flex w-fit max-w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-[13.5px] transition hover:bg-accent hover:text-foreground",
+          messages.some(toolFailed) ? "text-destructive" : "text-muted-foreground",
         )}
       >
         {delegation ? <AgentIcon className="size-3.5 shrink-0 text-primary" /> : null}
@@ -408,6 +408,7 @@ function toRailItems(messages: Message[]): RailItem[] {
 }
 
 const RAIL_CONTENT_WIDTH = 832; // max-w-[52rem], the transcript's content column
+const RAIL_PERSISTENT_GUTTER = 48;
 const RAIL_STRIP_LEFT = 12;
 const RAIL_STRIP_MAX_WIDTH = 40;
 const RAIL_TICK_SPACING = 8;
@@ -452,11 +453,13 @@ function railIndexAt(top: number, height: number, pointerY: number, count: numbe
 function TurnRail({
   items,
   stripWidth,
+  persistent,
   onSelect,
   registerTick,
 }: {
   items: RailItem[];
   stripWidth: number;
+  persistent: boolean;
   onSelect: (id: string) => void;
   registerTick: (id: string, node: HTMLElement | null) => void;
 }) {
@@ -510,7 +513,9 @@ function TurnRail({
     <div
       className={cn(
         "pointer-events-none absolute inset-y-0 left-0 z-20 hidden w-18 [@media(pointer:fine)]:block",
-        "opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100",
+        persistent
+          ? "opacity-100"
+          : "opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100",
       )}
     >
       <Popover open={item !== null}>
@@ -679,7 +684,7 @@ export function Timeline({
   const copyable = useMemo(() => finalReplies(messages, running), [messages, running]);
   const railItems = useMemo(() => toRailItems(messages), [messages]);
   const [pinned, setPinned] = useState(true);
-  const [rail, setRail] = useState({ stripWidth: 0 });
+  const [rail, setRail] = useState({ stripWidth: 0, persistent: false });
   const ticks = useRef(new Map<string, HTMLElement>());
   const jumping = useRef<number | null>(null);
   const empty = messages.length === 0 && !streaming;
@@ -761,9 +766,10 @@ export function Timeline({
       const width = el.getBoundingClientRect().width;
       const next = {
         stripWidth: railStripWidth(width),
+        persistent: railGutter(width) >= RAIL_PERSISTENT_GUTTER,
       };
       setRail((current) =>
-        current.stripWidth === next.stripWidth
+        current.stripWidth === next.stripWidth && current.persistent === next.persistent
           ? current
           : next,
       );
@@ -832,6 +838,7 @@ export function Timeline({
         <TurnRail
           items={railItems}
           stripWidth={rail.stripWidth}
+          persistent={rail.persistent}
           onSelect={jumpToMessage}
           registerTick={registerTick}
         />

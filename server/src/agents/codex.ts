@@ -526,11 +526,7 @@ function finishAssistant(session: CodexNativeSession, turn: ActiveTurn, emit: bo
 
 function appendMessage(session: CodexNativeSession, text: string): void {
   const turn = session.activeTurn;
-  if (!turn) {
-    session.emit({ type: "assistant.delta", text });
-    session.emit({ type: "assistant.complete", text });
-    return;
-  }
+  if (!turn) return;
   turn.text += text;
   session.emit({ type: "assistant.delta", text });
 }
@@ -738,6 +734,7 @@ function handleItemStarted(session: CodexNativeSession, params: unknown): void {
   const item = itemFrom(params);
   if (!item) return;
   const type = stringValue(item.type);
+  if (type !== "collabAgentToolCall" && type !== "collabToolCall" && !ownsNotification(session, params)) return;
   if (type === "agentMessage") return;
   if (type === "reasoning") {
     session.emit({ type: "phase", phase: { kind: "thinking" } });
@@ -765,6 +762,7 @@ function handleItemCompleted(session: CodexNativeSession, params: unknown): void
   const item = itemFrom(params);
   if (!item) return;
   const type = stringValue(item.type);
+  if (type !== "collabAgentToolCall" && type !== "collabToolCall" && !ownsNotification(session, params)) return;
   if (type === "agentMessage") {
     const text = textValue(item.text);
     const turn = session.activeTurn;
@@ -777,7 +775,10 @@ function handleItemCompleted(session: CodexNativeSession, params: unknown): void
       }
     }
     if (turn) completeMessage(session, turn);
-    else if (text) session.emit({ type: "assistant.complete", text });
+    else if (text) {
+      session.emit({ type: "assistant.delta", text });
+      session.emit({ type: "assistant.complete", text });
+    }
     return;
   }
   if (type === "reasoning") {
@@ -800,6 +801,13 @@ function handleItemCompleted(session: CodexNativeSession, params: unknown): void
   ) {
     completeTool(session, item);
   }
+}
+
+// Subagent threads share the app-server connection; their notifications must not touch this turn.
+function ownsNotification(session: CodexNativeSession, params: unknown): boolean {
+  if (!isRecord(params)) return false;
+  const threadId = stringValue(params.threadId);
+  return !threadId || !session.sessionId || threadId === session.sessionId;
 }
 
 function handleTurnCompleted(session: CodexNativeSession, params: unknown): void {
@@ -845,7 +853,7 @@ function registerHandlers(session: CodexNativeSession): void {
     handleItemCompleted(session, params);
   });
   connection.registerNotificationHandler("item/agentMessage/delta", (params) => {
-    if (!isRecord(params)) return;
+    if (!isRecord(params) || !ownsNotification(session, params)) return;
     const delta = textValue(params.delta);
     if (!delta) return;
     const child = childOf(session, params);
