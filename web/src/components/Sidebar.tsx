@@ -583,11 +583,12 @@ export function Sidebar() {
       </div>
 
       <footer className="flex items-center gap-2 border-t border-border/60 px-4 py-2.5">
-        <span
-          className={cn("size-1.5 rounded-full", connected ? "bg-emerald-500" : "bg-destructive")}
-          title={connected ? "Connected" : "Disconnected"}
-        />
-        <span className="text-[11px] text-faint">{connected ? "connected" : "reconnecting…"}</span>
+        {connected ? null : (
+          <>
+            <span className="size-1.5 rounded-full bg-destructive" title="Disconnected" />
+            <span className="text-[11px] text-faint">reconnecting…</span>
+          </>
+        )}
         <div className="flex-1" />
         <Button
           variant="ghost"
