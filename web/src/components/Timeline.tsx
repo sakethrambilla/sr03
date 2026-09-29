@@ -198,8 +198,8 @@ const ToolGroup = memo(function ToolGroup({
         type="button"
         onClick={openMatched ?? (() => setOpen(!open))}
         className={cn(
-          "flex w-fit max-w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-[12.5px] transition hover:bg-accent hover:text-foreground",
-          messages.some(toolFailed) ? "text-destructive" : "text-muted-foreground",
+          "flex w-fit max-w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-[13.5px] outline-none transition hover:text-foreground focus-visible:bg-accent",
+          messages.some(toolFailed) ? "text-destructive" : "text-faint",
         )}
       >
         {delegation ? <AgentIcon className="size-3.5 shrink-0 text-primary" /> : null}
@@ -286,7 +286,7 @@ const Bubble = memo(function Bubble({
     return (
       // the turn rail scrolls to this node and watches it for the in-view tick
       <div data-message-id={message.id} className="group flex flex-col items-end">
-        <div className="max-w-[85%] rounded-lg bg-accent px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap break-words text-foreground">
+        <div className="max-w-[85%] rounded-lg bg-accent px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words text-foreground">
           {message.text}
         </div>
         {copyable || onRewind ? (
@@ -317,7 +317,7 @@ const Bubble = memo(function Bubble({
         files={files}
         onRun={onRun}
         className={cn(
-          "w-full text-[14px] leading-[1.65]",
+          "w-full text-[15px] leading-[1.7]",
           message.role === "error"
             ? "rounded-lg border border-destructive/40 bg-destructive/10 px-3.5 py-2.5 text-destructive"
             : "text-foreground",
@@ -407,8 +407,7 @@ function toRailItems(messages: Message[]): RailItem[] {
   return items;
 }
 
-const RAIL_CONTENT_WIDTH = 768; // max-w-3xl, the transcript's content column
-const RAIL_PERSISTENT_GUTTER = 48;
+const RAIL_CONTENT_WIDTH = 832; // max-w-[52rem], the transcript's content column
 const RAIL_STRIP_LEFT = 12;
 const RAIL_STRIP_MAX_WIDTH = 40;
 const RAIL_TICK_SPACING = 8;
@@ -453,13 +452,11 @@ function railIndexAt(top: number, height: number, pointerY: number, count: numbe
 function TurnRail({
   items,
   stripWidth,
-  persistent,
   onSelect,
   registerTick,
 }: {
   items: RailItem[];
   stripWidth: number;
-  persistent: boolean;
   onSelect: (id: string) => void;
   registerTick: (id: string, node: HTMLElement | null) => void;
 }) {
@@ -513,9 +510,7 @@ function TurnRail({
     <div
       className={cn(
         "pointer-events-none absolute inset-y-0 left-0 z-20 hidden w-18 [@media(pointer:fine)]:block",
-        persistent
-          ? "opacity-100"
-          : "opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100",
+        "opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100",
       )}
     >
       <Popover open={item !== null}>
@@ -630,14 +625,14 @@ function StreamingReply({
           text={settled}
           files={files}
           onRun={onRun}
-          className="text-[14px] leading-[1.65] text-foreground"
+          className="text-[15px] leading-[1.7] text-foreground"
         />
       ) : null}
       <Markdown
         text={`${tail}▏`}
         files={files}
         onRun={onRun}
-        className="text-[14px] leading-[1.65] text-foreground"
+        className="text-[15px] leading-[1.7] text-foreground"
       />
     </>
   );
@@ -684,7 +679,7 @@ export function Timeline({
   const copyable = useMemo(() => finalReplies(messages, running), [messages, running]);
   const railItems = useMemo(() => toRailItems(messages), [messages]);
   const [pinned, setPinned] = useState(true);
-  const [rail, setRail] = useState({ stripWidth: 0, persistent: false });
+  const [rail, setRail] = useState({ stripWidth: 0 });
   const ticks = useRef(new Map<string, HTMLElement>());
   const jumping = useRef<number | null>(null);
   const empty = messages.length === 0 && !streaming;
@@ -766,10 +761,9 @@ export function Timeline({
       const width = el.getBoundingClientRect().width;
       const next = {
         stripWidth: railStripWidth(width),
-        persistent: railGutter(width) >= RAIL_PERSISTENT_GUTTER,
       };
       setRail((current) =>
-        current.stripWidth === next.stripWidth && current.persistent === next.persistent
+        current.stripWidth === next.stripWidth
           ? current
           : next,
       );
@@ -807,7 +801,7 @@ export function Timeline({
             Jump to latest
           </button>
         ) : null}
-        <div className="mx-auto flex max-w-3xl flex-col gap-4 px-5 py-6">
+        <div className="mx-auto flex max-w-[52rem] flex-col gap-5 px-6 py-8">
           {rows.map((row) =>
             "tools" in row ? (
               <ToolGroup
@@ -838,7 +832,6 @@ export function Timeline({
         <TurnRail
           items={railItems}
           stripWidth={rail.stripWidth}
-          persistent={rail.persistent}
           onSelect={jumpToMessage}
           registerTick={registerTick}
         />

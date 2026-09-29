@@ -236,6 +236,7 @@ export function EditorGroups({
   children: ReactNode;
 }) {
   const horizontal = layout.axis === "horizontal";
+  const lone = layout.groups.length === 1 && layout.groups[0].tabs.length === 1 && layout.groups[0].tabs[0].kind === "chat";
   const template = trackTemplate(layout.sizes, layout.axis);
   const grid = useRef<HTMLDivElement>(null);
   const zones = useRef<Array<HTMLDivElement | null>>([]);
@@ -421,6 +422,7 @@ export function EditorGroups({
               : { gridColumn: 1, gridRow: trackOf(index, layout.axis, "strip") }
           }
         >
+          {lone ? null : (
           <EditorTabs
             group={group}
             index={index}
@@ -433,6 +435,7 @@ export function EditorGroups({
             onClose={onClose}
             onTabPointerDown={startTabDrag}
           />
+          )}
         </div>
       ))}
 
