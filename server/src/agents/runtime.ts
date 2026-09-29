@@ -185,6 +185,10 @@ function offerSuggestion(threadId: string, raw: string | null): void {
   if (text) publish({ type: "thread.suggestion", threadId, text });
 }
 
+function hasTwoReplies(history: Message[]): boolean {
+  return history.filter((m) => m.role === "assistant" && !m.meta?.taskId).length >= 2;
+}
+
 function requestSuggestion(session: ManagedSession): void {
   if (!suggestionsEnabled() || session.approvals.size || session.questions.size) return;
   const provider = providerFor(session.providerId);
@@ -193,7 +197,7 @@ function requestSuggestion(session: ManagedSession): void {
   const thread = threadStore.byId(threadId);
   if (!thread) return;
   const history = messageStore.list(threadId);
-  if (history.filter((m) => m.role === "assistant" && !m.meta?.taskId).length < 2) return;
+  if (!hasTwoReplies(history)) return;
   const controller = new AbortController();
   suggestionAborts.set(threadId, controller);
   const timer = setTimeout(() => controller.abort(), SUGGESTION_TIMEOUT_MS);
@@ -317,7 +321,7 @@ function handleEvent(session: ManagedSession, event: AgentEvent): void {
       return;
     }
     case "suggestion":
-      offerSuggestion(threadId, event.text);
+      if (hasTwoReplies(messageStore.list(threadId))) offerSuggestion(threadId, event.text);
       return;
     case "session.error":
       failSession(session, new Error(event.message));
