@@ -174,6 +174,8 @@ interface Store extends AppState {
   setLayout: (id: string, layout: EditorLayout) => void;
   removeThread: (id: string) => Promise<void>;
   send: (text: string) => Promise<void>;
+  suggestionByThread: Record<string, string | null>;
+  clearSuggestion: (threadId: string) => void;
   interrupt: () => Promise<void>;
   patchActive: (patch: {
     model?: string;
@@ -398,6 +400,7 @@ export const useStore = create<Store>((set, get) => ({
   tasksByThread: {},
   phaseByThread: {},
   fsVersionByThread: {},
+  suggestionByThread: {},
   loadedThreads: {},
   commandsByCwd: {},
   filesByCwd: {},
@@ -738,12 +741,20 @@ export const useStore = create<Store>((set, get) => ({
   send: async (text) => {
     const id = get().activeThreadId;
     if (!id) return;
+    get().clearSuggestion(id);
     try {
       await api.sendTurn(id, text);
     } catch (error) {
       set({ error: (error as Error).message });
     }
   },
+
+  clearSuggestion: (threadId) =>
+    set((state) =>
+      state.suggestionByThread[threadId]
+        ? { suggestionByThread: { ...state.suggestionByThread, [threadId]: null } }
+        : state,
+    ),
 
   interrupt: async () => {
     const id = get().activeThreadId;
@@ -1007,8 +1018,17 @@ export const useStore = create<Store>((set, get) => ({
         });
         return;
       }
+      case "thread.suggestion":
+        set((state) => ({
+          suggestionByThread: { ...state.suggestionByThread, [event.threadId]: event.text },
+        }));
+        return;
       case "thread.status": {
         set((state) => ({
+          suggestionByThread:
+            event.status === "running"
+              ? { ...state.suggestionByThread, [event.threadId]: null }
+              : state.suggestionByThread,
           // a turn you watched finish needs no marker; one you missed does
           finished:
             state.threads.find((thread) => thread.id === event.threadId)?.status === "running" &&

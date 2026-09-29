@@ -17,6 +17,7 @@ import type {
   Usage,
 } from "../types.ts";
 import { providerFor } from "./registry.ts";
+import { buildSuggestionPrompt, cleanSuggestion, suggestionsEnabled } from "./suggestion.ts";
 import type { AgentEvent, AgentSession, AgentSettingsPatch } from "./types.ts";
 
 interface ManagedSession {
@@ -40,6 +41,8 @@ const reservations = new Set<string>();
 const parkTimers = new Map<string, NodeJS.Timeout>();
 const tasksByThread = new Map<string, ThreadTask[]>();
 const CLEAR = /^\/clear\b/;
+const suggestionAborts = new Map<string, AbortController>();
+const SUGGESTION_TIMEOUT_MS = 30_000;
 
 function emptyUsage(): Usage {
   return {
@@ -170,6 +173,46 @@ function failSession(session: ManagedSession, error: unknown): void {
   stopSession(session.threadId);
 }
 
+function clearSuggestion(threadId: string): void {
+  suggestionAborts.get(threadId)?.abort();
+  suggestionAborts.delete(threadId);
+  publish({ type: "thread.suggestion", threadId, text: null });
+}
+
+function offerSuggestion(threadId: string, raw: string | null): void {
+  if (!suggestionsEnabled() || running.has(threadId)) return;
+  const text = cleanSuggestion(raw);
+  if (text) publish({ type: "thread.suggestion", threadId, text });
+}
+
+function hasTwoReplies(history: Message[]): boolean {
+  return history.filter((m) => m.role === "assistant" && !m.meta?.taskId).length >= 2;
+}
+
+function requestSuggestion(session: ManagedSession): void {
+  if (!suggestionsEnabled() || session.approvals.size || session.questions.size) return;
+  const provider = providerFor(session.providerId);
+  if (!provider.suggest) return;
+  const { threadId } = session;
+  const thread = threadStore.byId(threadId);
+  if (!thread) return;
+  const history = messageStore.list(threadId);
+  if (!hasTwoReplies(history)) return;
+  const controller = new AbortController();
+  suggestionAborts.set(threadId, controller);
+  const timer = setTimeout(() => controller.abort(), SUGGESTION_TIMEOUT_MS);
+  timer.unref();
+  provider
+    .suggest(thread, buildSuggestionPrompt(history), controller.signal)
+    .then((text) => {
+      if (suggestionAborts.get(threadId) !== controller) return;
+      suggestionAborts.delete(threadId);
+      offerSuggestion(threadId, text);
+    })
+    .catch((error) => console.error(`[suggest:${threadId}] ${error instanceof Error ? error.message : error}`))
+    .finally(() => clearTimeout(timer));
+}
+
 function handleEvent(session: ManagedSession, event: AgentEvent): void {
   if (session.stopped || sessions.get(session.threadId) !== session) return;
   if (!threadStore.owns(session.threadId)) {
@@ -255,7 +298,8 @@ function handleEvent(session: ManagedSession, event: AgentEvent): void {
     case "models.changed":
       updateProviderModels(session.providerId, event.models);
       return;
-    case "turn.completed":
+    case "turn.completed": {
+      const clean = !session.interrupted && !event.error;
       clearRequests(session);
       if (session.interrupted) {
         session.interrupted = false;
@@ -272,7 +316,12 @@ function handleEvent(session: ManagedSession, event: AgentEvent): void {
       publish({ type: "thread.delta.end", threadId });
       setPhase(threadId, null);
       setStatus(threadId, "idle");
+      if (clean) requestSuggestion(session);
       void readUsage(threadId);
+      return;
+    }
+    case "suggestion":
+      if (hasTwoReplies(messageStore.list(threadId))) offerSuggestion(threadId, event.text);
       return;
     case "session.error":
       failSession(session, new Error(event.message));
@@ -317,6 +366,7 @@ export function isClear(text: string): boolean {
 export function sendTurn(thread: Thread, text: string): boolean {
   const current = threadStore.byId(thread.id);
   if (!current || running.has(thread.id) || !threadStore.claim(thread.id)) return false;
+  clearSuggestion(thread.id);
   if (isClear(text)) {
     truncateThread(current, 0);
     return true;
@@ -358,6 +408,7 @@ export async function stopTask(
 }
 
 export async function interrupt(threadId: string): Promise<boolean> {
+  clearSuggestion(threadId);
   const session = sessions.get(threadId);
   if (!session || !threadStore.owns(threadId)) {
     if (session) stopSession(threadId);
@@ -441,6 +492,7 @@ export async function applyThreadSettings(
 
 // Dropping messages drops the provider-native session too; the next turn starts with empty context.
 export function truncateThread(thread: Thread, seq: number): boolean {
+  clearSuggestion(thread.id);
   if (!threadStore.owns(thread.id) && !threadStore.claim(thread.id)) return false;
   threadStore.setOwnedStatus(thread.id, "idle");
   closeSession(thread.id);
@@ -456,6 +508,7 @@ export function truncateThread(thread: Thread, seq: number): boolean {
 }
 
 export function closeSession(threadId: string): void {
+  clearSuggestion(threadId);
   const providerId = sessions.get(threadId)?.providerId ?? threadStore.byId(threadId)?.providerId;
   stopSession(threadId);
   tasksByThread.delete(threadId);

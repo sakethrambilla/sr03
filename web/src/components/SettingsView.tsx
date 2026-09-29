@@ -329,6 +329,39 @@ function EditorPanel() {
   );
 }
 
+function SuggestionsSetting({ onError }: { onError: (message: string) => void }) {
+  const [suggest, setSuggest] = useState(true);
+
+  useEffect(() => {
+    void api
+      .settings()
+      .then((body) => setSuggest(body.settings["prompt-suggestions"] !== "false"))
+      .catch(() => undefined);
+  }, []);
+
+  return (
+    <section className="rounded-lg border border-border/70 bg-card/40 px-4 py-3">
+      <div className="flex items-center gap-4">
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] text-foreground">Suggest next prompt</p>
+          <p className="text-[11.5px] text-faint">
+            After a turn, the empty prompt box offers a likely next message. Tab or → accepts it.
+          </p>
+        </div>
+        <Switch
+          checked={suggest}
+          onCheckedChange={(next) => {
+            setSuggest(next);
+            void api
+              .saveSetting("prompt-suggestions", String(next))
+              .catch((cause: Error) => onError(cause.message));
+          }}
+        />
+      </div>
+    </section>
+  );
+}
+
 function WallpaperSlider({ label, hint, value, min, max, step, unit, onChange }: {
   label: string;
   hint: string;
@@ -823,6 +856,7 @@ export function SettingsView() {
                     </Select>
                   </div>
                 </section>
+                <SuggestionsSetting onError={setError} />
                 {error ? <p className="text-[12px] text-destructive">{error}</p> : null}
                 {providers.length === 0 && !error ? (
                   <p className="text-[12px] text-faint">Checking…</p>

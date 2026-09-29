@@ -99,6 +99,7 @@ interface CodexNativeSession {
 const STARTUP_TIMEOUT_MS = 30_000;
 const SETTINGS_TIMEOUT_MS = 15_000;
 const TURN_TIMEOUT_MS = 10 * 60_000;
+const SUGGEST_TURN_TIMEOUT_MS = 25_000;
 const CANCEL_WRITE_TIMEOUT_MS = 2_000;
 const CANCEL_FINISH_TIMEOUT_MS = 8_000;
 const TOOL_OUTPUT_MAX_CHARS = 12_000;
@@ -1228,6 +1229,72 @@ async function forkSession(sessionId: string, cwd: string): Promise<string> {
   }
 }
 
+async function suggest(thread: Thread, prompt: string, signal: AbortSignal): Promise<string | null> {
+  const binary = await findCodex();
+  if (!binary || signal.aborted) return null;
+  const connection = spawnCodex(binary, thread.cwd, "suggest");
+  signal.addEventListener("abort", () => connection.close(), { once: true });
+  let text = "";
+  let done!: () => void;
+  const finished = new Promise<void>((resolve) => {
+    done = resolve;
+  });
+  connection.registerNotificationHandler("item/agentMessage/delta", (params) => {
+    if (isRecord(params)) text += textValue(params.delta) ?? "";
+  });
+  connection.registerNotificationHandler("item/completed", (params) => {
+    const item = isRecord(params) && isRecord(params.item) ? params.item : null;
+    const full = item?.type === "agentMessage" ? textValue(item.text) : null;
+    if (full) text = full;
+  });
+  connection.registerNotificationHandler("turn/completed", () => done());
+  connection.registerRequestHandler("item/commandExecution/requestApproval", () => ({ decision: "decline" }));
+  connection.registerRequestHandler("item/fileChange/requestApproval", () => ({ decision: "decline" }));
+  connection.registerRequestHandler("item/tool/requestUserInput", () => ({ answers: {} }));
+  try {
+    await handshake(connection);
+    const model = thread.model || currentProvider("codex").defaults.model;
+    const low = findModel("codex", model)?.effortLevels?.[0]?.value;
+    const effort = low ? nativeEffort(model, low) : null;
+    const startParams = { cwd: thread.cwd, model, approvalPolicy: "never", sandbox: "read-only" };
+    let started: unknown;
+    try {
+      started = await connection.request(
+        "thread/start",
+        { ...startParams, ephemeral: true },
+        { timeoutMs: STARTUP_TIMEOUT_MS },
+      );
+    } catch (error) {
+      if (!errorMessage(error).includes("ephemeral")) throw error;
+      started = await connection.request("thread/start", startParams, { timeoutMs: STARTUP_TIMEOUT_MS });
+    }
+    const id = threadIdFrom(started);
+    if (!id) return null;
+    const turn = await connection.request(
+      "turn/start",
+      {
+        threadId: id,
+        input: [{ type: "text", text: prompt }],
+        cwd: thread.cwd,
+        model,
+        approvalPolicy: "never",
+        sandboxPolicy: { type: "readOnly" },
+        ...(effort ? { effort } : {}),
+      },
+      { timeoutMs: SUGGEST_TURN_TIMEOUT_MS },
+    );
+    const status = isRecord(turn) && isRecord(turn.turn) ? stringValue(turn.turn.status) : null;
+    if (status && status !== "inProgress") done();
+    await Promise.race([finished, new Promise((resolve) => setTimeout(resolve, SUGGEST_TURN_TIMEOUT_MS).unref())]);
+    return text.trim() || null;
+  } catch (error) {
+    if (!signal.aborted) console.error(`[codex:suggest] ${errorMessage(error)}`);
+    return null;
+  } finally {
+    connection.close();
+  }
+}
+
 export const codexProvider: AgentProvider = {
   id: "codex",
   open,
@@ -1235,6 +1302,7 @@ export const codexProvider: AgentProvider = {
   warmCommands,
   readUsage,
   forkSession,
+  suggest,
   forgetThread(threadId) {
     usageByThread.delete(threadId);
   },

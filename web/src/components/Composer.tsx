@@ -336,6 +336,8 @@ export function Composer({
   onInterrupt,
   blocked,
   restore,
+  suggestion,
+  onAcceptSuggestion,
 }: {
   chips?: ReactNode;
   above?: ReactNode;
@@ -355,6 +357,8 @@ export function Composer({
   onInterrupt?: () => void;
   blocked?: boolean;
   restore?: { text: string; key: number } | null;
+  suggestion?: string | null;
+  onAcceptSuggestion?: () => void;
 }) {
   const provider = useStore(
     (state) => state.providers.find((entry) => entry.id === providerId) ?? EMPTY_PROVIDER,
@@ -380,6 +384,7 @@ export function Composer({
 
   const [picked, setPicked] = useState(0);
   const [dismissed, setDismissed] = useState(false);
+  const ghost = !running && !text && suggestion ? suggestion : null;
 
   useEffect(() => () => dictationRef.current?.stop(), []);
 
@@ -550,14 +555,28 @@ export function Composer({
           <div className="flex items-end gap-1.5 px-3 py-2.5">
             <MentionInput
               ref={inputRef}
-              placeholder={placeholder}
+              placeholder={ghost ?? placeholder}
               onChange={(next) => {
+                if (next && suggestion) onAcceptSuggestion?.();
                 setText(next);
                 setPicked(0);
                 setDismissed(false);
               }}
               onSubmit={() => void submit()}
               onKeyDown={(event) => {
+                if (
+                  ghost &&
+                  (event.key === "Tab" || event.key === "ArrowRight") &&
+                  !event.shiftKey &&
+                  !event.metaKey &&
+                  !event.ctrlKey &&
+                  !event.altKey
+                ) {
+                  event.preventDefault();
+                  inputRef.current?.setText(ghost);
+                  onAcceptSuggestion?.();
+                  return;
+                }
                 if (!menu || !active) return;
                 const step = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
                 if (step) {
@@ -585,6 +604,7 @@ export function Composer({
                 void addFiles(files);
               }}
             />
+            {ghost ? <span className="mb-1.5 shrink-0 text-[11px] text-faint">Tab</span> : null}
             {running && onInterrupt ? (
               <Button
                 variant="outline"
@@ -1016,6 +1036,8 @@ export function ThreadComposer({
   );
   const running = thread.status === "running";
   const name = provider.label;
+  const suggestion = useStore((state) => state.suggestionByThread[thread.id] ?? null);
+  const clearSuggestion = useStore((state) => state.clearSuggestion);
 
   return (
     <Composer
@@ -1052,6 +1074,8 @@ export function ThreadComposer({
       running={running}
       onInterrupt={() => void interrupt()}
       restore={restore}
+      suggestion={suggestion}
+      onAcceptSuggestion={() => clearSuggestion(thread.id)}
     />
   );
 }

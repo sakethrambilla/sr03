@@ -124,6 +124,7 @@ interface CursorNativeSession {
 const STARTUP_TIMEOUT_MS = 30_000;
 const LOAD_TIMEOUT_MS = 90_000;
 const SETTINGS_TIMEOUT_MS = 15_000;
+const SUGGEST_PROMPT_TIMEOUT_MS = 25_000;
 const CLIENT_CAPABILITIES = {
   fs: { readTextFile: false, writeTextFile: false },
   terminal: false,
@@ -1670,10 +1671,85 @@ function listCommands(cwd: string): Promise<SlashCommand[]> {
   return catalog.list(cwd);
 }
 
+async function suggest(thread: Thread, prompt: string, signal: AbortSignal): Promise<string | null> {
+  const binary = await findCursor();
+  if (!binary || signal.aborted) return null;
+  const connection = spawnAcp({
+    binary,
+    args: ["acp"],
+    cwd: thread.cwd,
+    onStderr(text) {
+      const message = text.trim();
+      if (message) console.error(`[cursor:suggest] ${message}`);
+    },
+  });
+  signal.addEventListener("abort", () => connection.close(), { once: true });
+  let text = "";
+  connection.registerNotificationHandler("session/update", (params) => {
+    if (!isRecord(params)) return;
+    const update = isRecord(params.update) ? params.update : params;
+    if (update.sessionUpdate === "agent_message_chunk") text += assistantChunk(update);
+  });
+  const cancelled = () => ({ outcome: { outcome: "cancelled" } });
+  connection.registerRequestHandler("session/request_permission", cancelled);
+  connection.registerRequestHandler("cursor/ask_question", cancelled);
+  connection.registerRequestHandler("cursor/create_plan", cancelled);
+  try {
+    await connection.request(
+      "initialize",
+      {
+        protocolVersion: 1,
+        clientCapabilities: CLIENT_CAPABILITIES,
+        clientInfo: { name: "sr03", version: "0.0.0" },
+      },
+      { timeoutMs: STARTUP_TIMEOUT_MS, signal },
+    );
+    await connection.request(
+      "authenticate",
+      { methodId: "cursor_login" },
+      { timeoutMs: STARTUP_TIMEOUT_MS, signal },
+    );
+    const created = await connection.request(
+      "session/new",
+      { cwd: thread.cwd, mcpServers: [] },
+      { timeoutMs: STARTUP_TIMEOUT_MS, signal },
+    );
+    const sessionId = isRecord(created) ? stringValue(created.sessionId) : null;
+    if (!sessionId) return null;
+    await connection
+      .request("session/set_mode", { sessionId, modeId: "ask" }, { timeoutMs: SETTINGS_TIMEOUT_MS, signal })
+      .catch(() => undefined);
+    if (thread.model) {
+      const models = new Map(
+        currentProvider("cursor").models.map((model) => [model.slug, model.resolved ?? model.slug]),
+      );
+      await connection
+        .request(
+          "session/set_model",
+          { sessionId, modelId: nativeModelId(thread.model, models) },
+          { timeoutMs: SETTINGS_TIMEOUT_MS, signal },
+        )
+        .catch(() => undefined);
+    }
+    await connection.request(
+      "session/prompt",
+      { sessionId, prompt: [{ type: "text", text: prompt }] },
+      { timeoutMs: SUGGEST_PROMPT_TIMEOUT_MS, signal },
+    );
+    return text.trim() || null;
+  } catch (error) {
+    if (!signal.aborted) console.error(`[cursor:suggest] ${errorMessage(error)}`);
+    return null;
+  } finally {
+    connection.close();
+  }
+}
+
 export const cursorProvider: AgentProvider = {
   id: "cursor",
   open,
   listCommands,
   warmCommands,
   readUsage,
+  suggest,
 };
