@@ -734,7 +734,6 @@ function handleItemStarted(session: CodexNativeSession, params: unknown): void {
   const item = itemFrom(params);
   if (!item) return;
   const type = stringValue(item.type);
-  if (type !== "collabAgentToolCall" && type !== "collabToolCall" && !ownsNotification(session, params)) return;
   if (type === "agentMessage") return;
   if (type === "reasoning") {
     session.emit({ type: "phase", phase: { kind: "thinking" } });
@@ -762,7 +761,6 @@ function handleItemCompleted(session: CodexNativeSession, params: unknown): void
   const item = itemFrom(params);
   if (!item) return;
   const type = stringValue(item.type);
-  if (type !== "collabAgentToolCall" && type !== "collabToolCall" && !ownsNotification(session, params)) return;
   if (type === "agentMessage") {
     const text = textValue(item.text);
     const turn = session.activeTurn;
@@ -801,13 +799,6 @@ function handleItemCompleted(session: CodexNativeSession, params: unknown): void
   ) {
     completeTool(session, item);
   }
-}
-
-// Subagent threads share the app-server connection; their notifications must not touch this turn.
-function ownsNotification(session: CodexNativeSession, params: unknown): boolean {
-  if (!isRecord(params)) return false;
-  const threadId = stringValue(params.threadId);
-  return !threadId || !session.sessionId || threadId === session.sessionId;
 }
 
 function handleTurnCompleted(session: CodexNativeSession, params: unknown): void {
@@ -853,7 +844,7 @@ function registerHandlers(session: CodexNativeSession): void {
     handleItemCompleted(session, params);
   });
   connection.registerNotificationHandler("item/agentMessage/delta", (params) => {
-    if (!isRecord(params) || !ownsNotification(session, params)) return;
+    if (!isRecord(params)) return;
     const delta = textValue(params.delta);
     if (!delta) return;
     const child = childOf(session, params);
