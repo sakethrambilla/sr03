@@ -163,8 +163,11 @@ the worktree still ships without those paths.
   kebab-case sandbox (`workspace-write`); `turn/start` uses camelCase `sandboxPolicy.type`
   (`workspaceWrite`).
 - Approvals return `{ decision: "accept" | "acceptForSession" | "decline" }`.
-  `item/tool/requestUserInput` uses the Cursor question panel. Collab tool-call items are task
-  cards only — there is no child transcript.
+  `item/tool/requestUserInput` uses the Cursor question panel.
+- Subagents stream on the same connection under their own `threadId`; every notification whose
+  `threadId` isn't the session's is routed to that subagent's task (keyed by its thread id), and a
+  subagent's `turn/*` must never touch the parent turn. `subAgentActivity` items mark spawn and
+  completion; `collabAgentToolCall` (`wait`, `spawnAgent`, …) only updates existing tasks.
 - Skills come from `skills/list` plus a disk scan of `.codex/skills` and `.agents/skills`. macOS
   already injects the login-shell PATH, so `~/.local/bin/codex` is visible to the desktop app.
 

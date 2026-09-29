@@ -70,6 +70,7 @@ interface TrackedTool {
   input: unknown;
   mutatesFiles: boolean;
   output: string;
+  taskId?: string;
 }
 
 interface CodexNativeSession {
@@ -94,6 +95,8 @@ interface CodexNativeSession {
   questions: Map<string, NativeQuestion>;
   tools: Map<string, TrackedTool>;
   tasks: Map<string, ThreadTask>;
+  // subagent thread id -> streamed agentMessage text, keyed by item id
+  childText: Map<string, string>;
 }
 
 const STARTUP_TIMEOUT_MS = 30_000;
@@ -553,7 +556,7 @@ function toolInput(item: Record<string, unknown>): unknown {
   return item;
 }
 
-function startTool(session: CodexNativeSession, item: Record<string, unknown>): void {
+function startTool(session: CodexNativeSession, item: Record<string, unknown>, taskId?: string): void {
   const callId = stringValue(item.id);
   if (!callId || session.tools.has(callId)) return;
   const type = stringValue(item.type);
@@ -564,6 +567,7 @@ function startTool(session: CodexNativeSession, item: Record<string, unknown>): 
     input: toolInput(item),
     mutatesFiles,
     output: "",
+    ...(taskId ? { taskId } : {}),
   };
   session.tools.set(callId, tool);
   session.emit({
@@ -572,7 +576,12 @@ function startTool(session: CodexNativeSession, item: Record<string, unknown>): 
     name: tool.name,
     input: tool.input,
     mutatesFiles,
+    ...(taskId ? { taskId } : {}),
   });
+  if (taskId) {
+    updateTask(session, taskId, (task) => ({ ...task, toolUses: task.toolUses + 1, lastTool: tool.name }));
+    return;
+  }
   session.emit({ type: "phase", phase: { kind: "tool", name: tool.name } });
 }
 
@@ -593,49 +602,150 @@ function completeTool(session: CodexNativeSession, item: Record<string, unknown>
     callId,
     result: clip(output),
     isError,
+    ...(tool?.taskId ? { taskId: tool.taskId } : {}),
   });
-  session.emit({ type: "phase", phase: null });
+  if (!tool?.taskId) session.emit({ type: "phase", phase: null });
 }
 
-function upsertTask(session: CodexNativeSession, item: Record<string, unknown>): void {
-  const id = stringValue(item.id);
-  if (!id) return;
-  const status = stringValue(item.status);
-  const mapped: ThreadTask["status"] =
-    status === "failed" ? "failed" : status === "interrupted" ? "stopped" : status === "completed" ? "done" : "running";
+function publishTasks(session: CodexNativeSession): void {
+  session.emit({ type: "tasks.changed", tasks: [...session.tasks.values()] });
+}
+
+// tasks are keyed by the subagent's own thread id, so spawn, wait and close calls fold into one row
+function ensureTask(session: CodexNativeSession, id: string, description?: string | null): ThreadTask {
   const existing = session.tasks.get(id);
-  const startedAt = existing?.startedAt ?? Date.now();
+  if (existing) return existing;
   const task: ThreadTask = {
     id,
-    description: stringValue(item.prompt) ?? stringValue(item.tool) ?? "Subagent",
-    agentType: stringValue(item.tool),
-    model: stringValue(item.model),
-    status: mapped,
-    tokens: existing?.tokens ?? 0,
-    toolUses: existing?.toolUses ?? 0,
-    lastTool: existing?.lastTool ?? null,
-    error: mapped === "failed" ? (stringValue(item.error) ?? "failed") : null,
+    description: description ?? "Subagent",
+    agentType: null,
+    model: null,
+    status: "running",
+    tokens: 0,
+    toolUses: 0,
+    lastTool: null,
+    error: null,
     depth: 0,
-    startedAt,
-    endedAt: mapped === "running" ? null : Date.now(),
-    toolUseId: id,
+    startedAt: Date.now(),
+    endedAt: null,
+    toolUseId: null,
   };
   session.tasks.set(id, task);
-  session.emit({ type: "tasks.changed", tasks: [...session.tasks.values()] });
+  return task;
+}
+
+function updateTask(session: CodexNativeSession, id: string, change: (task: ThreadTask) => ThreadTask): void {
+  session.tasks.set(id, change(ensureTask(session, id)));
+  publishTasks(session);
+}
+
+function setTaskStatus(session: CodexNativeSession, id: string, status: ThreadTask["status"], error?: string | null): void {
+  updateTask(session, id, (task) => ({
+    ...task,
+    status,
+    error: error ?? null,
+    endedAt: status === "running" ? null : (task.endedAt ?? Date.now()),
+  }));
+}
+
+function handleSubAgentActivity(session: CodexNativeSession, item: Record<string, unknown>): void {
+  const id = stringValue(item.agentThreadId);
+  if (!id) return;
+  const kind = stringValue(item.kind);
+  const path = stringValue(item.agentPath);
+  const task = ensureTask(session, id, path);
+  if (path && task.agentType === null) session.tasks.set(id, { ...task, agentType: path });
+  if (kind === "completed") setTaskStatus(session, id, "done");
+  else if (kind === "interrupted") setTaskStatus(session, id, "stopped");
+  else setTaskStatus(session, id, "running");
+}
+
+const CODEX_AGENT_STATUS: Record<string, ThreadTask["status"]> = {
+  pendingInit: "running",
+  running: "running",
+  completed: "done",
+  interrupted: "stopped",
+  shutdown: "done",
+  errored: "failed",
+  notFound: "failed",
+};
+
+function handleCollabCall(session: CodexNativeSession, item: Record<string, unknown>): void {
+  const receivers = Array.isArray(item.receiverThreadIds)
+    ? item.receiverThreadIds.filter((id): id is string => typeof id === "string")
+    : [];
+  const prompt = stringValue(item.prompt);
+  const model = stringValue(item.model);
+  if (stringValue(item.tool) === "spawnAgent") {
+    for (const id of receivers) {
+      const task = ensureTask(session, id);
+      session.tasks.set(id, {
+        ...task,
+        description: prompt ?? task.description,
+        model: model ?? task.model,
+        toolUseId: stringValue(item.id),
+      });
+    }
+    if (receivers.length) publishTasks(session);
+  }
+  if (!isRecord(item.agentsStates)) return;
+  for (const [id, state] of Object.entries(item.agentsStates)) {
+    if (!isRecord(state)) continue;
+    const status = CODEX_AGENT_STATUS[stringValue(state.status) ?? ""];
+    if (status) setTaskStatus(session, id, status, status === "failed" ? stringValue(state.message) : null);
+  }
+}
+
+// a notification from a subagent's thread, not the one this session drives
+function childOf(session: CodexNativeSession, params: unknown): string | null {
+  if (!isRecord(params)) return null;
+  const threadId = stringValue(params.threadId);
+  if (!threadId || !session.sessionId || threadId === session.sessionId) return null;
+  ensureTask(session, threadId);
+  return threadId;
+}
+
+function handleChildItem(
+  session: CodexNativeSession,
+  taskId: string,
+  item: Record<string, unknown>,
+  phase: "started" | "completed",
+): void {
+  const type = stringValue(item.type);
+  if (type === "agentMessage") {
+    const key = `${taskId}:${stringValue(item.id) ?? ""}`;
+    if (phase === "started") return;
+    const text = textValue(item.text) ?? session.childText.get(key) ?? "";
+    session.childText.delete(key);
+    session.emit({ type: "assistant.complete", text, taskId });
+    return;
+  }
+  if (type === "subAgentActivity") return handleSubAgentActivity(session, item);
+  if (type === "collabAgentToolCall" || type === "collabToolCall") return handleCollabCall(session, item);
+  if (!isToolItem(type)) return;
+  if (phase === "started") startTool(session, item, taskId);
+  else completeTool(session, item);
+}
+
+function isToolItem(type: string | null): boolean {
+  return type === "commandExecution" || type === "fileChange" || type === "mcpToolCall" || type === "webSearch";
 }
 
 function handleItemStarted(session: CodexNativeSession, params: unknown): void {
   const item = itemFrom(params);
   if (!item) return;
   const type = stringValue(item.type);
-  if (type !== "collabAgentToolCall" && type !== "collabToolCall" && !ownsNotification(session, params)) return;
   if (type === "agentMessage") return;
   if (type === "reasoning") {
     session.emit({ type: "phase", phase: { kind: "thinking" } });
     return;
   }
   if (type === "collabAgentToolCall" || type === "collabToolCall") {
-    upsertTask(session, item);
+    handleCollabCall(session, item);
+    return;
+  }
+  if (type === "subAgentActivity") {
+    handleSubAgentActivity(session, item);
     return;
   }
   if (
@@ -652,7 +762,6 @@ function handleItemCompleted(session: CodexNativeSession, params: unknown): void
   const item = itemFrom(params);
   if (!item) return;
   const type = stringValue(item.type);
-  if (type !== "collabAgentToolCall" && type !== "collabToolCall" && !ownsNotification(session, params)) return;
   if (type === "agentMessage") {
     const text = textValue(item.text);
     const turn = session.activeTurn;
@@ -676,7 +785,11 @@ function handleItemCompleted(session: CodexNativeSession, params: unknown): void
     return;
   }
   if (type === "collabAgentToolCall" || type === "collabToolCall") {
-    upsertTask(session, item);
+    handleCollabCall(session, item);
+    return;
+  }
+  if (type === "subAgentActivity") {
+    handleSubAgentActivity(session, item);
     return;
   }
   if (
@@ -687,13 +800,6 @@ function handleItemCompleted(session: CodexNativeSession, params: unknown): void
   ) {
     completeTool(session, item);
   }
-}
-
-// Subagent threads share the app-server connection; their notifications must not touch this turn.
-function ownsNotification(session: CodexNativeSession, params: unknown): boolean {
-  if (!isRecord(params)) return false;
-  const threadId = stringValue(params.threadId);
-  return !threadId || !session.sessionId || threadId === session.sessionId;
 }
 
 function handleTurnCompleted(session: CodexNativeSession, params: unknown): void {
@@ -721,15 +827,35 @@ function handleTurnCompleted(session: CodexNativeSession, params: unknown): void
 function registerHandlers(session: CodexNativeSession): void {
   const { connection } = session;
   connection.registerNotificationHandler("item/started", (params) => {
+    const child = childOf(session, params);
+    const item = itemFrom(params);
+    if (child) {
+      if (item) handleChildItem(session, child, item, "started");
+      return;
+    }
     handleItemStarted(session, params);
   });
   connection.registerNotificationHandler("item/completed", (params) => {
+    const child = childOf(session, params);
+    const item = itemFrom(params);
+    if (child) {
+      if (item) handleChildItem(session, child, item, "completed");
+      return;
+    }
     handleItemCompleted(session, params);
   });
   connection.registerNotificationHandler("item/agentMessage/delta", (params) => {
-    if (!isRecord(params) || !ownsNotification(session, params)) return;
+    if (!isRecord(params)) return;
     const delta = textValue(params.delta);
-    if (delta) appendMessage(session, delta);
+    if (!delta) return;
+    const child = childOf(session, params);
+    if (child) {
+      const key = `${child}:${stringValue(params.itemId) ?? ""}`;
+      session.childText.set(key, (session.childText.get(key) ?? "") + delta);
+      session.emit({ type: "assistant.delta", text: delta, taskId: child });
+      return;
+    }
+    appendMessage(session, delta);
   });
   connection.registerNotificationHandler("item/commandExecution/outputDelta", (params) => {
     if (!isRecord(params)) return;
@@ -740,18 +866,22 @@ function registerHandlers(session: CodexNativeSession): void {
     if (tool) tool.output += delta;
   });
   connection.registerNotificationHandler("item/plan/delta", (params) => {
-    if (!isRecord(params) || !ownsNotification(session, params)) return;
+    if (!isRecord(params) || childOf(session, params)) return;
     const delta = textValue(params.delta);
     if (delta) appendMessage(session, delta);
   });
-  connection.registerNotificationHandler("item/reasoning/summaryTextDelta", () => {
-    session.emit({ type: "phase", phase: { kind: "thinking" } });
+  connection.registerNotificationHandler("item/reasoning/summaryTextDelta", (params) => {
+    if (!childOf(session, params)) session.emit({ type: "phase", phase: { kind: "thinking" } });
   });
-  connection.registerNotificationHandler("item/reasoning/textDelta", () => {
-    session.emit({ type: "phase", phase: { kind: "thinking" } });
+  connection.registerNotificationHandler("item/reasoning/textDelta", (params) => {
+    if (!childOf(session, params)) session.emit({ type: "phase", phase: { kind: "thinking" } });
   });
   connection.registerNotificationHandler("turn/started", (params) => {
-    if (!ownsNotification(session, params)) return;
+    const child = childOf(session, params);
+    if (child) {
+      setTaskStatus(session, child, "running");
+      return;
+    }
     const id = turnIdFrom(params);
     if (id) {
       session.turnId = id;
@@ -760,7 +890,7 @@ function registerHandlers(session: CodexNativeSession): void {
     session.emit({ type: "turn.active" });
   });
   connection.registerNotificationHandler("turn/completed", (params) => {
-    if (!ownsNotification(session, params)) return;
+    if (childOf(session, params)) return;
     handleTurnCompleted(session, params);
   });
   connection.registerNotificationHandler("account/rateLimits/updated", (params) => {
@@ -1125,6 +1255,7 @@ async function open(
       questions: new Map(),
       tools: new Map(),
       tasks: new Map(),
+    childText: new Map(),
     };
     session = context;
     sessions.set(thread.id, context);

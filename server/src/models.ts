@@ -170,7 +170,7 @@ function makeCatalog(providerId: ProviderId): ProviderCatalog {
         slashCommands: true,
         usage: true,
         tasks: true,
-        subagentTranscripts: false,
+        subagentTranscripts: true,
         stopSubagents: false,
         fork: true,
         questions: true,
