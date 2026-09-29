@@ -38,6 +38,7 @@ export type AgentEvent =
   | { type: "usage"; usage: Usage }
   | { type: "models.changed"; models: ModelOption[] }
   | { type: "turn.completed"; error?: string; errorCode?: string }
+  | { type: "suggestion"; text: string }
   | { type: "session.error"; message: string };
 
 export type AgentEventSink = (event: AgentEvent) => void;
@@ -67,4 +68,5 @@ export interface AgentProvider {
   readUsage(threadId: string | null): Promise<Usage>;
   forkSession?(sessionId: string, cwd: string): Promise<string>;
   forgetThread?(threadId: string): void;
+  suggest?(thread: Thread, prompt: string, signal: AbortSignal): Promise<string | null>;
 }

@@ -321,6 +321,7 @@ export type ServerEvent =
   | { type: "thread.message"; threadId: string; message: Message }
   | { type: "thread.message.updated"; threadId: string; message: Message }
   | { type: "thread.phase"; threadId: string; phase: ThreadPhase | null }
+  | { type: "thread.suggestion"; threadId: string; text: string | null }
   | { type: "thread.truncated"; threadId: string; seq: number }
   | { type: "thread.delta"; threadId: string; text: string }
   | { type: "thread.delta.end"; threadId: string }

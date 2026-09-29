@@ -39,6 +39,7 @@ import type {
 import { claudeExecutable } from "./claudeExecutable.ts";
 import { createCommandCatalog } from "./commandCatalog.ts";
 import { dedupeByName, scanCommandFiles, scanSkillDirectories } from "./skillScan.ts";
+import { suggestionsEnabled } from "./suggestion.ts";
 
 // `Effort` spans every provider's ladder; the SDK accepts only Claude Code's five rungs
 const CLAUDE_EFFORT_LEVELS = new Set<string>(["low", "medium", "high", "xhigh", "max"]);
@@ -648,6 +649,9 @@ function handleMessage(session: ClaudeSession, message: SDKMessage): void {
       });
       session.interrupted = false;
       return;
+    case "prompt_suggestion":
+      session.emit({ type: "suggestion", text: message.suggestion });
+      return;
     default:
       return;
   }
@@ -717,6 +721,7 @@ async function open(
       ...(effort ? { effort } : {}),
       includePartialMessages: true,
       forwardSubagentText: true,
+      promptSuggestions: suggestionsEnabled(),
       abortController: abort,
       systemPrompt: { type: "preset", preset: "claude_code" },
       settingSources: ["user", "project", "local"],
