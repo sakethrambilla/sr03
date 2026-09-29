@@ -22,6 +22,8 @@ export interface FileIndex {
 
 export interface FileLinks extends FileIndex {
   open: (ref: FileRef) => void;
+  // a path the index doesn't hold, looked up on disk only once it is clicked
+  locate?: (ref: FileRef) => void;
 }
 
 // either something with a slash in it, or a bare name carrying an extension — anything
@@ -120,6 +122,23 @@ function candidates(base: string, python: boolean): { path: string; floor: numbe
   return list;
 }
 
+// the path and line a reference spells, before anything checks the path exists
+export function splitRef(text: string): FileRef | null {
+  let ref = text.trim().replace(TRAILING, "");
+  let line: number | undefined;
+  const anchor = ANCHOR.exec(ref);
+  const suffix = anchor ? null : LINE_SUFFIX.exec(ref);
+  if (anchor) {
+    line = Number(anchor[1]);
+    ref = ref.slice(0, anchor.index);
+  } else if (suffix) {
+    line = Number(suffix[1]);
+    ref = ref.slice(0, suffix.index);
+  }
+  if (!ref) return null;
+  return line ? { path: ref, line } : { path: ref };
+}
+
 export function createFileIndex(files: string[]): FileIndex {
   const exact = new Set(files);
   const byName = new Map<string, string[]>();
@@ -147,21 +166,10 @@ export function createFileIndex(files: string[]): FileIndex {
   };
 
   const parse = (text: string): FileRef | null => {
-    let ref = text.trim().replace(TRAILING, "");
-    if (!ref) return null;
-    let line: number | undefined;
-    const anchor = ANCHOR.exec(ref);
-    const suffix = anchor ? null : LINE_SUFFIX.exec(ref);
-    if (anchor) {
-      line = Number(anchor[1]);
-      ref = ref.slice(0, anchor.index);
-    } else if (suffix) {
-      line = Number(suffix[1]);
-      ref = ref.slice(0, suffix.index);
-    }
-    const path = lookup(ref);
+    const ref = splitRef(text);
+    const path = ref && lookup(ref.path);
     if (!path) return null;
-    return line ? { path, line } : { path };
+    return ref.line ? { path, line: ref.line } : { path };
   };
 
   // every bubble re-resolves its refs on each render, and the answers never change

@@ -16,6 +16,7 @@ import {
   listApps,
   listDirectory,
   listWorkspaceDir,
+  locateEntry,
   openIn,
   readUpload,
   readWorkspaceFile,
@@ -913,6 +914,17 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
       const body = await readBody(request);
       await revealWorkspaceEntry(thread.cwd, requireString(body, "path"));
       return { ok: true };
+    },
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/threads\/([^/]+)\/locate$/,
+    handler: async ({ params, request }) => {
+      const thread = requireThread(params[0]!);
+      const body = await readBody(request);
+      return locateEntry(thread.cwd, requireString(body, "path")).catch((error: NodeJS.ErrnoException) => {
+        throw error.code === "ENOENT" ? new HttpError(404, "File not found") : error;
+      });
     },
   },
   {

@@ -430,6 +430,20 @@ export async function revealWorkspaceEntry(root: string, rel: string): Promise<v
   await exec("open", ["-R", target]);
 }
 
+// for a path a reply names that the file index skips (gitignored, or in another checkout):
+// inside the root it comes back relative so a tab can open it, outside it Finder shows it
+export async function locateEntry(root: string, ref: string): Promise<{ path: string | null }> {
+  const base = path.resolve(root);
+  const target = path.resolve(base, ref.replace(/^~(?=\/|$)/, os.homedir()));
+  const stats = await fs.stat(target);
+  if (target.startsWith(base + path.sep) && stats.isFile()) {
+    return { path: path.relative(base, target).split(path.sep).join("/") };
+  }
+  if (process.platform !== "darwin") throw new Error("Finder is only available on macOS");
+  await exec("open", ["-R", target]);
+  return { path: null };
+}
+
 export async function writeWorkspaceFile(
   root: string,
   rel: string,
