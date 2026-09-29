@@ -130,6 +130,17 @@ for await (const line of lines) {
       send({ method: "turn/completed", params: { threadId: "thr_1", turn: { id: "turn_1", status: "completed" } } });
       continue;
     }
+    if (text.includes("with-subagent")) {
+      send({ method: "item/agentMessage/delta", params: { itemId: "msg-1", threadId: "thr_1", turnId: "turn_1", delta: "Task" } });
+      send({ method: "turn/started", params: { threadId: "thr_child", turn: { id: "turn_c", status: "inProgress" } } });
+      send({ method: "item/agentMessage/delta", params: { itemId: "msg-c", threadId: "thr_child", turnId: "turn_c", delta: "child" } });
+      send({ method: "turn/completed", params: { threadId: "thr_child", turn: { id: "turn_c", status: "completed" } } });
+      send({ method: "item/agentMessage/delta", params: { itemId: "msg-1", threadId: "thr_1", turnId: "turn_1", delta: " 1" } });
+      send({ method: "item/agentMessage/delta", params: { itemId: "msg-1", threadId: "thr_1", turnId: "turn_1", delta: " passed" } });
+      send({ method: "item/completed", params: { item: { id: "msg-1", type: "agentMessage", text: "Task 1 passed" }, threadId: "thr_1", turnId: "turn_1" } });
+      send({ method: "turn/completed", params: { threadId: "thr_1", turn: { id: "turn_1", status: "completed" } } });
+      continue;
+    }
     if (text.includes("blank-failure")) {
       send({ method: "turn/completed", params: { threadId: "thr_1", turn: { id: "turn_1", status: "failed" } } });
       continue;
@@ -496,6 +507,26 @@ test("completes each agent message of a multi-message turn", async (context) => 
     events.flatMap((event) => (event.type === "assistant.complete" ? [event.text] : [])),
     ["First", "Second"],
   );
+});
+
+test("ignores a subagent thread's turn events mid-stream", async (context) => {
+  const { directory } = await withMock(context, "sr03-codex-child-");
+  const { codexProvider } = await import("./codex.ts");
+  const events: AgentEvent[] = [];
+  const session = await codexProvider.open(
+    threadFor(directory, { id: "codex-child-test" }),
+    (event) => events.push(event),
+    new AbortController().signal,
+  );
+  context.after(() => session.close());
+
+  await session.send("with-subagent please");
+
+  assert.deepEqual(
+    events.flatMap((event) => (event.type === "assistant.complete" ? [event.text] : [])),
+    ["Task 1 passed"],
+  );
+  assert.equal(events.filter((event) => event.type === "turn.completed").length, 1);
 });
 
 test("keeps the whitespace Codex streams in messages and tool output", async (context) => {
