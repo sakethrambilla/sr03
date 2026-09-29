@@ -4,7 +4,7 @@
 import { createContext, useContext } from "react";
 import type { ReactNode } from "react";
 
-import { FILE_REF_SOURCE } from "../lib/fileref.ts";
+import { FILE_REF_SOURCE, splitRef } from "../lib/fileref.ts";
 import type { FileLinks, FileRef } from "../lib/fileref.ts";
 import { TOKEN_CLASS, tokenize } from "../lib/highlight.ts";
 import { Mermaid } from "./Mermaid.tsx";
@@ -30,10 +30,15 @@ const SCHEME = /^(?:[a-z][\w+.-]*:|\/\/)/i;
 const Links = createContext<FileLinks | null>(null);
 const Run = createContext<((command: string) => void) | null>(null);
 
-function useTarget(text: string): [FileLinks, FileRef] | null {
+// loose means any href counts; prose and code only fall back when the text has a slash,
+// or every `foo.bar` in a sentence would turn into a lookup that 404s
+function useTarget(text: string, loose = false): [(ref: FileRef) => void, FileRef] | null {
   const links = useContext(Links);
-  const target = links?.resolve(text);
-  return links && target ? [links, target] : null;
+  if (!links) return null;
+  const target = links.resolve(text);
+  if (target) return [links.open, target];
+  const ref = links.locate && (loose || text.includes("/")) ? splitRef(text) : null;
+  return ref && links.locate ? [links.locate, ref] : null;
 }
 
 function label(ref: FileRef): string {
@@ -45,11 +50,11 @@ const CODE = "rounded bg-accent/70 px-1 py-0.5 font-mono text-[0.86em] text-fore
 function CodeSpan({ text }: { text: string }) {
   const hit = useTarget(text);
   if (!hit) return <code className={CODE}>{text}</code>;
-  const [links, target] = hit;
+  const [open, target] = hit;
   return (
     <button
       type="button"
-      onClick={() => links.open(target)}
+      onClick={() => open(target)}
       title={label(target)}
       className="group cursor-pointer align-baseline leading-[inherit]"
     >
@@ -61,11 +66,11 @@ function CodeSpan({ text }: { text: string }) {
 function PathSpan({ text }: { text: string }) {
   const hit = useTarget(text);
   if (!hit) return <>{text}</>;
-  const [links, target] = hit;
+  const [open, target] = hit;
   return (
     <button
       type="button"
-      onClick={() => links.open(target)}
+      onClick={() => open(target)}
       title={label(target)}
       className="cursor-pointer align-baseline font-mono text-[0.92em] leading-[inherit] text-foreground underline decoration-muted-foreground/40 decoration-dotted underline-offset-2 hover:decoration-solid"
     >
@@ -75,13 +80,13 @@ function PathSpan({ text }: { text: string }) {
 }
 
 function LinkSpan({ href, children }: { href: string; children: ReactNode }) {
-  const hit = useTarget(href);
+  const hit = useTarget(href, !SCHEME.test(href));
   if (hit) {
-    const [links, target] = hit;
+    const [open, target] = hit;
     return (
       <button
         type="button"
-        onClick={() => links.open(target)}
+        onClick={() => open(target)}
         title={label(target)}
         className="cursor-pointer align-baseline leading-[inherit] text-foreground underline decoration-muted-foreground/40 underline-offset-2 hover:decoration-foreground"
       >

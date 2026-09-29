@@ -492,8 +492,16 @@ export function ChatView({ thread }: { thread: Thread }) {
       imports: index.imports,
       bindings: index.bindings,
       open: (ref: FileRef) => openFile(ref.path, ref.line),
+      locate: (ref: FileRef) => {
+        api
+          .locate(thread.id, ref.path)
+          .then((found) => {
+            if (found.path) openFile(found.path, ref.line);
+          })
+          .catch((cause: Error) => setError(cause.message));
+      },
     }),
-    [index, openFile],
+    [index, openFile, thread.id, setError],
   );
 
   // a fresh burst of subagents pops the panel open; closing it mid-burst keeps it closed
