@@ -241,6 +241,7 @@ export const api = {
       body: JSON.stringify({ path }),
     }),
   revealEntry: (id: string, path: string) => post<{ ok: true }>(`/api/threads/${id}/reveal`, { path }),
+  openFile: (id: string, path: string) => post<{ ok: true }>(`/api/threads/${id}/open-file`, { path }),
   locate: (id: string, path: string) => post<{ path: string | null }>(`/api/threads/${id}/locate`, { path }),
   openIn: (id: string, app: string) => post<{ ok: true }>(`/api/threads/${id}/open`, { app }),
   forkThread: (id: string) => post<Thread>(`/api/threads/${id}/fork`),

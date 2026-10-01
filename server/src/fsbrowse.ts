@@ -430,6 +430,13 @@ export async function revealWorkspaceEntry(root: string, rel: string): Promise<v
   await exec("open", ["-R", target]);
 }
 
+export async function openWorkspaceFile(root: string, rel: string): Promise<void> {
+  if (process.platform !== "darwin") throw new Error("Opening in the browser is only available on macOS");
+  const target = safeJoin(root, rel);
+  if (!(await fs.stat(target)).isFile()) throw new Error("That path is not a file");
+  await exec("open", [target]);
+}
+
 // for a path a reply names that the file index skips (gitignored, or in another checkout):
 // inside the root it comes back relative so a tab can open it, outside it Finder shows it
 export async function locateEntry(root: string, ref: string): Promise<{ path: string | null }> {

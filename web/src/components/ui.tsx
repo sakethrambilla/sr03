@@ -57,6 +57,7 @@ import {
   SquareSplitHorizontal,
   SquareSplitVertical,
   SquareTerminal,
+  ExternalLink,
   Star,
   Trash2,
   Undo2,
@@ -247,6 +248,7 @@ const ICONS = {
   ChangesIcon: FileDiff,
   CodeIcon: Code,
   EyeIcon: Eye,
+  ExternalLinkIcon: ExternalLink,
   CopyIcon: Copy,
   RunIcon: Play,
   CheckIcon: Check,
@@ -307,6 +309,7 @@ export const TerminalIcon = icon(ICONS.TerminalIcon);
 export const ChangesIcon = icon(ICONS.ChangesIcon);
 export const CodeIcon = icon(ICONS.CodeIcon);
 export const EyeIcon = icon(ICONS.EyeIcon);
+export const ExternalLinkIcon = icon(ICONS.ExternalLinkIcon);
 export const CopyIcon = icon(ICONS.CopyIcon);
 export const RunIcon = icon(ICONS.RunIcon);
 export const CheckIcon = icon(ICONS.CheckIcon);

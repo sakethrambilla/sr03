@@ -22,6 +22,7 @@ import {
   readWorkspaceFile,
   renameWorkspaceEntry,
   revealWorkspaceEntry,
+  openWorkspaceFile,
   saveUpload,
   scanWorkspaceText,
   trashWorkspaceEntry,
@@ -913,6 +914,16 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
       const thread = requireThread(params[0]!);
       const body = await readBody(request);
       await revealWorkspaceEntry(thread.cwd, requireString(body, "path"));
+      return { ok: true };
+    },
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/threads\/([^/]+)\/open-file$/,
+    handler: async ({ params, request }) => {
+      const thread = requireThread(params[0]!);
+      const body = await readBody(request);
+      await openWorkspaceFile(thread.cwd, requireString(body, "path"));
       return { ok: true };
     },
   },
