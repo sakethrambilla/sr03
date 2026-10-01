@@ -80,6 +80,31 @@ export const MentionInput = forwardRef<
     emit();
   };
 
+  // At the end of the text Chrome leaves the caret before the new <br> instead of after it,
+  // so it has to be moved onto the line the break opened, ahead of the sentinel.
+  const insertLineBreak = () => {
+    const root = rootRef.current;
+    if (!root) return;
+    root.focus();
+    const selection = document.getSelection();
+    let atEnd = false;
+    if (selection?.rangeCount && selection.isCollapsed) {
+      const tail = selection.getRangeAt(0).cloneRange();
+      tail.setEndAfter(root.lastChild ?? root);
+      atEnd = tail.toString() === "" && !tail.cloneContents().querySelector("br:not([data-sentinel])");
+    }
+    document.execCommand("insertHTML", false, "<br>");
+    const sentinel = root.lastChild;
+    if (atEnd && selection && sentinel instanceof HTMLBRElement && sentinel.dataset.sentinel !== undefined) {
+      const caret = document.createRange();
+      caret.setStartBefore(sentinel);
+      caret.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(caret);
+    }
+    emit();
+  };
+
   useImperativeHandle(ref, () => ({
     focus: () => rootRef.current?.focus(),
     insertText: write,
@@ -121,11 +146,8 @@ export const MentionInput = forwardRef<
         if (event.key === "Enter") {
           event.preventDefault();
           // insertText silently drops "\n", so a line break has to go in as its own node
-          if (event.shiftKey) {
-            rootRef.current?.focus();
-            document.execCommand("insertHTML", false, "<br>");
-            emit();
-          } else onSubmit();
+          if (event.shiftKey) insertLineBreak();
+          else onSubmit();
         }
       }}
       onPaste={(event) => {
