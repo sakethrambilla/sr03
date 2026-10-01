@@ -39,6 +39,8 @@ const MARKDOWN = /\.(md|markdown|mdx)$/i;
 const DELIMITED = /\.(csv|tsv)$/i;
 // binary, so there is no raw mode worth flipping back to — these open straight into the grid
 const SPREADSHEET = /\.(xlsx|xlsm)$/i;
+const IMAGE = /\.(png|jpe?g|gif|webp|bmp|ico|avif)$/i;
+const SVG = /\.svg$/i;
 const HTML = /\.(html?|xhtml)$/i;
 const MERMAID = /\.(mmd|mermaid)$/i;
 const EXCALIDRAW = /\.excalidraw(\.json)?$/i;
@@ -235,7 +237,7 @@ export const FileView = memo(function FileView({
   // diagrams open straight into their rendering; every other kind keeps opening as source
   const [autoPreview] = usePersistedState<boolean>("auto-preview", true);
   const [preview, setPreview] = useState(
-    () => autoPreview && (MERMAID.test(path) || EXCALIDRAW.test(path)),
+    () => autoPreview && (MERMAID.test(path) || EXCALIDRAW.test(path) || SVG.test(path)),
   );
   // bumped to re-read the file on demand, for when the watcher missed an external edit
   const [reloads, setReloads] = useState(0);
@@ -259,15 +261,19 @@ export const FileView = memo(function FileView({
   const markdown = MARKDOWN.test(path);
   const delimited = DELIMITED.test(path);
   const html = HTML.test(path);
+  const svg = SVG.test(path);
+  // a raster image has no source worth showing, so it never leaves the picture
+  const raster = IMAGE.test(path);
   const diagram = MERMAID.test(path);
   const excalidraw = EXCALIDRAW.test(path);
   // markdown or mermaid previewing renders prose/a diagram instead of the textarea — no surface
   // to save from. excalidraw previewing is the opposite: it's the editor, and stays savable
-  const sourceHidden = (markdown || diagram || html) && preview;
+  const sourceHidden = (markdown || diagram || html || svg) && preview;
   const drawing = excalidraw && preview;
   const charting = diagram && preview;
   const grid = SPREADSHEET.test(path) || (delimited && preview);
-  const previewable = markdown || delimited || diagram || excalidraw || html;
+  const previewable = markdown || delimited || diagram || excalidraw || html || svg;
+  const picture = raster || (svg && preview);
   const previewLabel = delimited
     ? "Preview as a table"
     : excalidraw
@@ -276,7 +282,9 @@ export const FileView = memo(function FileView({
         ? "Preview diagram"
         : html
           ? "Preview page"
-          : "Preview markdown";
+          : svg
+            ? "Preview image"
+            : "Preview markdown";
 
   useEffect(() => {
     let cancelled = false;
@@ -348,7 +356,7 @@ export const FileView = memo(function FileView({
 
   // true exactly when a whole-file save has something to write: not still loading, not binary,
   // and not a view — the grid or a rendered markdown/mermaid preview — with no editing surface
-  const canSave = file !== null && !file.binary && !grid && !sourceHidden;
+  const canSave = file !== null && !file.binary && !grid && !sourceHidden && !picture;
 
   // forces a debounced-but-not-yet-reported canvas edit through before something reads
   // text/source/dirty — those flow through the ordinary onChange prop below when it does, so
@@ -552,6 +560,14 @@ export const FileView = memo(function FileView({
               }}
             />
           ) : null}
+        </div>
+      ) : picture ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-card/40 p-6">
+          <img
+            src={`/api/threads/${thread.id}/image?path=${encodeURIComponent(path)}&v=${fsTick}-${reloads}`}
+            alt={path}
+            className="max-h-full max-w-full object-contain"
+          />
         </div>
       ) : charting ? (
         <div className="flex min-h-0 flex-1 flex-col">
