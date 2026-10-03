@@ -268,12 +268,14 @@ function splitStreaming(text: string): { settled: string; tail: string } {
 const Bubble = memo(function Bubble({
   message,
   copyable,
+  final = false,
   files,
   onRun,
   onRewind,
 }: {
   message: Message;
   copyable: boolean;
+  final?: boolean;
   files: FileLinks;
   onRun: (command: string) => void;
   onRewind?: (message: Message) => void;
@@ -311,7 +313,7 @@ const Bubble = memo(function Bubble({
   }
 
   return (
-    <div className="group flex min-w-0 flex-col items-start">
+    <div className={cn("group flex min-w-0 flex-col items-start", final && "mt-4")}>
       <Markdown
         text={message.text}
         files={files}
@@ -321,6 +323,8 @@ const Bubble = memo(function Bubble({
           message.role === "error"
             ? "rounded-lg border border-destructive/40 bg-destructive/10 px-3.5 py-2.5 text-destructive"
             : "text-foreground",
+          // a turn's last word after tool calls leads with a larger line, so it reads as the answer
+          final && "[&>p:first-child]:text-[17px] [&>p:first-child]:font-semibold",
         )}
       />
       {message.meta?.partial === true ? (
@@ -808,7 +812,7 @@ export function Timeline({
           </button>
         ) : null}
         <div className="mx-auto flex max-w-[52rem] flex-col gap-5 px-6 py-8">
-          {rows.map((row) =>
+          {rows.map((row, index) =>
             "tools" in row ? (
               <ToolGroup
                 key={row.id}
@@ -821,6 +825,12 @@ export function Timeline({
                 key={row.id}
                 message={row.message}
                 copyable={row.message.role === "user" || copyable.has(row.message.id)}
+                final={
+                  row.message.role === "assistant" &&
+                  copyable.has(row.message.id) &&
+                  index > 0 &&
+                  "tools" in rows[index - 1]
+                }
                 files={files}
                 onRun={onRun}
                 onRewind={onRewind}
