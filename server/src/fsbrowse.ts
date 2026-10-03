@@ -212,6 +212,23 @@ export async function saveUpload(
   return { path: target, name: clean, url: `/api/uploads/${encodeURIComponent(stored)}` };
 }
 
+const IMAGE_TYPES: Record<string, string> = {
+  ...UPLOAD_TYPES,
+  ".bmp": "image/bmp",
+  ".ico": "image/x-icon",
+  ".avif": "image/avif",
+};
+
+export async function readWorkspaceImage(
+  root: string,
+  rel: string,
+): Promise<{ bytes: Buffer; type: string }> {
+  const target = safeJoin(root, rel);
+  const type = IMAGE_TYPES[path.extname(target).toLowerCase()];
+  if (!type?.startsWith("image/")) throw new Error("That path is not an image");
+  return { bytes: await fs.readFile(target), type };
+}
+
 export async function readUpload(name: string): Promise<{ bytes: Buffer; type: string } | null> {
   const target = path.join(UPLOADS_DIR, path.basename(name));
   const bytes = await fs.readFile(target).catch(() => null);
@@ -428,6 +445,13 @@ export async function revealWorkspaceEntry(root: string, rel: string): Promise<v
   const target = safeJoin(root, rel);
   await fs.lstat(target);
   await exec("open", ["-R", target]);
+}
+
+export async function openWorkspaceFile(root: string, rel: string): Promise<void> {
+  if (process.platform !== "darwin") throw new Error("Opening in the browser is only available on macOS");
+  const target = safeJoin(root, rel);
+  if (!(await fs.stat(target)).isFile()) throw new Error("That path is not a file");
+  await exec("open", [target]);
 }
 
 // for a path a reply names that the file index skips (gitignored, or in another checkout):

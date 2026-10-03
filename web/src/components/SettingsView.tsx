@@ -318,9 +318,9 @@ function EditorPanel() {
       </header>
       <div className="flex items-center gap-4 px-4 py-4">
         <div className="min-w-0 flex-1">
-          <p className="text-[13px] text-foreground">Open diagrams in preview</p>
+          <p className="text-[13px] text-foreground">Open diagrams and SVGs in preview</p>
           <p className="text-[11.5px] text-faint">
-            A .mmd or .excalidraw file opens rendered, not as its raw source
+            A .mmd, .excalidraw or .svg file opens rendered, not as its raw source. Other images always show as a picture
           </p>
         </div>
         <Switch checked={autoPreview} onCheckedChange={setAutoPreview} />

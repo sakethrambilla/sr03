@@ -22,6 +22,8 @@ import {
   readWorkspaceFile,
   renameWorkspaceEntry,
   revealWorkspaceEntry,
+  openWorkspaceFile,
+  readWorkspaceImage,
   saveUpload,
   scanWorkspaceText,
   trashWorkspaceEntry,
@@ -913,6 +915,34 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
       const thread = requireThread(params[0]!);
       const body = await readBody(request);
       await revealWorkspaceEntry(thread.cwd, requireString(body, "path"));
+      return { ok: true };
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/threads\/([^/]+)\/image$/,
+    handler: async ({ params, url, response }) => {
+      const thread = requireThread(params[0]!);
+      const image = await readWorkspaceImage(thread.cwd, url.searchParams.get("path") ?? "").catch(
+        (error: Error) => {
+          throw new HttpError(404, error.message);
+        },
+      );
+      response.writeHead(200, {
+        "content-type": image.type,
+        "content-length": image.bytes.length,
+        "cache-control": "no-store",
+      });
+      response.end(image.bytes);
+    },
+  },
+  {
+    method: "POST",
+    pattern: /^\/api\/threads\/([^/]+)\/open-file$/,
+    handler: async ({ params, request }) => {
+      const thread = requireThread(params[0]!);
+      const body = await readBody(request);
+      await openWorkspaceFile(thread.cwd, requireString(body, "path"));
       return { ok: true };
     },
   },

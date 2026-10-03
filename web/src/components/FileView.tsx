@@ -1,6 +1,6 @@
 // One open file tab: the highlighted listing with its diff markers in the gutter, an editable
 // textarea over it, cmd-click navigation to whatever an import or a symbol resolves to, and a
-// preview for markdown, mermaid and excalidraw. A csv, tsv or xlsx hands off to TableView instead.
+// preview for markdown, mermaid, excalidraw and html. A csv, tsv or xlsx hands off to TableView instead.
 import { Fragment, memo, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { api } from "../lib/api.ts";
@@ -13,9 +13,10 @@ import { ExcalidrawView } from "./ExcalidrawView.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { Mermaid } from "./Mermaid.tsx";
 import { TableView } from "./TableView.tsx";
-import { EyeIcon, cn, usePersistedState } from "./ui.tsx";
+import { EyeIcon, ExternalLinkIcon, RefreshIcon, cn, usePersistedState } from "./ui.tsx";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Toggle } from "@/components/ui/toggle";
+import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
   ContextMenuCheckboxItem,
@@ -38,6 +39,9 @@ const MARKDOWN = /\.(md|markdown|mdx)$/i;
 const DELIMITED = /\.(csv|tsv)$/i;
 // binary, so there is no raw mode worth flipping back to — these open straight into the grid
 const SPREADSHEET = /\.(xlsx|xlsm)$/i;
+const IMAGE = /\.(png|jpe?g|gif|webp|bmp|ico|avif)$/i;
+const SVG = /\.svg$/i;
+const HTML = /\.(html?|xhtml)$/i;
 const MERMAID = /\.(mmd|mermaid)$/i;
 const EXCALIDRAW = /\.excalidraw(\.json)?$/i;
 
@@ -233,8 +237,10 @@ export const FileView = memo(function FileView({
   // diagrams open straight into their rendering; every other kind keeps opening as source
   const [autoPreview] = usePersistedState<boolean>("auto-preview", true);
   const [preview, setPreview] = useState(
-    () => autoPreview && (MERMAID.test(path) || EXCALIDRAW.test(path)),
+    () => autoPreview && (MERMAID.test(path) || EXCALIDRAW.test(path) || SVG.test(path)),
   );
+  // bumped to re-read the file on demand, for when the watcher missed an external edit
+  const [reloads, setReloads] = useState(0);
   const [wrap, setWrap] = usePersistedState<boolean>("wrap", false);
   const rows = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
@@ -254,22 +260,31 @@ export const FileView = memo(function FileView({
   const slash = path.lastIndexOf("/");
   const markdown = MARKDOWN.test(path);
   const delimited = DELIMITED.test(path);
+  const html = HTML.test(path);
+  const svg = SVG.test(path);
+  // a raster image has no source worth showing, so it never leaves the picture
+  const raster = IMAGE.test(path);
   const diagram = MERMAID.test(path);
   const excalidraw = EXCALIDRAW.test(path);
   // markdown or mermaid previewing renders prose/a diagram instead of the textarea — no surface
   // to save from. excalidraw previewing is the opposite: it's the editor, and stays savable
-  const sourceHidden = (markdown || diagram) && preview;
+  const sourceHidden = (markdown || diagram || html || svg) && preview;
   const drawing = excalidraw && preview;
   const charting = diagram && preview;
   const grid = SPREADSHEET.test(path) || (delimited && preview);
-  const previewable = markdown || delimited || diagram || excalidraw;
+  const previewable = markdown || delimited || diagram || excalidraw || html || svg;
+  const picture = raster || (svg && preview);
   const previewLabel = delimited
     ? "Preview as a table"
     : excalidraw
       ? "Edit as a drawing"
       : diagram
         ? "Preview diagram"
-        : "Preview markdown";
+        : html
+          ? "Preview page"
+          : svg
+            ? "Preview image"
+            : "Preview markdown";
 
   useEffect(() => {
     let cancelled = false;
@@ -301,7 +316,7 @@ export const FileView = memo(function FileView({
     return () => {
       cancelled = true;
     };
-  }, [thread.id, path, fsTick, onMissing]);
+  }, [thread.id, path, fsTick, reloads, onMissing]);
 
   useEffect(() => onDirtyChange(path, dirty), [path, dirty, onDirtyChange]);
 
@@ -322,6 +337,11 @@ export const FileView = memo(function FileView({
     };
   }, [active]);
 
+  // coming back to a page's tab is when an edit made elsewhere is most likely to have been missed
+  useEffect(() => {
+    if (active && html) setReloads((count) => count + 1);
+  }, [active, html]);
+
   // a reference clicked in the chat lands here, but only once the file it names has loaded
   const jumped = useRef<number | null>(null);
   useEffect(() => {
@@ -336,7 +356,7 @@ export const FileView = memo(function FileView({
 
   // true exactly when a whole-file save has something to write: not still loading, not binary,
   // and not a view — the grid or a rendered markdown/mermaid preview — with no editing surface
-  const canSave = file !== null && !file.binary && !grid && !sourceHidden;
+  const canSave = file !== null && !file.binary && !grid && !sourceHidden && !picture;
 
   // forces a debounced-but-not-yet-reported canvas edit through before something reads
   // text/source/dirty — those flow through the ordinary onChange prop below when it does, so
@@ -359,6 +379,7 @@ export const FileView = memo(function FileView({
       }
     }
     if (drawing && !next) syncDrawing();
+    if (html && next) setReloads((count) => count + 1);
     setPreview(next);
   };
 
@@ -477,6 +498,30 @@ export const FileView = memo(function FileView({
           <span className="shrink-0 font-mono text-[10.5px] text-git-modified">truncated</span>
         ) : null}
         <div className="flex-1" />
+        {html && preview ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setReloads((count) => count + 1)}
+            aria-label="Reload preview"
+            title="Reload preview"
+            className="size-6 shrink-0 text-faint"
+          >
+            <RefreshIcon className="size-3.5" />
+          </Button>
+        ) : null}
+        {html ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => api.openFile(thread.id, path).catch((e) => setError(String(e.message ?? e)))}
+            aria-label="Open in default browser"
+            title="Open in default browser"
+            className="size-6 shrink-0 text-faint"
+          >
+            <ExternalLinkIcon className="size-3.5" />
+          </Button>
+        ) : null}
         {previewable ? (
           <Toggle
             size="sm"
@@ -516,6 +561,14 @@ export const FileView = memo(function FileView({
             />
           ) : null}
         </div>
+      ) : picture ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-card/40 p-6">
+          <img
+            src={`/api/threads/${thread.id}/image?path=${encodeURIComponent(path)}&v=${fsTick}-${reloads}`}
+            alt={path}
+            className="max-h-full max-w-full object-contain"
+          />
+        </div>
       ) : charting ? (
         <div className="flex min-h-0 flex-1 flex-col">
           {error ? <p className="px-4 py-4 text-[12px] text-destructive">{error}</p> : null}
@@ -532,6 +585,15 @@ export const FileView = memo(function FileView({
             <div className="mx-auto max-w-3xl px-6 py-6">
               <Markdown text={text} files={links} from={path} className="text-[14px] leading-[1.7] text-foreground" />
             </div>
+          ) : null}
+
+          {file && !file.binary && html && preview ? (
+            <iframe
+              title={path}
+              srcDoc={text}
+              sandbox="allow-scripts"
+              className="size-full min-h-[60vh] bg-white"
+            />
           ) : null}
 
           {file && !file.binary && !sourceHidden ? (
