@@ -57,6 +57,9 @@ import {
   SquareSplitHorizontal,
   SquareSplitVertical,
   SquareTerminal,
+  GitMerge,
+  GitPullRequest,
+  GitPullRequestDraft,
   Star,
   Trash2,
   Undo2,
@@ -229,6 +232,9 @@ export function CopyButton({
 
 const ICONS = {
   ArchiveIcon: Archive,
+  PrOpenIcon: GitPullRequest,
+  PrDraftIcon: GitPullRequestDraft,
+  PrMergedIcon: GitMerge,
   AgentIcon: Bot,
   FolderIcon: Folder,
   RevealIcon: FolderOpen,
@@ -289,6 +295,9 @@ function icon(Source: LucideIcon) {
 }
 
 export const ArchiveIcon = icon(ICONS.ArchiveIcon);
+export const PrOpenIcon = icon(ICONS.PrOpenIcon);
+export const PrDraftIcon = icon(ICONS.PrDraftIcon);
+export const PrMergedIcon = icon(ICONS.PrMergedIcon);
 export const AgentIcon = icon(ICONS.AgentIcon);
 export const FolderIcon = icon(ICONS.FolderIcon);
 export const RevealIcon = icon(ICONS.RevealIcon);

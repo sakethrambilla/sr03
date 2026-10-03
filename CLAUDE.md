@@ -7,7 +7,7 @@ much smaller.
 
 **Out of scope.** Ask before building any of these: remote control / relay / Tailscale, mobile app,
 providers other than Claude, Cursor, or Codex, file checkpointing — snapshotting the worktree so a
-rewind can put code back — MCP servers, PR integration. Rewind and `/clear` are conversation-only:
+rewind can put code back — MCP servers, PR integration beyond merge auto-archive. Rewind and `/clear` are conversation-only:
 they drop messages and the CLI session, and never touch disk. t3code is Effect-based and
 event-sourced; sr03 is not, and shouldn't become so.
 
@@ -40,6 +40,7 @@ server/src   plain Node, run through --experimental-strip-types (no build step)
   agents/acp.ts      newline-delimited JSON-RPC transport
   agents/registry.ts provider lookup
   git.ts     worktree add/remove/list, branches, dirty + diff stat
+  prs.ts     polls gh for each worktree branch's PR; archives + removes the worktree on merge
   db.ts      node:sqlite — projects, threads, messages
   bus.ts     in-process pub/sub, fanned out to every socket
 web/src      Vite + React 19 + Tailwind v4 + shadcn/ui + zustand
@@ -104,6 +105,7 @@ the worktree still ships without those paths.
 - Radii: `rounded-md` for anything interactive, `rounded-lg` for panels and bubbles, `rounded-full`
   only for actual dots. Nothing else.
 - Comments only where the code can't speak for itself.
+- `gh` is an external PATH prerequisite for PR state; without it PR icons never appear.
 - Every keyboard shortcut is listed in `SHORTCUTS.md`. Add, change or remove its row in the same
   change as the code.
 
