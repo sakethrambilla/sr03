@@ -4,7 +4,7 @@
 import { createContext, useContext } from "react";
 import type { ReactNode } from "react";
 
-import { FILE_REF_SOURCE, splitRef } from "../lib/fileref.ts";
+import { FILE_REF_SOURCE, join, splitRef } from "../lib/fileref.ts";
 import type { FileLinks, FileRef } from "../lib/fileref.ts";
 import { TOKEN_CLASS, tokenize } from "../lib/highlight.ts";
 import { Mermaid } from "./Mermaid.tsx";
@@ -28,13 +28,20 @@ const SCHEME = /^(?:[a-z][\w+.-]*:|\/\/)/i;
 // the whole subtree of one message shares these, so neither has to be threaded down
 // through every nested list and quote
 const Links = createContext<FileLinks | null>(null);
+// the file being previewed, so `../x/y.md` resolves against its folder rather than the project root
+const From = createContext<string | null>(null);
 const Run = createContext<((command: string) => void) | null>(null);
 
 // loose means any href counts; prose and code only fall back when the text has a slash,
 // or every `foo.bar` in a sentence would turn into a lookup that 404s
 function useTarget(text: string, loose = false): [(ref: FileRef) => void, FileRef] | null {
   const links = useContext(Links);
+  const from = useContext(From);
   if (!links) return null;
+  if (from && loose && text.startsWith(".")) {
+    const ref = splitRef(text);
+    if (ref) text = join(from, ref.path) + text.slice(ref.path.length);
+  }
   const target = links.resolve(text);
   if (target) return [links.open, target];
   const ref = links.locate && (loose || text.includes("/")) ? splitRef(text) : null;
@@ -404,20 +411,24 @@ export function Markdown({
   text,
   className,
   files,
+  from,
   onRun,
 }: {
   text: string;
   className?: string;
   files?: FileLinks;
+  from?: string;
   onRun?: (command: string) => void;
 }) {
   return (
     <Links.Provider value={files ?? null}>
-      <Run.Provider value={onRun ?? null}>
-        <div className={cn("min-w-0 space-y-3 break-words", className)}>
-          {blocks(text.split("\n"), "md")}
-        </div>
-      </Run.Provider>
+      <From.Provider value={from ?? null}>
+        <Run.Provider value={onRun ?? null}>
+          <div className={cn("min-w-0 space-y-3 break-words", className)}>
+            {blocks(text.split("\n"), "md")}
+          </div>
+        </Run.Provider>
+      </From.Provider>
     </Links.Provider>
   );
 }

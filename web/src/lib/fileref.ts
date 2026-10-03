@@ -86,7 +86,7 @@ const INDEXES = ["/index.ts", "/index.tsx", "/index.js", "/index.jsx"];
 // NodeNext spells a TypeScript import with the extension it will compile to
 const REWRITE: Record<string, string> = { ".js": ".ts", ".jsx": ".tsx", ".mjs": ".mts", ".cjs": ".cts" };
 
-function join(from: string, specifier: string): string {
+export function join(from: string, specifier: string): string {
   if (!specifier.startsWith(".")) return specifier;
   const parts = from.split("/").slice(0, -1);
   for (const part of specifier.split("/")) {

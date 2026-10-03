@@ -530,7 +530,7 @@ export const FileView = memo(function FileView({
 
           {file && !file.binary && markdown && preview ? (
             <div className="mx-auto max-w-3xl px-6 py-6">
-              <Markdown text={text} className="text-[14px] leading-[1.7] text-foreground" />
+              <Markdown text={text} files={links} from={path} className="text-[14px] leading-[1.7] text-foreground" />
             </div>
           ) : null}
 
