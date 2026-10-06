@@ -6,7 +6,7 @@ import test, { after } from "node:test";
 
 const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sr03-fsbrowse-"));
 process.env.SR03_DATA_DIR = dir;
-const { linuxPickerCommands, windowsPickerCommand } = await import("./fsbrowse.ts");
+const { linuxPickerCommands, statWorkspaceVideo, videoRange, windowsPickerCommand } = await import("./fsbrowse.ts");
 
 after(() => fs.rm(dir, { recursive: true, force: true }));
 
@@ -30,4 +30,26 @@ test("windows picker is an encoded powershell script", () => {
   assert.match(script, /Pick\('folder', 'Pick ''it'''\)/);
   assert.match(script, /IFileOpenDialog/);
   assert.match(script, /OutputEncoding/);
+});
+
+test("video range parses single byte ranges", () => {
+  assert.equal(videoRange(1000, undefined), null);
+  assert.deepEqual(videoRange(1000, "bytes=0-"), { start: 0, end: 999 });
+  assert.deepEqual(videoRange(1000, "bytes=100-199"), { start: 100, end: 199 });
+  assert.deepEqual(videoRange(1000, "bytes=900-5000"), { start: 900, end: 999 });
+  assert.deepEqual(videoRange(1000, "bytes=-100"), { start: 900, end: 999 });
+  assert.equal(videoRange(1000, "bytes=1000-"), "unsatisfiable");
+  assert.equal(videoRange(1000, "bytes=0-1,5-9"), null);
+  assert.equal(videoRange(1000, "items=0-1"), null);
+});
+
+test("workspace video stat checks type and containment", async () => {
+  const root = await fs.mkdtemp(path.join(dir, "video-"));
+  await fs.writeFile(path.join(root, "a.mp4"), Buffer.alloc(10));
+  await fs.writeFile(path.join(root, "notes.txt"), "hi");
+  const video = await statWorkspaceVideo(root, "a.mp4");
+  assert.equal(video.size, 10);
+  assert.equal(video.type, "video/mp4");
+  await assert.rejects(statWorkspaceVideo(root, "notes.txt"), /not a video/);
+  await assert.rejects(statWorkspaceVideo(root, "../x.mp4"), /outside the session folder/);
 });
