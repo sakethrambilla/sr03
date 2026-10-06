@@ -1,7 +1,9 @@
 // Every REST route, as one flat table of method + regex + handler. Commands come in here;
 // results go back out over the socket through bus.ts. A handler returning a value means 200
 // with that value as json, and a thrown HttpError means its status.
+import fs from "node:fs";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import * as agents from "./agents/runtime.ts";
@@ -26,7 +28,9 @@ import {
   readWorkspaceImage,
   saveUpload,
   scanWorkspaceText,
+  statWorkspaceVideo,
   trashWorkspaceEntry,
+  videoRange,
   walkWorkspaceFiles,
   writeWorkspaceFile,
 } from "./fsbrowse.ts";
@@ -934,6 +938,38 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
         "cache-control": "no-store",
       });
       response.end(image.bytes);
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/threads\/([^/]+)\/video$/,
+    handler: async ({ params, url, request, response }) => {
+      const thread = requireThread(params[0]!);
+      const video = await statWorkspaceVideo(thread.cwd, url.searchParams.get("path") ?? "").catch(
+        (error: Error) => {
+          throw new HttpError(404, error.message);
+        },
+      );
+      const base = { "content-type": video.type, "accept-ranges": "bytes", "cache-control": "no-store" };
+      if (video.size === 0) {
+        response.writeHead(200, { ...base, "content-length": 0 });
+        response.end();
+        return;
+      }
+      const range = videoRange(video.size, request.headers.range);
+      if (range === "unsatisfiable") {
+        response.writeHead(416, { ...base, "content-range": `bytes */${video.size}` });
+        response.end();
+        return;
+      }
+      const { start, end } = range ?? { start: 0, end: video.size - 1 };
+      response.writeHead(range ? 206 : 200, {
+        ...base,
+        "content-length": end - start + 1,
+        ...(range ? { "content-range": `bytes ${start}-${end}/${video.size}` } : {}),
+      });
+      // the player aborts ranges on every seek; a closed socket is not an error here
+      await pipeline(fs.createReadStream(video.path, { start, end }), response).catch(() => {});
     },
   },
   {

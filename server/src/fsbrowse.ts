@@ -229,6 +229,43 @@ export async function readWorkspaceImage(
   return { bytes: await fs.readFile(target), type };
 }
 
+export const VIDEO_TYPES: Record<string, string> = {
+  ".mp4": "video/mp4",
+  ".m4v": "video/mp4",
+  ".webm": "video/webm",
+  ".mov": "video/quicktime",
+  ".mkv": "video/x-matroska",
+  ".ogv": "video/ogg",
+  ".avi": "video/x-msvideo",
+  ".wmv": "video/x-ms-wmv",
+  ".flv": "video/x-flv",
+};
+
+export async function statWorkspaceVideo(
+  root: string,
+  rel: string,
+): Promise<{ path: string; size: number; type: string }> {
+  const target = safeJoin(root, rel);
+  const type = VIDEO_TYPES[path.extname(target).toLowerCase()];
+  if (!type) throw new Error("That path is not a video");
+  const stats = await fs.stat(target);
+  if (!stats.isFile()) throw new Error("That path is not a file");
+  return { path: target, size: stats.size, type };
+}
+
+// null means serve the whole file; multi-range requests get the whole file too
+export function videoRange(
+  size: number,
+  header: string | undefined,
+): { start: number; end: number } | "unsatisfiable" | null {
+  const match = header?.match(/^bytes=(\d*)-(\d*)$/);
+  if (!match || (!match[1] && !match[2])) return null;
+  const start = match[1] ? Number(match[1]) : Math.max(0, size - Number(match[2]));
+  const end = match[1] && match[2] ? Math.min(Number(match[2]), size - 1) : size - 1;
+  if (start >= size || start > end) return "unsatisfiable";
+  return { start, end };
+}
+
 export async function readUpload(name: string): Promise<{ bytes: Buffer; type: string } | null> {
   const target = path.join(UPLOADS_DIR, path.basename(name));
   const bytes = await fs.readFile(target).catch(() => null);

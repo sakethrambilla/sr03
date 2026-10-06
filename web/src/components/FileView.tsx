@@ -1,6 +1,6 @@
 // One open file tab: the highlighted listing with its diff markers in the gutter, an editable
 // textarea over it, cmd-click navigation to whatever an import or a symbol resolves to, and a
-// preview for markdown, mermaid, excalidraw and html. A csv, tsv or xlsx hands off to TableView instead.
+// preview for markdown, mermaid, excalidraw and html, and a player for video. A csv, tsv or xlsx hands off to TableView instead.
 import { Fragment, memo, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { api } from "../lib/api.ts";
@@ -10,6 +10,7 @@ import { matchesStroke, resolveBindings } from "../lib/shortcuts.ts";
 import { useShortcut } from "../lib/useShortcut.ts";
 import { useStore } from "../store.ts";
 import { ExcalidrawView } from "./ExcalidrawView.tsx";
+import { VideoView } from "./VideoView.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { Mermaid } from "./Mermaid.tsx";
 import { TableView } from "./TableView.tsx";
@@ -40,6 +41,7 @@ const DELIMITED = /\.(csv|tsv)$/i;
 // binary, so there is no raw mode worth flipping back to — these open straight into the grid
 const SPREADSHEET = /\.(xlsx|xlsm)$/i;
 const IMAGE = /\.(png|jpe?g|gif|webp|bmp|ico|avif)$/i;
+const VIDEO = /\.(mp4|m4v|webm|mov|mkv|ogv|avi|wmv|flv)$/i;
 const SVG = /\.svg$/i;
 const HTML = /\.(html?|xhtml)$/i;
 const MERMAID = /\.(mmd|mermaid)$/i;
@@ -205,6 +207,7 @@ export const FileView = memo(function FileView({
   thread,
   path,
   active,
+  showing,
   onClose,
   onMissing,
   onDirtyChange,
@@ -215,6 +218,7 @@ export const FileView = memo(function FileView({
   thread: Thread;
   path: string;
   active: boolean;
+  showing: boolean;
   onClose: (path: string) => void;
   onMissing: (path: string) => void;
   onDirtyChange: (path: string, dirty: boolean) => void;
@@ -264,6 +268,7 @@ export const FileView = memo(function FileView({
   const svg = SVG.test(path);
   // a raster image has no source worth showing, so it never leaves the picture
   const raster = IMAGE.test(path);
+  const video = VIDEO.test(path);
   const diagram = MERMAID.test(path);
   const excalidraw = EXCALIDRAW.test(path);
   // markdown or mermaid previewing renders prose/a diagram instead of the textarea — no surface
@@ -287,6 +292,7 @@ export const FileView = memo(function FileView({
             : "Preview markdown";
 
   useEffect(() => {
+    if (video) return;
     let cancelled = false;
     api
       .file(thread.id, path)
@@ -316,7 +322,7 @@ export const FileView = memo(function FileView({
     return () => {
       cancelled = true;
     };
-  }, [thread.id, path, fsTick, reloads, onMissing]);
+  }, [thread.id, path, fsTick, reloads, onMissing, video]);
 
   useEffect(() => onDirtyChange(path, dirty), [path, dirty, onDirtyChange]);
 
@@ -561,6 +567,8 @@ export const FileView = memo(function FileView({
             />
           ) : null}
         </div>
+      ) : video ? (
+        <VideoView threadId={thread.id} path={path} showing={showing} version={reloads} />
       ) : picture ? (
         <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-card/40 p-6">
           <img

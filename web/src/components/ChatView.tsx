@@ -623,6 +623,7 @@ export function ChatView({ thread }: { thread: Thread }) {
                         // FileView's cmd+S / cmd+shift+V / Esc handlers sit on window, so without
                         // the focus test two groups would both answer every one of those keys
                         active={showing && index === focusedRef.current}
+                        showing={showing}
                         onClose={closeFileTab}
                         onMissing={closeFileTab}
                         onDirtyChange={markDirty}
