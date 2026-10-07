@@ -69,6 +69,18 @@ group only — the other groups' files ignore them.
 | `Esc` | Close the file, only when it has no unsaved changes | `web/src/components/FileView.tsx` |
 | `⌘`-click an import | Open that file | `web/src/components/FileView.tsx` |
 
+## File tree
+
+Active while the file tree has focus.
+
+| Shortcut | Action | Code |
+| --- | --- | --- |
+| `↑` / `↓` | Move focus to the previous / next row | `web/src/components/FileTree.tsx`, `web/src/lib/filetree.ts` |
+| `→` | Expand a closed folder, or step into an open one's first child | `web/src/components/FileTree.tsx`, `web/src/lib/filetree.ts` |
+| `←` | Collapse an open folder, or jump to the parent folder | `web/src/components/FileTree.tsx`, `web/src/lib/filetree.ts` |
+| `Enter` | Open the focused file, or expand / collapse the focused folder | `web/src/components/FileTree.tsx`, `web/src/lib/filetree.ts` |
+| `Home` / `End` | Move focus to the first / last row | `web/src/components/FileTree.tsx`, `web/src/lib/filetree.ts` |
+
 ## Composer
 
 | Shortcut | Action | Code |

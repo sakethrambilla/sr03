@@ -2,7 +2,7 @@
 // actions — open, create, rename, trash, reveal in Finder. Re-reads itself when a turn writes
 // to disk, which the server's filesystem watcher signals through fsVersionByThread.
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ComponentType, ReactNode } from "react";
+import type { ComponentType, KeyboardEvent, ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { api } from "../lib/api.ts";
@@ -16,13 +16,14 @@ import {
   dirtyAncestors,
   forEachWithConcurrency,
   insertEntry,
+  moveFocus,
   parentOf,
   projectRows,
   removeEntry,
   replaceEntry,
   toggleSubtree,
 } from "../lib/filetree.ts";
-import type { DirLoadTracker, TreeRow } from "../lib/filetree.ts";
+import type { DirLoadTracker, FocusKey, TreeRow } from "../lib/filetree.ts";
 import type { ChangedFile, Thread, TreeEntry } from "../lib/types.ts";
 import { useStore } from "../store.ts";
 import { Button } from "@/components/ui/button";
@@ -59,6 +60,7 @@ type Status = ChangedFile["status"];
 
 // stable empty identity for the two loading sets, so an idle render never produces a new set
 const EMPTY_DIRS: ReadonlySet<string> = new Set();
+const FOCUS_KEYS: ReadonlySet<string> = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"]);
 
 // how long a read may take before its row shows a spinner
 const SPINNER_DELAY_MS = 150;
@@ -203,6 +205,7 @@ const Row = memo(function Row({
   ignored,
   expanded,
   selected,
+  focused,
   isLoading,
   onActivate,
   onReload,
@@ -220,6 +223,7 @@ const Row = memo(function Row({
   ignored: boolean;
   expanded: boolean;
   selected: boolean;
+  focused: boolean;
   isLoading: boolean;
   onActivate: (entry: TreeEntry) => void;
   onReload: (entry: TreeEntry) => void;
@@ -241,6 +245,9 @@ const Row = memo(function Row({
 
   return (
         <div
+          role="treeitem"
+          aria-selected={selected}
+          aria-expanded={entry.isDir ? expanded : undefined}
           onContextMenu={(event) => {
             // right-clicking mid-rename would blur the input and cancel the rename
             if (renaming) return;
@@ -250,6 +257,7 @@ const Row = memo(function Row({
           className={cn(
             "group/row flex h-[22px] w-full items-stretch hover:bg-accent/50",
             selected && "bg-accent",
+            focused && "group-focus-within/tree:ring-1 group-focus-within/tree:ring-inset group-focus-within/tree:ring-ring",
           )}
         >
           <Guides depth={depth} />
@@ -442,6 +450,7 @@ export function FileTree({
   const [tick, setTick] = useState(0);
   const [creating, setCreating] = useState<{ parent: string; kind: "file" | "dir" } | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
+  const [focusedPath, setFocusedPath] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<TreeEntry | null>(null);
   const [busy, setBusy] = useState(false);
   const [menu, setMenu] = useState<{ entry: TreeEntry; x: number; y: number } | null>(null);
@@ -768,6 +777,40 @@ export function FileTree({
     [commitRename],
   );
   const onCancelRename = useCallback(() => setRenaming(null), []);
+  const onActivateEntry = useCallback(
+    (entry: TreeEntry) => {
+      setFocusedPath(entry.path);
+      toggle(entry);
+    },
+    [toggle],
+  );
+  const onTreeKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (renaming || creating) return;
+    if (event.key === "Enter") {
+      const row = rows.find((candidate) => candidate.entry.path === focusedPath);
+      if (!row) return;
+      // also stops a focused row button from turning Enter into a second click
+      event.preventDefault();
+      toggle(row.entry);
+      return;
+    }
+    if (!FOCUS_KEYS.has(event.key)) return;
+    event.preventDefault();
+    const move = moveFocus(rows, expanded, focusedPath, event.key as FocusKey);
+    if (move.kind === "focus") {
+      setFocusedPath(move.path);
+      const index = rows.findIndex((row) => row.entry.path === move.path);
+      virtualizer.scrollToIndex(index, { align: "auto" });
+    } else if (move.kind === "expand") {
+      setExpanded((current) => new Set(current).add(move.path));
+    } else if (move.kind === "collapse") {
+      setExpanded((current) => {
+        const next = new Set(current);
+        next.delete(move.path);
+        return next;
+      });
+    }
+  };
   const onOpenMenu = useCallback(
     (entry: TreeEntry, x: number, y: number) => setMenu({ entry, x, y }),
     [],
@@ -844,7 +887,13 @@ export function FileTree({
         ) : null}
       </header>
 
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto py-1">
+      <div
+        ref={scrollRef}
+        tabIndex={0}
+        role="tree"
+        onKeyDown={onTreeKeyDown}
+        className="group/tree min-h-0 flex-1 overflow-auto py-1 outline-none"
+      >
         <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
           {virtualizer.getVirtualItems().map((item) => {
             const row = rowAt(item.index);
@@ -871,8 +920,9 @@ export function FileTree({
                     ignored={ignoredSet.has(row.entry.path)}
                     expanded={row.entry.isDir && expanded.has(row.entry.path)}
                     selected={row.entry.path === openPath}
+                    focused={row.entry.path === focusedPath}
                     isLoading={row.entry.isDir && slowDirs.has(row.entry.path)}
-                    onActivate={toggle}
+                    onActivate={onActivateEntry}
                     onReload={onReloadEntry}
                     onToggleSubtree={onToggleSubtreeEntry}
                     onCreateIn={onCreateIn}

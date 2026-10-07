@@ -14,6 +14,7 @@ import {
   dirtyAncestors,
   forEachWithConcurrency,
   insertEntry,
+  moveFocus,
   parentOf,
   projectRows,
   removeEntry,
@@ -186,5 +187,45 @@ test.describe("concurrency and entry edits", () => {
       entries.map((entry) => entry.path),
       ["a.ts", "b.ts"],
     );
+  });
+});
+
+test.describe("moveFocus", () => {
+  const expanded = new Set(["", "a"]);
+  const rows = projectRows({ "": [dir("a"), file("z")], a: [file("a/b")] }, expanded);
+
+  test("null focus picks the first row for any key", () => {
+    assert.deepEqual(moveFocus(rows, expanded, null, "End"), { kind: "focus", path: "a" });
+  });
+
+  test("up and down move one row, clamped at the ends", () => {
+    assert.deepEqual(moveFocus(rows, expanded, "a", "ArrowDown"), { kind: "focus", path: "a/b" });
+    assert.deepEqual(moveFocus(rows, expanded, "a/b", "ArrowUp"), { kind: "focus", path: "a" });
+    assert.deepEqual(moveFocus(rows, expanded, "z", "ArrowDown"), { kind: "none" });
+    assert.deepEqual(moveFocus(rows, expanded, "a", "ArrowUp"), { kind: "none" });
+  });
+
+  test("home and end go to the first and last rows", () => {
+    assert.deepEqual(moveFocus(rows, expanded, "z", "Home"), { kind: "focus", path: "a" });
+    assert.deepEqual(moveFocus(rows, expanded, "a", "End"), { kind: "focus", path: "z" });
+  });
+
+  test("right expands a closed dir, enters an open one, and does nothing on a file", () => {
+    const closed = new Set([""]);
+    const closedRows = projectRows({ "": [dir("a"), file("z")], a: [file("a/b")] }, closed);
+    assert.deepEqual(moveFocus(closedRows, closed, "a", "ArrowRight"), { kind: "expand", path: "a" });
+    assert.deepEqual(moveFocus(rows, expanded, "a", "ArrowRight"), { kind: "focus", path: "a/b" });
+    assert.deepEqual(moveFocus(rows, expanded, "z", "ArrowRight"), { kind: "none" });
+  });
+
+  test("right on an open but empty dir does nothing", () => {
+    const empty = projectRows({ "": [dir("a"), file("z")], a: [] }, expanded);
+    assert.deepEqual(moveFocus(empty, expanded, "a", "ArrowRight"), { kind: "none" });
+  });
+
+  test("left collapses an open dir, else jumps to the parent, else does nothing at the root", () => {
+    assert.deepEqual(moveFocus(rows, expanded, "a", "ArrowLeft"), { kind: "collapse", path: "a" });
+    assert.deepEqual(moveFocus(rows, expanded, "a/b", "ArrowLeft"), { kind: "focus", path: "a" });
+    assert.deepEqual(moveFocus(rows, expanded, "z", "ArrowLeft"), { kind: "none" });
   });
 });
