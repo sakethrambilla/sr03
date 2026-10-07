@@ -7,6 +7,7 @@ import { pipeline } from "node:stream/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import * as agents from "./agents/runtime.ts";
+import { AUTO_ARCHIVE_DAYS_KEY, AUTO_ARCHIVE_KEY, sweepStale } from "./autoArchive.ts";
 import * as git from "./git.ts";
 import * as pty from "./pty.ts";
 import { listProviders, logoutProvider } from "./providers.ts";
@@ -1101,6 +1102,7 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
       const key = requireString(body, "key");
       settings.set(key, body.value);
       publish({ type: "settings.changed", key, value: body.value });
+      if (key === AUTO_ARCHIVE_KEY || key === AUTO_ARCHIVE_DAYS_KEY) sweepStale();
       return { ok: true };
     },
   },

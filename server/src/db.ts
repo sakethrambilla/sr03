@@ -367,6 +367,13 @@ const sql = {
   threadsArchiveIdle: db.prepare(
     "UPDATE threads SET archived = 1, updated_at = ? WHERE project_id = ? AND archived = 0 AND status != 'running' AND id IS NOT ? RETURNING id",
   ),
+  threadsArchiveStale: db.prepare(
+    `UPDATE threads SET archived = 1, updated_at = ?
+     WHERE archived = 0 AND status != 'running'
+       AND id NOT IN (SELECT value FROM json_each(?))
+       AND COALESCE((SELECT MAX(created_at) FROM messages WHERE thread_id = threads.id), created_at) < ?
+     RETURNING id`,
+  ),
 };
 
 // the desktop shell loads a new port every launch, so the browser's own storage starts empty
@@ -587,6 +594,12 @@ export const threads = {
   // exceptThreadId null makes "IS NOT ?" match nothing, so every idle row still qualifies
   archiveIdle(projectId: string, exceptThreadId: string | null): Thread[] {
     const rows = sql.threadsArchiveIdle.all(Date.now(), projectId, exceptThreadId) as Array<{ id: string }>;
+    return rows.flatMap((row) => threads.byId(row.id) ?? []);
+  },
+  // last activity is the newest message, or creation for an empty thread; updated_at is not used
+  // because renames and picker changes bump it
+  archiveStale(cutoff: number, exceptThreadIds: string[]): Thread[] {
+    const rows = sql.threadsArchiveStale.all(Date.now(), JSON.stringify(exceptThreadIds), cutoff) as Array<{ id: string }>;
     return rows.flatMap((row) => threads.byId(row.id) ?? []);
   },
 };

@@ -108,3 +108,47 @@ test("archiveIdle archives idle and errored threads, skipping running, archived 
   const none = threads.archiveIdle(a.id, null);
   assert.deepEqual(none, []);
 });
+
+test("archiveStale archives threads whose last activity is before the cutoff", async (context) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "sr03-db-"));
+  const previous = process.env.SR03_DATA_DIR;
+  process.env.SR03_DATA_DIR = directory;
+  context.after(async () => {
+    if (previous === undefined) delete process.env.SR03_DATA_DIR;
+    else process.env.SR03_DATA_DIR = previous;
+    await fs.rm(directory, { recursive: true, force: true });
+  });
+
+  const { projects, threads, messages } = await import("./db.ts");
+  const project = projects.create({ path: directory, name: "stale", isGit: false });
+  const base = {
+    projectId: project.id,
+    providerId: "claude" as const,
+    title: "t",
+    cwd: directory,
+    branch: null,
+    isWorktree: false,
+    model: "m",
+    permissionMode: "default" as const,
+    effort: "high" as const,
+    fast: false,
+  };
+  const withMessage = threads.create(base);
+  const empty = threads.create(base);
+  const running = threads.create(base);
+  const excepted = threads.create(base);
+  const alreadyArchived = threads.create(base);
+  messages.append({ threadId: withMessage.id, role: "user", text: "hi" });
+  threads.update(running.id, { status: "running" });
+  threads.update(alreadyArchived.id, { archived: true });
+  const mine = new Set([withMessage.id, empty.id, running.id, excepted.id, alreadyArchived.id]);
+
+  assert.deepEqual(threads.archiveStale(0, []), []);
+
+  // the module's db is shared with earlier tests, so only this test's threads are compared
+  const archived = threads.archiveStale(Date.now() + 60_000, [excepted.id]).filter((t) => mine.has(t.id));
+  assert.deepEqual(archived.map((t) => t.id).sort(), [withMessage.id, empty.id].sort());
+  assert.ok(archived.every((t) => t.archived === true));
+  assert.equal(threads.byId(running.id)!.archived, false);
+  assert.equal(threads.byId(excepted.id)!.archived, false);
+});
