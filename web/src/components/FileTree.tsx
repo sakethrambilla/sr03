@@ -68,7 +68,7 @@ const IGNORE_DEBOUNCE_MS = 150;
 
 // floor on the change-set read, which shells out to `git status`; the watcher can signal twice this
 // often, and the directory listings still refresh at the full signal rate
-const CHANGES_MIN_INTERVAL_MS = 1000;
+const CHANGES_MIN_INTERVAL_MS = 500;
 
 function withPath(set: ReadonlySet<string>, path: string): ReadonlySet<string> {
   if (set.has(path)) return set;

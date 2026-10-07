@@ -44,6 +44,20 @@ export async function repoInfo(dir: string): Promise<RepoInfo> {
   }
 }
 
+/** The per-worktree git dir (HEAD, index) and the shared one (refs, packed-refs); null outside a repo. */
+export async function gitDirs(cwd: string): Promise<{ gitDir: string; commonDir: string } | null> {
+  try {
+    const [gitDir, commonDir] = (await git(cwd, ["rev-parse", "--absolute-git-dir", "--git-common-dir"]))
+      .trim()
+      .split("\n");
+    if (!gitDir || !commonDir) return null;
+    return { gitDir, commonDir: path.resolve(cwd, commonDir) };
+  } catch (error) {
+    if (error instanceof GitError) return null;
+    throw error;
+  }
+}
+
 export interface Worktree {
   path: string;
   branch: string | null;

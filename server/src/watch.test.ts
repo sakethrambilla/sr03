@@ -10,6 +10,7 @@ import { subscribe } from "./bus.ts";
 import type { ServerEvent } from "./types.ts";
 import {
   createCoalescer,
+  isGitMetaChange,
   releaseAllUnder,
   shouldIgnoreWatchPath,
   watchThread,
@@ -138,6 +139,8 @@ test("only a leading .git segment is ignored", () => {
   assert.equal(shouldIgnoreWatchPath("a/.git/HEAD"), false);
 });
 
+const noGit = async () => null;
+
 function collect(threadId: string): { events: number; stop: () => void } {
   const state = { events: 0, stop: () => {} };
   state.stop = subscribe((event: ServerEvent) => {
@@ -151,7 +154,7 @@ test("a factory that throws yields a release that does not throw", () => {
   const factory: WatchFactory = () => {
     throw new Error("EPERM");
   };
-  const release = watchThread("t-throw", "/nowhere/throw", factory);
+  const release = watchThread("t-throw", "/nowhere/throw", factory, undefined, noGit);
   release();
   release();
   assert.equal(seen.events, 0);
@@ -169,7 +172,7 @@ test("an error on the handle publishes one fs.changed and closes the watch", () 
     },
   });
 
-  const release = watchThread("t-error", "/nowhere/error", factory);
+  const release = watchThread("t-error", "/nowhere/error", factory, undefined, noGit);
   assert.ok(hook.fail, "the watcher subscribed to error");
   hook.fail(new Error("boom"));
   assert.equal(seen.events, 1);
@@ -187,7 +190,7 @@ test("a null filename still signals", () => {
     return { close: () => {}, on: () => {} };
   };
 
-  const release = watchThread("t-null", "/nowhere/null", factory, { ...clock });
+  const release = watchThread("t-null", "/nowhere/null", factory, { ...clock }, noGit);
   onChange!("rename", null);
   clock.advance(WATCH_TRAILING_MS);
   assert.equal(seen.events, 1);
@@ -204,7 +207,7 @@ test("an ignored path does not signal", () => {
     return { close: () => {}, on: () => {} };
   };
 
-  const release = watchThread("t-ignored", "/nowhere/ignored", factory, { ...clock });
+  const release = watchThread("t-ignored", "/nowhere/ignored", factory, { ...clock }, noGit);
   onChange!("change", path.join(".git", "HEAD"));
   clock.advance(10_000);
   assert.equal(seen.events, 0);
@@ -220,8 +223,8 @@ test("the watch is refcounted and its release is idempotent", () => {
     return { close: () => closed++, on: () => {} };
   };
 
-  const first = watchThread("t-ref", "/nowhere/ref", factory);
-  const second = watchThread("t-ref", "/nowhere/ref", factory);
+  const first = watchThread("t-ref", "/nowhere/ref", factory, undefined, noGit);
+  const second = watchThread("t-ref", "/nowhere/ref", factory, undefined, noGit);
   assert.equal(created, 1);
 
   first();
@@ -236,9 +239,9 @@ test("releaseAllUnder closes every watch at or under a directory", () => {
   const factory: WatchFactory = (): WatchHandle => ({ close: () => closed++, on: () => {} });
   const root = path.join(os.tmpdir(), "sr03-under");
 
-  const inside = watchThread("t-under-a", path.join(root, "wt-a"), factory);
-  const at = watchThread("t-under-b", root, factory);
-  const outside = watchThread("t-under-c", path.join(os.tmpdir(), "sr03-elsewhere"), factory);
+  const inside = watchThread("t-under-a", path.join(root, "wt-a"), factory, undefined, noGit);
+  const at = watchThread("t-under-b", root, factory, undefined, noGit);
+  const outside = watchThread("t-under-c", path.join(os.tmpdir(), "sr03-elsewhere"), factory, undefined, noGit);
 
   releaseAllUnder(root);
   assert.equal(closed, 2);
@@ -257,16 +260,97 @@ test("a release issued before releaseAllUnder cannot close a watch recreated aft
   const cwd = path.join(os.tmpdir(), "sr03-recreate");
 
   // two holders, as two clients watching the same thread
-  const first = watchThread("t-recreate", cwd, factory);
-  watchThread("t-recreate", cwd, factory);
+  const first = watchThread("t-recreate", cwd, factory, undefined, noGit);
+  watchThread("t-recreate", cwd, factory, undefined, noGit);
   releaseAllUnder(cwd);
   assert.equal(closed, 1);
 
   // a new client asks again, which builds a fresh watch for the same thread
-  watchThread("t-recreate", cwd, factory);
+  watchThread("t-recreate", cwd, factory, undefined, noGit);
   // the pre-force release must not decrement the replacement
   first();
   assert.equal(closed, 1, "the recreated watch was torn down by a stale release");
+});
+
+test("only git's own refresh-worthy metadata counts as a git change", () => {
+  assert.equal(isGitMetaChange("git", "index"), true);
+  assert.equal(isGitMetaChange("git", "HEAD"), true);
+  assert.equal(isGitMetaChange("git", "index.lock"), true);
+  assert.equal(isGitMetaChange("git", null), true);
+  assert.equal(isGitMetaChange("refs", "heads/main"), true);
+  assert.equal(isGitMetaChange("git", "objects"), false);
+  assert.equal(isGitMetaChange("git", "logs"), false);
+  assert.equal(isGitMetaChange("git", "COMMIT_EDITMSG"), false);
+});
+
+interface FakeWatch {
+  dir: string;
+  recursive: boolean | undefined;
+  onChange: (eventType: string, filename: string | null) => void;
+  closed: number;
+}
+
+function recordingFactory(): { calls: FakeWatch[]; factory: WatchFactory } {
+  const calls: FakeWatch[] = [];
+  const factory: WatchFactory = (dir, onChange, recursive): WatchHandle => {
+    const call: FakeWatch = { dir, recursive, onChange, closed: 0 };
+    calls.push(call);
+    return { close: () => call.closed++, on: () => {} };
+  };
+  return { calls, factory };
+}
+
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+test("a git metadata change publishes fs.changed", async () => {
+  const clock = fakeClock();
+  const seen = collect("t-git");
+  const { calls, factory } = recordingFactory();
+
+  const release = watchThread("t-git", "/nowhere/git", factory, { ...clock }, async () => ({
+    gitDir: "/g",
+    commonDir: "/g",
+  }));
+  await flush();
+
+  const gitWatch = calls.find((call) => call.dir === "/g");
+  const refsWatch = calls.find((call) => call.dir === path.join("/g", "refs"));
+  assert.ok(gitWatch, "watched the git dir");
+  assert.equal(gitWatch.recursive, false);
+  assert.ok(refsWatch, "watched refs");
+  assert.equal(refsWatch.recursive, true);
+
+  gitWatch.onChange("rename", "index");
+  clock.advance(WATCH_TRAILING_MS);
+  assert.equal(seen.events, 1);
+  release();
+  seen.stop();
+});
+
+test("a release before git dirs resolve leaves no git watch open", async () => {
+  const { calls, factory } = recordingFactory();
+  let resolve: (dirs: { gitDir: string; commonDir: string }) => void = () => {};
+  const pending = new Promise<{ gitDir: string; commonDir: string }>((r) => {
+    resolve = r;
+  });
+
+  const release = watchThread("t-git-early", "/nowhere/early", factory, undefined, () => pending);
+  release();
+  resolve({ gitDir: "/g", commonDir: "/g" });
+  await flush();
+
+  for (const call of calls) assert.equal(call.closed, 1, `${call.dir} left open`);
+});
+
+test("no git dirs means only the cwd watch, without throwing", async () => {
+  const { calls, factory } = recordingFactory();
+  const release = watchThread("t-git-none", "/nowhere/none", factory, undefined, noGit);
+  await flush();
+  assert.deepEqual(
+    calls.map((call) => call.dir),
+    ["/nowhere/none"],
+  );
+  release();
 });
 
 // The only test here that depends on the platform's recursive fs.watch support.
