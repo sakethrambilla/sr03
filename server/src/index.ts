@@ -10,6 +10,7 @@ import { WebSocketServer } from "ws";
 
 import { PORT } from "./config.ts";
 import { handleApiRequest } from "./api.ts";
+import { startAutoArchive } from "./autoArchive.ts";
 import { pendingApprovals, pendingQuestions } from "./agents/runtime.ts";
 import { subscribe } from "./bus.ts";
 import { threads } from "./db.ts";
@@ -173,6 +174,7 @@ websockets.on("connection", (socket) => {
 });
 
 server.listen(PORT, "127.0.0.1", () => {
+  startAutoArchive();
   console.log(`sr03 server listening on http://127.0.0.1:${PORT}`);
   // asking the CLI for its model list costs seconds, so pay it before the first page load
   void Promise.all([listModels("claude"), listModels("cursor"), listModels("codex")]);
