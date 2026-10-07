@@ -221,7 +221,47 @@ function uninstallCli() {
   dialog.showMessageBox({ message: removed.length ? `Removed ${removed.join(", ")}` : "The sr03 command was not installed." });
 }
 
+// mirrors web/src/lib/zoom.ts
+const ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5];
+
+function stepZoom(factor, dir) {
+  if (dir === 0) return 1;
+  if (dir === 1) return ZOOM_STEPS.find((step) => step > factor + 0.001) ?? ZOOM_STEPS[ZOOM_STEPS.length - 1];
+  return ZOOM_STEPS.findLast((step) => step < factor - 0.001) ?? ZOOM_STEPS[0];
+}
+
+function zoom(dir) {
+  const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  if (!window) return;
+  const factor = stepZoom(window.webContents.getZoomFactor(), dir);
+  window.webContents.setZoomFactor(factor);
+  if (appUrl) void window.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent("sr03:zoom", { detail: ${factor} }))`);
+}
+
+function viewMenu() {
+  return {
+    label: "View",
+    submenu: [
+      { role: "reload" },
+      { role: "forceReload" },
+      { role: "toggleDevTools" },
+      { type: "separator" },
+      { label: "Actual Size", accelerator: "CmdOrCtrl+0", click: () => zoom(0) },
+      { label: "Zoom In", accelerator: "CmdOrCtrl+=", click: () => zoom(1) },
+      // keeps ⌘⇧= working, as Electron's zoomIn role does
+      { label: "Zoom In", accelerator: "CmdOrCtrl+Plus", visible: false, acceleratorWorksWhenHidden: true, click: () => zoom(1) },
+      { label: "Zoom Out", accelerator: "CmdOrCtrl+-", click: () => zoom(-1) },
+      { type: "separator" },
+      { role: "togglefullscreen" },
+    ],
+  };
+}
+
 function setMenu() {
+  if (WINDOWS) {
+    Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: "fileMenu" }, { role: "editMenu" }, viewMenu(), { role: "windowMenu" }]));
+    return;
+  }
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
       role: "appMenu",
@@ -239,7 +279,7 @@ function setMenu() {
       ],
     },
     { role: "editMenu" },
-    { role: "viewMenu" },
+    viewMenu(),
     { role: "windowMenu" },
   ]));
 }
@@ -314,7 +354,7 @@ if (!app.requestSingleInstanceLock()) {
     );
   });
   app.whenReady().then(() => {
-    if (!WINDOWS && app.isPackaged) setMenu();
+    setMenu();
     return start();
   });
   app.on("window-all-closed", () => app.quit());
