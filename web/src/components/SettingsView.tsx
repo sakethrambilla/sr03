@@ -362,6 +362,66 @@ function SuggestionsSetting({ onError }: { onError: (message: string) => void })
   );
 }
 
+const AUTO_ARCHIVE_DAYS = ["1", "2", "7", "14"];
+
+function AutoArchiveSetting({ onError }: { onError: (message: string) => void }) {
+  const [enabled, setEnabled] = useState(false);
+  const [days, setDays] = useState("7");
+
+  useEffect(() => {
+    void api
+      .settings()
+      .then((body) => {
+        setEnabled(body.settings["auto-archive"] === "true");
+        const stored = body.settings["auto-archive-days"];
+        if (stored && AUTO_ARCHIVE_DAYS.includes(stored)) setDays(stored);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  const save = (key: string, value: string) =>
+    void api.saveSetting(key, value).catch((cause: Error) => onError(cause.message));
+
+  return (
+    <section className="rounded-lg border border-border/70 bg-card/40 px-4 py-3">
+      <div className="flex items-center gap-4">
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] text-foreground">Auto-archive idle sessions</p>
+          <p className="text-[11.5px] text-faint">
+            Archives sessions with no new messages for the chosen time. Running sessions are never touched.
+          </p>
+        </div>
+        <Select
+          value={days}
+          disabled={!enabled}
+          onValueChange={(next) => {
+            setDays(next);
+            save("auto-archive-days", next);
+          }}
+        >
+          <SelectTrigger className="w-36 shrink-0">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {AUTO_ARCHIVE_DAYS.map((value) => (
+              <SelectItem key={value} value={value}>
+                After {value} {value === "1" ? "day" : "days"}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Switch
+          checked={enabled}
+          onCheckedChange={(next) => {
+            setEnabled(next);
+            save("auto-archive", String(next));
+          }}
+        />
+      </div>
+    </section>
+  );
+}
+
 function WallpaperSlider({ label, hint, value, min, max, step, unit, onChange }: {
   label: string;
   hint: string;
@@ -857,6 +917,7 @@ export function SettingsView() {
                   </div>
                 </section>
                 <SuggestionsSetting onError={setError} />
+                <AutoArchiveSetting onError={setError} />
                 {error ? <p className="text-[12px] text-destructive">{error}</p> : null}
                 {providers.length === 0 && !error ? (
                   <p className="text-[12px] text-faint">Checking…</p>
