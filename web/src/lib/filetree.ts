@@ -9,7 +9,7 @@ export interface TreeRow {
   depth: number;
 }
 
-export const INDENT = 12;
+export const INDENT = 8;
 export const ROW_HEIGHT = 22;
 export const OVERSCAN = 20;
 export const REFRESH_CONCURRENCY = 16;

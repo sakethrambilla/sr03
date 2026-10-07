@@ -230,7 +230,6 @@ const Row = memo(function Row({
   onRename: (entry: TreeEntry, name: string) => void;
   onCancelRename: () => void;
 }) {
-  const [hovered, setHovered] = useState(false);
   const decoration = status ? DECORATION[status] : null;
   const tint = ignored
     ? "text-git-ignored"
@@ -242,8 +241,6 @@ const Row = memo(function Row({
 
   return (
         <div
-          onMouseEnter={() => setHovered(true)}
-          onMouseLeave={() => setHovered(false)}
           onContextMenu={(event) => {
             // right-clicking mid-rename would blur the input and cancel the rename
             if (renaming) return;
@@ -251,18 +248,20 @@ const Row = memo(function Row({
             onOpenMenu(entry, event.clientX, event.clientY);
           }}
           className={cn(
-            "group/row flex h-[22px] w-full items-stretch transition hover:bg-accent/50",
+            "group/row flex h-[22px] w-full items-stretch hover:bg-accent/50",
             selected && "bg-accent",
           )}
         >
           <Guides depth={depth} />
           {renaming ? (
             <span className="flex min-w-0 flex-1 items-center gap-1 pr-2 pl-1">
-              <span className="size-3 shrink-0" />
+              <span className="size-4 shrink-0" />
               {entry.isDir ? (
-                <FolderIcon className="size-3.5 text-faint" />
+                <FolderIcon className="size-4 text-faint" />
               ) : (
-                <FileIcon name={entry.name} />
+                <span className="grid size-4 shrink-0 place-items-center [&>svg]:size-4">
+                  <FileIcon name={entry.name} />
+                </span>
               )}
               <NameInput
                 initial={entry.name}
@@ -277,20 +276,22 @@ const Row = memo(function Row({
               title={entry.path}
               className="flex min-w-0 flex-1 items-center gap-1 pl-1 text-left"
             >
-              <span className="grid size-3 shrink-0 place-items-center text-faint">
+              <span className="grid size-4 shrink-0 place-items-center text-faint">
                 {entry.isDir ? (
-                  <ChevronIcon className={cn("size-3 transition-transform", expanded ? "" : "-rotate-90")} />
+                  <ChevronIcon className={cn("size-4", expanded ? "" : "-rotate-90")} />
                 ) : null}
               </span>
               {entry.isDir ? (
                 // the spinner takes the folder icon's slot, so the chevron stays turned
                 isLoading ? (
-                  <SpinnerIcon className="size-3.5 animate-spin text-faint" />
+                  <SpinnerIcon className="size-4 animate-spin text-faint" />
                 ) : (
-                  <FolderIcon className={cn("size-3.5", ignored ? "text-git-ignored" : "text-faint")} />
+                  <FolderIcon className={cn("size-4", ignored ? "text-git-ignored" : "text-faint")} />
                 )
               ) : (
-                <FileIcon name={entry.name} muted={ignored} />
+                <span className="grid size-4 shrink-0 place-items-center [&>svg]:size-4">
+                  <FileIcon name={entry.name} muted={ignored} />
+                </span>
               )}
               <span
                 className={cn(
@@ -304,8 +305,8 @@ const Row = memo(function Row({
             </button>
           )}
 
-          {!renaming && hovered && entry.isDir ? (
-            <span className="flex items-center gap-0.5 pr-1">
+          {!renaming && entry.isDir ? (
+            <span className="hidden items-center gap-0.5 pr-1 group-hover/row:flex">
               <RowAction label="New file" onClick={() => onCreateIn(entry, "file")}>
                 <NewFileIcon className="size-3" />
               </RowAction>
@@ -391,8 +392,14 @@ function NewEntryRow({
     <div className="flex h-[22px] w-full items-stretch bg-accent/40">
       <Guides depth={depth} />
       <span className="flex min-w-0 flex-1 items-center gap-1 pr-2 pl-1">
-        <span className="size-3 shrink-0" />
-        {kind === "dir" ? <FolderIcon className="size-3.5 text-faint" /> : <FileIcon name="x" />}
+        <span className="size-4 shrink-0" />
+        {kind === "dir" ? (
+          <FolderIcon className="size-4 text-faint" />
+        ) : (
+          <span className="grid size-4 shrink-0 place-items-center [&>svg]:size-4">
+            <FileIcon name="x" />
+          </span>
+        )}
         <NameInput
           initial=""
           placeholder={kind === "dir" ? "folder name" : "file name"}
@@ -547,10 +554,17 @@ export function FileTree({
     void forEachWithConcurrency(open, REFRESH_CONCURRENCY, (path) => load(path, { force: true }));
   }, [thread.id, fsTick, tick, readChanges]);
 
-  // opening straight onto the changed files is the whole point of the panel in a session; a very
-  // large change set expands nothing, and the header's count still says why
+  const autoExpandedRef = useRef(false);
   useEffect(() => {
-    if (changes.size === 0) return;
+    autoExpandedRef.current = false;
+  }, [thread.id]);
+
+  // opening straight onto the changed files is the whole point of the panel in a session, so this
+  // fires once per thread and a folder the user collapses stays collapsed; a very large change set
+  // expands nothing, and the header's count still says why
+  useEffect(() => {
+    if (changes.size === 0 || autoExpandedRef.current) return;
+    autoExpandedRef.current = true;
     const toExpand = autoExpandFor(new Set(changes.keys()));
     if (toExpand === null) return;
     setExpanded((current) => {
