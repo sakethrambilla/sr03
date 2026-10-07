@@ -1,7 +1,7 @@
 // The file panel's whole model: row projection from loaded listings plus the expansion set, the
 // server's entry order, the change-set policy behind dirty marks and auto-expand, and the guards
-// a refresh needs — a per-directory staleness token and a bounded fan-out. Pure — no React, no
-// DOM — so the panel's components only draw what this decides.
+// a refresh needs — a per-directory staleness token and a bounded fan-out — and keyboard focus
+// moves. Pure — no React, no DOM — so the panel's components only draw what this decides.
 import type { TreeEntry } from "./types.ts";
 
 export interface TreeRow {
@@ -9,7 +9,7 @@ export interface TreeRow {
   depth: number;
 }
 
-export const INDENT = 12;
+export const INDENT = 8;
 export const ROW_HEIGHT = 22;
 export const OVERSCAN = 20;
 export const REFRESH_CONCURRENCY = 16;
@@ -138,4 +138,47 @@ export function replaceEntry(
   next: TreeEntry,
 ): TreeEntry[] {
   return insertEntry(removeEntry(entries, fromPath), next);
+}
+
+export type FocusKey = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight" | "Home" | "End";
+export type FocusMove =
+  | { kind: "focus"; path: string }
+  | { kind: "expand"; path: string }
+  | { kind: "collapse"; path: string }
+  | { kind: "none" };
+
+export function moveFocus(
+  rows: readonly TreeRow[],
+  expanded: ReadonlySet<string>,
+  focused: string | null,
+  key: FocusKey,
+): FocusMove {
+  if (rows.length === 0) return { kind: "none" };
+  const at = (index: number): FocusMove => {
+    const row = rows[index];
+    return row ? { kind: "focus", path: row.entry.path } : { kind: "none" };
+  };
+  const index = focused === null ? -1 : rows.findIndex((row) => row.entry.path === focused);
+  if (index === -1) return at(0);
+  const { entry, depth } = rows[index]!;
+  switch (key) {
+    case "ArrowUp":
+      return at(index - 1);
+    case "ArrowDown":
+      return at(index + 1);
+    case "Home":
+      return at(0);
+    case "End":
+      return at(rows.length - 1);
+    case "ArrowRight":
+      if (!entry.isDir) return { kind: "none" };
+      if (!expanded.has(entry.path)) return { kind: "expand", path: entry.path };
+      return rows[index + 1]?.depth === depth + 1 ? at(index + 1) : { kind: "none" };
+    case "ArrowLeft": {
+      if (entry.isDir && expanded.has(entry.path)) return { kind: "collapse", path: entry.path };
+      const parent = parentOf(entry.path);
+      if (parent === "") return { kind: "none" };
+      return at(rows.findIndex((row) => row.entry.path === parent));
+    }
+  }
 }

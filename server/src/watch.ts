@@ -1,9 +1,11 @@
-// A recursive filesystem watch per thread, coalesced into one fs.changed on the bus. Refcounted
-// like metrics.ts's meter: it runs only while a client is looking.
+// A recursive filesystem watch per thread, plus a narrow one on git's metadata so commits and
+// checkouts refresh status, coalesced into one fs.changed on the bus. Refcounted like metrics.ts's
+// meter: it runs only while a client is looking.
 import fs from "node:fs";
 import path from "node:path";
 
 import { publish } from "./bus.ts";
+import { gitDirs } from "./git.ts";
 
 export const WATCH_TRAILING_MS = 150;
 export const WATCH_MAX_WAIT_MS = 500;
@@ -73,6 +75,14 @@ export function shouldIgnoreWatchPath(rel: string): boolean {
   return first !== undefined && WATCH_SKIP.has(first);
 }
 
+const GIT_META = /^(HEAD|index|packed-refs|ORIG_HEAD|MERGE_HEAD)(\.lock)?$/;
+
+/** Whether an event from a git-dir watch ("git") or a refs watch ("refs") should refresh status. */
+export function isGitMetaChange(dirKind: "git" | "refs", filename: string | null): boolean {
+  if (dirKind === "refs" || filename === null) return true;
+  return GIT_META.test(filename);
+}
+
 export interface WatchHandle {
   close(): void;
   on(event: "error", listener: (error: Error) => void): void;
@@ -81,15 +91,19 @@ export interface WatchHandle {
 export type WatchFactory = (
   dir: string,
   onChange: (eventType: string, filename: string | null) => void,
+  recursive?: boolean,
 ) => WatchHandle;
 
-const defaultFactory: WatchFactory = (dir, onChange) =>
-  fs.watch(dir, { recursive: true, persistent: false }, onChange);
+export type GitDirsResolver = (cwd: string) => Promise<{ gitDir: string; commonDir: string } | null>;
+
+const defaultFactory: WatchFactory = (dir, onChange, recursive = true) =>
+  fs.watch(dir, { recursive, persistent: false }, onChange);
 
 interface Entry {
   cwd: string;
   refs: number;
   handle: WatchHandle | null;
+  gitHandles: WatchHandle[];
   coalescer: Coalescer | null;
 }
 
@@ -103,10 +117,44 @@ function teardown(threadId: string): void {
   if (!entry) return;
   entries.delete(threadId);
   entry.coalescer?.dispose();
-  try {
-    entry.handle?.close();
-  } catch (error) {
-    console.error("[watch] close failed", (error as Error).message);
+  for (const handle of [entry.handle, ...entry.gitHandles]) {
+    try {
+      handle?.close();
+    } catch (error) {
+      console.error("[watch] close failed", (error as Error).message);
+    }
+  }
+}
+
+function logOnce(threadId: string, message: string): void {
+  if (logged.has(threadId)) return;
+  logged.add(threadId);
+  console.error(message);
+}
+
+function watchGitDirs(
+  threadId: string,
+  entry: Entry,
+  factory: WatchFactory,
+  dirs: { gitDir: string; commonDir: string },
+): void {
+  const targets: Array<[string, "git" | "refs", boolean]> = [[dirs.gitDir, "git", false]];
+  if (dirs.commonDir !== dirs.gitDir) targets.push([dirs.commonDir, "git", false]);
+  targets.push([path.join(dirs.commonDir, "refs"), "refs", true]);
+  for (const [dir, kind, recursive] of targets) {
+    try {
+      const handle = factory(
+        dir,
+        (_eventType, filename) => {
+          if (isGitMetaChange(kind, filename)) entry.coalescer?.signal();
+        },
+        recursive,
+      );
+      handle.on("error", (error: Error) => logOnce(threadId, `[watch] git watch error ${dir} ${error.message}`));
+      entry.gitHandles.push(handle);
+    } catch (error) {
+      logOnce(threadId, `[watch] cannot watch ${dir} ${(error as Error).message}`);
+    }
   }
 }
 
@@ -132,6 +180,7 @@ export function watchThread(
   cwd: string,
   factory?: WatchFactory,
   options?: CoalescerOptions,
+  resolveGitDirs?: GitDirsResolver,
 ): () => void {
   const existing = entries.get(threadId);
   if (existing) {
@@ -139,7 +188,13 @@ export function watchThread(
     return releaseFor(threadId, existing);
   }
 
-  const entry: Entry = { cwd: path.resolve(cwd), refs: 1, handle: null, coalescer: null };
+  const entry: Entry = {
+    cwd: path.resolve(cwd),
+    refs: 1,
+    handle: null,
+    gitHandles: [],
+    coalescer: null,
+  };
   entry.coalescer = createCoalescer(() => publish({ type: "fs.changed", threadId }), options);
 
   try {
@@ -165,6 +220,12 @@ export function watchThread(
   });
 
   entries.set(threadId, entry);
+  void (resolveGitDirs ?? gitDirs)(cwd)
+    .then((dirs) => {
+      if (!dirs || entries.get(threadId) !== entry) return;
+      watchGitDirs(threadId, entry, factory ?? defaultFactory, dirs);
+    })
+    .catch((error: Error) => logOnce(threadId, `[watch] cannot resolve git dirs ${cwd} ${error.message}`));
   return releaseFor(threadId, entry);
 }
 

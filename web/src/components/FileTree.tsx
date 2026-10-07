@@ -2,7 +2,7 @@
 // actions — open, create, rename, trash, reveal in Finder. Re-reads itself when a turn writes
 // to disk, which the server's filesystem watcher signals through fsVersionByThread.
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ComponentType, ReactNode } from "react";
+import type { ComponentType, KeyboardEvent, ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { api } from "../lib/api.ts";
@@ -16,13 +16,14 @@ import {
   dirtyAncestors,
   forEachWithConcurrency,
   insertEntry,
+  moveFocus,
   parentOf,
   projectRows,
   removeEntry,
   replaceEntry,
   toggleSubtree,
 } from "../lib/filetree.ts";
-import type { DirLoadTracker, TreeRow } from "../lib/filetree.ts";
+import type { DirLoadTracker, FocusKey, TreeRow } from "../lib/filetree.ts";
 import type { ChangedFile, Thread, TreeEntry } from "../lib/types.ts";
 import { useStore } from "../store.ts";
 import { Button } from "@/components/ui/button";
@@ -59,6 +60,7 @@ type Status = ChangedFile["status"];
 
 // stable empty identity for the two loading sets, so an idle render never produces a new set
 const EMPTY_DIRS: ReadonlySet<string> = new Set();
+const FOCUS_KEYS: ReadonlySet<string> = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"]);
 
 // how long a read may take before its row shows a spinner
 const SPINNER_DELAY_MS = 150;
@@ -68,7 +70,7 @@ const IGNORE_DEBOUNCE_MS = 150;
 
 // floor on the change-set read, which shells out to `git status`; the watcher can signal twice this
 // often, and the directory listings still refresh at the full signal rate
-const CHANGES_MIN_INTERVAL_MS = 1000;
+const CHANGES_MIN_INTERVAL_MS = 500;
 
 function withPath(set: ReadonlySet<string>, path: string): ReadonlySet<string> {
   if (set.has(path)) return set;
@@ -203,6 +205,7 @@ const Row = memo(function Row({
   ignored,
   expanded,
   selected,
+  focused,
   isLoading,
   onActivate,
   onReload,
@@ -220,6 +223,7 @@ const Row = memo(function Row({
   ignored: boolean;
   expanded: boolean;
   selected: boolean;
+  focused: boolean;
   isLoading: boolean;
   onActivate: (entry: TreeEntry) => void;
   onReload: (entry: TreeEntry) => void;
@@ -230,7 +234,6 @@ const Row = memo(function Row({
   onRename: (entry: TreeEntry, name: string) => void;
   onCancelRename: () => void;
 }) {
-  const [hovered, setHovered] = useState(false);
   const decoration = status ? DECORATION[status] : null;
   const tint = ignored
     ? "text-git-ignored"
@@ -242,8 +245,9 @@ const Row = memo(function Row({
 
   return (
         <div
-          onMouseEnter={() => setHovered(true)}
-          onMouseLeave={() => setHovered(false)}
+          role="treeitem"
+          aria-selected={selected}
+          aria-expanded={entry.isDir ? expanded : undefined}
           onContextMenu={(event) => {
             // right-clicking mid-rename would blur the input and cancel the rename
             if (renaming) return;
@@ -251,18 +255,21 @@ const Row = memo(function Row({
             onOpenMenu(entry, event.clientX, event.clientY);
           }}
           className={cn(
-            "group/row flex h-[22px] w-full items-stretch transition hover:bg-accent/50",
+            "group/row flex h-[22px] w-full items-stretch hover:bg-accent/50",
             selected && "bg-accent",
+            focused && "group-focus-within/tree:ring-1 group-focus-within/tree:ring-inset group-focus-within/tree:ring-ring",
           )}
         >
           <Guides depth={depth} />
           {renaming ? (
             <span className="flex min-w-0 flex-1 items-center gap-1 pr-2 pl-1">
-              <span className="size-3 shrink-0" />
+              <span className="size-4 shrink-0" />
               {entry.isDir ? (
-                <FolderIcon className="size-3.5 text-faint" />
+                <FolderIcon className="size-4 text-faint" />
               ) : (
-                <FileIcon name={entry.name} />
+                <span className="grid size-4 shrink-0 place-items-center [&>svg]:size-4">
+                  <FileIcon name={entry.name} />
+                </span>
               )}
               <NameInput
                 initial={entry.name}
@@ -277,20 +284,22 @@ const Row = memo(function Row({
               title={entry.path}
               className="flex min-w-0 flex-1 items-center gap-1 pl-1 text-left"
             >
-              <span className="grid size-3 shrink-0 place-items-center text-faint">
+              <span className="grid size-4 shrink-0 place-items-center text-faint">
                 {entry.isDir ? (
-                  <ChevronIcon className={cn("size-3 transition-transform", expanded ? "" : "-rotate-90")} />
+                  <ChevronIcon className={cn("size-4", expanded ? "" : "-rotate-90")} />
                 ) : null}
               </span>
               {entry.isDir ? (
                 // the spinner takes the folder icon's slot, so the chevron stays turned
                 isLoading ? (
-                  <SpinnerIcon className="size-3.5 animate-spin text-faint" />
+                  <SpinnerIcon className="size-4 animate-spin text-faint" />
                 ) : (
-                  <FolderIcon className={cn("size-3.5", ignored ? "text-git-ignored" : "text-faint")} />
+                  <FolderIcon className={cn("size-4", ignored ? "text-git-ignored" : "text-faint")} />
                 )
               ) : (
-                <FileIcon name={entry.name} muted={ignored} />
+                <span className="grid size-4 shrink-0 place-items-center [&>svg]:size-4">
+                  <FileIcon name={entry.name} muted={ignored} />
+                </span>
               )}
               <span
                 className={cn(
@@ -304,8 +313,8 @@ const Row = memo(function Row({
             </button>
           )}
 
-          {!renaming && hovered && entry.isDir ? (
-            <span className="flex items-center gap-0.5 pr-1">
+          {!renaming && entry.isDir ? (
+            <span className="hidden items-center gap-0.5 pr-1 group-hover/row:flex">
               <RowAction label="New file" onClick={() => onCreateIn(entry, "file")}>
                 <NewFileIcon className="size-3" />
               </RowAction>
@@ -391,8 +400,14 @@ function NewEntryRow({
     <div className="flex h-[22px] w-full items-stretch bg-accent/40">
       <Guides depth={depth} />
       <span className="flex min-w-0 flex-1 items-center gap-1 pr-2 pl-1">
-        <span className="size-3 shrink-0" />
-        {kind === "dir" ? <FolderIcon className="size-3.5 text-faint" /> : <FileIcon name="x" />}
+        <span className="size-4 shrink-0" />
+        {kind === "dir" ? (
+          <FolderIcon className="size-4 text-faint" />
+        ) : (
+          <span className="grid size-4 shrink-0 place-items-center [&>svg]:size-4">
+            <FileIcon name="x" />
+          </span>
+        )}
         <NameInput
           initial=""
           placeholder={kind === "dir" ? "folder name" : "file name"}
@@ -435,6 +450,7 @@ export function FileTree({
   const [tick, setTick] = useState(0);
   const [creating, setCreating] = useState<{ parent: string; kind: "file" | "dir" } | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
+  const [focusedPath, setFocusedPath] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<TreeEntry | null>(null);
   const [busy, setBusy] = useState(false);
   const [menu, setMenu] = useState<{ entry: TreeEntry; x: number; y: number } | null>(null);
@@ -547,10 +563,17 @@ export function FileTree({
     void forEachWithConcurrency(open, REFRESH_CONCURRENCY, (path) => load(path, { force: true }));
   }, [thread.id, fsTick, tick, readChanges]);
 
-  // opening straight onto the changed files is the whole point of the panel in a session; a very
-  // large change set expands nothing, and the header's count still says why
+  const autoExpandedRef = useRef(false);
   useEffect(() => {
-    if (changes.size === 0) return;
+    autoExpandedRef.current = false;
+  }, [thread.id]);
+
+  // opening straight onto the changed files is the whole point of the panel in a session, so this
+  // fires once per thread and a folder the user collapses stays collapsed; a very large change set
+  // expands nothing, and the header's count still says why
+  useEffect(() => {
+    if (changes.size === 0 || autoExpandedRef.current) return;
+    autoExpandedRef.current = true;
     const toExpand = autoExpandFor(new Set(changes.keys()));
     if (toExpand === null) return;
     setExpanded((current) => {
@@ -754,6 +777,40 @@ export function FileTree({
     [commitRename],
   );
   const onCancelRename = useCallback(() => setRenaming(null), []);
+  const onActivateEntry = useCallback(
+    (entry: TreeEntry) => {
+      setFocusedPath(entry.path);
+      toggle(entry);
+    },
+    [toggle],
+  );
+  const onTreeKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (renaming || creating) return;
+    if (event.key === "Enter") {
+      const row = rows.find((candidate) => candidate.entry.path === focusedPath);
+      if (!row) return;
+      // also stops a focused row button from turning Enter into a second click
+      event.preventDefault();
+      toggle(row.entry);
+      return;
+    }
+    if (!FOCUS_KEYS.has(event.key)) return;
+    event.preventDefault();
+    const move = moveFocus(rows, expanded, focusedPath, event.key as FocusKey);
+    if (move.kind === "focus") {
+      setFocusedPath(move.path);
+      const index = rows.findIndex((row) => row.entry.path === move.path);
+      virtualizer.scrollToIndex(index, { align: "auto" });
+    } else if (move.kind === "expand") {
+      setExpanded((current) => new Set(current).add(move.path));
+    } else if (move.kind === "collapse") {
+      setExpanded((current) => {
+        const next = new Set(current);
+        next.delete(move.path);
+        return next;
+      });
+    }
+  };
   const onOpenMenu = useCallback(
     (entry: TreeEntry, x: number, y: number) => setMenu({ entry, x, y }),
     [],
@@ -830,7 +887,13 @@ export function FileTree({
         ) : null}
       </header>
 
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto py-1">
+      <div
+        ref={scrollRef}
+        tabIndex={0}
+        role="tree"
+        onKeyDown={onTreeKeyDown}
+        className="group/tree min-h-0 flex-1 overflow-auto py-1 outline-none"
+      >
         <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
           {virtualizer.getVirtualItems().map((item) => {
             const row = rowAt(item.index);
@@ -857,8 +920,9 @@ export function FileTree({
                     ignored={ignoredSet.has(row.entry.path)}
                     expanded={row.entry.isDir && expanded.has(row.entry.path)}
                     selected={row.entry.path === openPath}
+                    focused={row.entry.path === focusedPath}
                     isLoading={row.entry.isDir && slowDirs.has(row.entry.path)}
-                    onActivate={toggle}
+                    onActivate={onActivateEntry}
                     onReload={onReloadEntry}
                     onToggleSubtree={onToggleSubtreeEntry}
                     onCreateIn={onCreateIn}
