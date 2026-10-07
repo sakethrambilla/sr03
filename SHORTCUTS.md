@@ -16,6 +16,14 @@ are defaults: change, unbind or reset them under **Settings → Shortcuts**.
 | `⌘⇧X` | Archive every idle session in the open session's folder, or in the sidebar's picked folder | `web/src/App.tsx`, `web/src/lib/shortcuts.ts` |
 | `Esc` | Close settings | `web/src/components/SettingsView.tsx` |
 
+## Desktop app
+
+| Shortcut | Action | Code |
+| --- | --- | --- |
+| `⌘=` | Zoom in to the next preset step, with a badge showing the new percentage | `desktop/main.js` |
+| `⌘-` | Zoom out to the previous preset step | `desktop/main.js` |
+| `⌘0` | Reset zoom to actual size | `desktop/main.js` |
+
 ## Session view
 
 Active while a session is open.

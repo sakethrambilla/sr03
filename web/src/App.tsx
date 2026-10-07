@@ -11,6 +11,7 @@ import { ChatView } from "./components/ChatView.tsx";
 import { DraftView } from "./components/DraftView.tsx";
 import { Sidebar, SidebarToggle } from "./components/Sidebar.tsx";
 import { SettingsView } from "./components/SettingsView.tsx";
+import { ZoomBadge } from "./components/ZoomBadge.tsx";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -99,6 +100,7 @@ export function App() {
       )}
         <Toaster position="bottom-center" />
       </div>
+      <ZoomBadge />
     </TooltipProvider>
   );
 }
