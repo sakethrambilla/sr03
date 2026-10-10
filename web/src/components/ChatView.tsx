@@ -423,7 +423,6 @@ export function ChatView({ thread }: { thread: Thread }) {
 
   useEffect(() => {
     let cancelled = false;
-    setBranch(thread.branch);
     api
       .threadGit(thread.id)
       .then((info) => {
@@ -433,7 +432,7 @@ export function ChatView({ thread }: { thread: Thread }) {
     return () => {
       cancelled = true;
     };
-  }, [thread.id, thread.branch, fsTick]);
+  }, [thread.id, fsTick]);
 
   // the panel owns the terminals, so it is left to decide which one a command lands in
   const runCommand = useCallback(
