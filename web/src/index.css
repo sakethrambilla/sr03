@@ -97,6 +97,7 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-faint: var(--faint);
+  --color-sidebar: color-mix(in oklch, var(--background), black var(--sidebar-shade));
   --color-status-done: var(--status-done);
   --color-git-added: var(--git-added);
   --color-git-modified: var(--git-modified);
@@ -137,6 +138,8 @@
    the light half; git and syntax colors are VS Code's own Light+ defaults, --code-inline is
    proposed (see this task's file), --file-* are deliberately identical to the dark half */
 :root {
+  /* side panels sit a shade below the main pane in every theme, as in Claude desktop */
+  --sidebar-shade: 4%;
   --status-done: oklch(0.82 0.11 85);
   --git-added: #587c0c;
   --git-modified: #895503;
@@ -163,6 +166,7 @@
 /* VS Code's own gitDecoration.* and token.* Dark+ defaults, so the file tree and code blocks
    read the way the editor does */
 :root.dark {
+  --sidebar-shade: 22%;
   --git-added: #81b88b;
   --git-modified: #e2c08d;
   --git-deleted: #c74e39;
@@ -1117,6 +1121,9 @@ html.wallpaper [data-surface]::before {
   pointer-events: none;
   background: color-mix(in oklch, var(--card) var(--panel-opacity), transparent);
   backdrop-filter: var(--panel-backdrop);
+}
+html.wallpaper [data-surface="sidebar"]::before {
+  background: color-mix(in oklch, var(--color-sidebar) var(--panel-opacity), transparent);
 }
 html.wallpaper [data-surface="background"]::before {
   background: color-mix(in oklch, var(--background) var(--panel-opacity), transparent);
