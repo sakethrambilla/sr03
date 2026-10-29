@@ -54,6 +54,7 @@ web/src      Vite + React 19 + Tailwind v4 + shadcn/ui + zustand
   components/EditorGroups.tsx  the editor grid: per-group tab strips, sashes, drop overlay
   components/SubagentView.tsx  one subagent's tab body — a transcript, or a card naming the
                  provider for the ones whose protocol publishes no child stream
+  components/PdfView.tsx  a pdf file tab — pdf.js pages on canvases
 desktop      Electron shell — a window over the ordinary server, nothing app-specific in it
   main.js    resolves the login shell's PATH, spawns the server, opens the window
   payload.mjs collects web/dist + a symlink-free server copy into desktop/payload
@@ -80,9 +81,9 @@ the worktree still ships without those paths.
 - Server side: no frameworks, no ORM, no Effect. Node built-ins and the Agent SDK are the
   dependency budget; reuse what's here before adding anything. The terminal panel is one
   exception — `node-pty` on the server and `@xterm/xterm` on the web, since a PTY and an ANSI
-  renderer can't be built from built-ins. The mermaid and excalidraw file previews are the other —
-  `mermaid` and `@excalidraw/excalidraw` on the web, both dynamically imported so opening neither
-  kind of file costs anything on the rest of the app. The appearance panel's fonts are the third —
+  renderer can't be built from built-ins. The mermaid, excalidraw and pdf file previews are the other —
+  `mermaid`, `@excalidraw/excalidraw` and `pdfjs-dist` on the web, all dynamically imported so opening
+  none of those kinds of file costs anything on the rest of the app. The appearance panel's fonts are the third —
   the `@fontsource*` packages listed in `web/src/fonts.ts`, self-hosted so the picker offers the
   same faces on every machine and inside the packaged app. The browser fetches only the face in
   use, but they do land in the installer.

@@ -6,7 +6,7 @@ import test, { after } from "node:test";
 
 const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sr03-fsbrowse-"));
 process.env.SR03_DATA_DIR = dir;
-const { linuxPickerCommands, locateEntry, statWorkspaceVideo, videoRange, windowsPickerCommand } = await import("./fsbrowse.ts");
+const { linuxPickerCommands, locateEntry, statWorkspacePdf, statWorkspaceVideo, videoRange, windowsPickerCommand } = await import("./fsbrowse.ts");
 
 after(() => fs.rm(dir, { recursive: true, force: true }));
 
@@ -65,4 +65,16 @@ test("locate maps a checkout path into the worktree and names a missing path", a
   assert.deepEqual(await locateEntry(wt, path.join(main, "ignored.txt"), main), { path: "ignored.txt" });
   assert.deepEqual(await locateEntry(wt, "nested/x.txt", main), { path: "nested/x.txt" });
   await assert.rejects(locateEntry(wt, "nope.txt", main), { code: "ENOENT", path: path.join(wt, "nope.txt") });
+});
+
+test("workspace pdf stat checks type and containment", async () => {
+  const root = await fs.mkdtemp(path.join(dir, "pdf-"));
+  await fs.writeFile(path.join(root, "a.pdf"), Buffer.alloc(10));
+  await fs.writeFile(path.join(root, "notes.txt"), "hi");
+  const pdf = await statWorkspacePdf(root, "a.pdf");
+  assert.equal(pdf.size, 10);
+  assert.equal(pdf.type, "application/pdf");
+  assert.match(pdf.etag, /^"10-[\d.]+"$/);
+  await assert.rejects(statWorkspacePdf(root, "notes.txt"), /not a pdf/);
+  await assert.rejects(statWorkspacePdf(root, "../x.pdf"), /outside the session folder/);
 });
