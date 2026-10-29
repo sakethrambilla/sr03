@@ -61,6 +61,7 @@ test("workspace pdf stat checks type and containment", async () => {
   const pdf = await statWorkspacePdf(root, "a.pdf");
   assert.equal(pdf.size, 10);
   assert.equal(pdf.type, "application/pdf");
+  assert.match(pdf.etag, /^"10-[\d.]+"$/);
   await assert.rejects(statWorkspacePdf(root, "notes.txt"), /not a pdf/);
   await assert.rejects(statWorkspacePdf(root, "../x.pdf"), /outside the session folder/);
 });

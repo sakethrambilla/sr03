@@ -218,11 +218,16 @@ type Handler = (context: {
 }) => Promise<unknown> | unknown;
 
 async function streamRanged(
-  file: { path: string; size: number; type: string },
+  file: { path: string; size: number; type: string; etag?: string },
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
-  const base = { "content-type": file.type, "accept-ranges": "bytes", "cache-control": "no-store" };
+  const base = {
+    "content-type": file.type,
+    "accept-ranges": "bytes",
+    "cache-control": "no-store",
+    ...(file.etag ? { etag: file.etag } : {}),
+  };
   if (file.size === 0) {
     response.writeHead(200, { ...base, "content-length": 0 });
     response.end();

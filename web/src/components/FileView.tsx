@@ -573,7 +573,7 @@ export const FileView = memo(function FileView({
       ) : video ? (
         <VideoView threadId={thread.id} path={path} showing={showing} version={reloads} />
       ) : pdf ? (
-        <PdfView threadId={thread.id} path={path} version={`${fsTick}-${reloads}`} onMissing={onMissing} />
+        <PdfView threadId={thread.id} path={path} fsTick={fsTick} reloads={reloads} onMissing={onMissing} />
       ) : picture ? (
         <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-card/40 p-6">
           <img

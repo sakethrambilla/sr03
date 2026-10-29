@@ -26,18 +26,39 @@ type Size = { width: number; height: number };
 export function PdfView({
   threadId,
   path,
-  version,
+  fsTick,
+  reloads,
   onMissing,
 }: {
   threadId: string;
   path: string;
-  version: string;
+  fsTick: number;
+  reloads: number;
   onMissing: (path: string) => void;
 }) {
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // the file's etag (size + mtime); fsTick fires for any change in the thread, so a reload waits on this
+  const [stamp, setStamp] = useState<string | null>(null);
+  const src = `/api/threads/${threadId}/pdf?path=${encodeURIComponent(path)}`;
 
   useEffect(() => {
+    let cancelled = false;
+    fetch(src, { headers: { range: "bytes=0-0" } })
+      .then((response) => {
+        if (cancelled) return;
+        if (response.status === 404) return onMissing(path);
+        void response.body?.cancel();
+        setStamp(response.headers.get("etag") ?? String(fsTick));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [src, fsTick, onMissing, path]);
+
+  useEffect(() => {
+    if (stamp === null) return;
     let cancelled = false;
     let task: { promise: Promise<PDFDocumentProxy>; destroy: () => Promise<void> } | undefined;
     let loaded = false;
@@ -45,7 +66,7 @@ export function PdfView({
       .then((pdfjs) => {
         if (cancelled) return;
         task = pdfjs.getDocument({
-          url: `/api/threads/${threadId}/pdf?path=${encodeURIComponent(path)}&v=${version}`,
+          url: `${src}&v=${encodeURIComponent(`${stamp}-${reloads}`)}`,
         });
         return task.promise.then((next) => {
           loaded = true;
@@ -71,7 +92,7 @@ export function PdfView({
       // a resolved document belongs to the [doc] effect, which destroys it once its replacement lands
       if (!loaded) void task?.destroy();
     };
-  }, [threadId, path, version, onMissing]);
+  }, [src, stamp, reloads, onMissing, path]);
 
   useEffect(() => () => void doc?.destroy(), [doc]);
 

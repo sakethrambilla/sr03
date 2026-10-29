@@ -253,12 +253,15 @@ export async function statWorkspaceVideo(
   return { path: target, size: stats.size, type };
 }
 
-export async function statWorkspacePdf(root: string, rel: string): Promise<{ path: string; size: number; type: string }> {
+export async function statWorkspacePdf(
+  root: string,
+  rel: string,
+): Promise<{ path: string; size: number; type: string; etag: string }> {
   const target = safeJoin(root, rel);
   if (path.extname(target).toLowerCase() !== ".pdf") throw new Error("That path is not a pdf");
   const stats = await fs.stat(target);
   if (!stats.isFile()) throw new Error("That path is not a file");
-  return { path: target, size: stats.size, type: "application/pdf" };
+  return { path: target, size: stats.size, type: "application/pdf", etag: `"${stats.size}-${stats.mtimeMs}"` };
 }
 
 // null means serve the whole file; multi-range requests get the whole file too
