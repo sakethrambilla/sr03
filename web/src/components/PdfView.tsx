@@ -40,6 +40,7 @@ export function PdfView({
   useEffect(() => {
     let cancelled = false;
     let task: { promise: Promise<PDFDocumentProxy>; destroy: () => Promise<void> } | undefined;
+    let loaded = false;
     loadPdfjs()
       .then((pdfjs) => {
         if (cancelled) return;
@@ -47,7 +48,8 @@ export function PdfView({
           url: `/api/threads/${threadId}/pdf?path=${encodeURIComponent(path)}&v=${version}`,
         });
         return task.promise.then((next) => {
-          if (cancelled) return;
+          loaded = true;
+          if (cancelled) return void next.destroy();
           setDoc(next);
           setError(null);
         });
@@ -66,7 +68,8 @@ export function PdfView({
       });
     return () => {
       cancelled = true;
-      void task?.destroy();
+      // a resolved document belongs to the [doc] effect, which destroys it once its replacement lands
+      if (!loaded) void task?.destroy();
     };
   }, [threadId, path, version, onMissing]);
 
@@ -76,6 +79,10 @@ export function PdfView({
   const [base, setBase] = useState<Size | null>(null);
   const [scale, setScale] = useState(1);
   const [current, setCurrent] = useState(1);
+  const lastPage = useRef(1);
+  lastPage.current = current;
+  const fitted = useRef(false);
+  const shown = useRef<PDFDocumentProxy | null>(null);
 
   const fitWidth = (size: Size | null = base) => {
     if (!size || !scroller) return;
@@ -83,8 +90,6 @@ export function PdfView({
   };
 
   useEffect(() => {
-    setBase(null);
-    setCurrent(1);
     if (!doc) return;
     let cancelled = false;
     doc
@@ -101,8 +106,19 @@ export function PdfView({
   }, [doc]);
 
   useEffect(() => {
-    if (base && scroller) fitWidth(base);
+    if (!base || !scroller || fitted.current) return;
+    fitted.current = true;
+    fitWidth(base);
   }, [base, scroller]);
+
+  useEffect(() => {
+    if (!doc || !scroller || !base) return;
+    const previous = shown.current;
+    shown.current = doc;
+    if (!previous || previous === doc) return;
+    const page = Math.min(lastPage.current, doc.numPages);
+    scroller.querySelector(`[data-page="${page}"]`)?.scrollIntoView({ block: "start" });
+  }, [doc, scroller, base]);
 
   useEffect(() => {
     if (!scroller || !base) return;
@@ -130,7 +146,7 @@ export function PdfView({
       {doc && base && !error ? (
         <div className="flex h-8 shrink-0 items-center gap-1 border-b border-border px-3">
           <span className="font-mono text-[11px] text-muted-foreground">
-            {current} / {doc.numPages}
+            {Math.min(current, doc.numPages)} / {doc.numPages}
           </span>
           <div className="flex-1" />
           <Button
