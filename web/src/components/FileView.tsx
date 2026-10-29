@@ -1,6 +1,6 @@
 // One open file tab: the highlighted listing with its diff markers in the gutter, an editable
 // textarea over it, cmd-click navigation to whatever an import or a symbol resolves to, and a
-// preview for markdown, mermaid, excalidraw and html, and a player for video. A csv, tsv or xlsx hands off to TableView instead.
+// preview for markdown, mermaid, excalidraw and html, and a player for video and pdf. A csv, tsv or xlsx hands off to TableView instead.
 import { Fragment, memo, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { api } from "../lib/api.ts";
@@ -10,6 +10,7 @@ import { matchesStroke, resolveBindings } from "../lib/shortcuts.ts";
 import { useShortcut } from "../lib/useShortcut.ts";
 import { useStore } from "../store.ts";
 import { ExcalidrawView } from "./ExcalidrawView.tsx";
+import { PdfView } from "./PdfView.tsx";
 import { VideoView } from "./VideoView.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { Mermaid } from "./Mermaid.tsx";
@@ -41,6 +42,7 @@ const DELIMITED = /\.(csv|tsv)$/i;
 // binary, so there is no raw mode worth flipping back to — these open straight into the grid
 const SPREADSHEET = /\.(xlsx|xlsm)$/i;
 const IMAGE = /\.(png|jpe?g|gif|webp|bmp|ico|avif)$/i;
+const PDF = /\.pdf$/i;
 const VIDEO = /\.(mp4|m4v|webm|mov|mkv|ogv|avi|wmv|flv)$/i;
 const SVG = /\.svg$/i;
 const HTML = /\.(html?|xhtml)$/i;
@@ -269,6 +271,7 @@ export const FileView = memo(function FileView({
   // a raster image has no source worth showing, so it never leaves the picture
   const raster = IMAGE.test(path);
   const video = VIDEO.test(path);
+  const pdf = PDF.test(path);
   const diagram = MERMAID.test(path);
   const excalidraw = EXCALIDRAW.test(path);
   // markdown or mermaid previewing renders prose/a diagram instead of the textarea — no surface
@@ -292,7 +295,7 @@ export const FileView = memo(function FileView({
             : "Preview markdown";
 
   useEffect(() => {
-    if (video) return;
+    if (video || pdf) return;
     let cancelled = false;
     api
       .file(thread.id, path)
@@ -322,7 +325,7 @@ export const FileView = memo(function FileView({
     return () => {
       cancelled = true;
     };
-  }, [thread.id, path, fsTick, reloads, onMissing, video]);
+  }, [thread.id, path, fsTick, reloads, onMissing, video, pdf]);
 
   useEffect(() => onDirtyChange(path, dirty), [path, dirty, onDirtyChange]);
 
@@ -504,7 +507,7 @@ export const FileView = memo(function FileView({
           <span className="shrink-0 font-mono text-[10.5px] text-git-modified">truncated</span>
         ) : null}
         <div className="flex-1" />
-        {html && preview ? (
+        {(html && preview) || pdf ? (
           <Button
             variant="ghost"
             size="icon"
@@ -569,6 +572,8 @@ export const FileView = memo(function FileView({
         </div>
       ) : video ? (
         <VideoView threadId={thread.id} path={path} showing={showing} version={reloads} />
+      ) : pdf ? (
+        <PdfView threadId={thread.id} path={path} version={`${fsTick}-${reloads}`} onMissing={onMissing} />
       ) : picture ? (
         <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-card/40 p-6">
           <img
