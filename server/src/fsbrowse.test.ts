@@ -6,7 +6,7 @@ import test, { after } from "node:test";
 
 const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sr03-fsbrowse-"));
 process.env.SR03_DATA_DIR = dir;
-const { linuxPickerCommands, statWorkspaceVideo, videoRange, windowsPickerCommand } = await import("./fsbrowse.ts");
+const { linuxPickerCommands, statWorkspacePdf, statWorkspaceVideo, videoRange, windowsPickerCommand } = await import("./fsbrowse.ts");
 
 after(() => fs.rm(dir, { recursive: true, force: true }));
 
@@ -52,4 +52,16 @@ test("workspace video stat checks type and containment", async () => {
   assert.equal(video.type, "video/mp4");
   await assert.rejects(statWorkspaceVideo(root, "notes.txt"), /not a video/);
   await assert.rejects(statWorkspaceVideo(root, "../x.mp4"), /outside the session folder/);
+});
+
+test("workspace pdf stat checks type and containment", async () => {
+  const root = await fs.mkdtemp(path.join(dir, "pdf-"));
+  await fs.writeFile(path.join(root, "a.pdf"), Buffer.alloc(10));
+  await fs.writeFile(path.join(root, "notes.txt"), "hi");
+  const pdf = await statWorkspacePdf(root, "a.pdf");
+  assert.equal(pdf.size, 10);
+  assert.equal(pdf.type, "application/pdf");
+  assert.match(pdf.etag, /^"10-[\d.]+"$/);
+  await assert.rejects(statWorkspacePdf(root, "notes.txt"), /not a pdf/);
+  await assert.rejects(statWorkspacePdf(root, "../x.pdf"), /outside the session folder/);
 });

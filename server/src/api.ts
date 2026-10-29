@@ -29,6 +29,7 @@ import {
   readWorkspaceImage,
   saveUpload,
   scanWorkspaceText,
+  statWorkspacePdf,
   statWorkspaceVideo,
   trashWorkspaceEntry,
   videoRange,
@@ -215,6 +216,38 @@ type Handler = (context: {
   params: string[];
   url: URL;
 }) => Promise<unknown> | unknown;
+
+async function streamRanged(
+  file: { path: string; size: number; type: string; etag?: string },
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  const base = {
+    "content-type": file.type,
+    "accept-ranges": "bytes",
+    "cache-control": "no-store",
+    ...(file.etag ? { etag: file.etag } : {}),
+  };
+  if (file.size === 0) {
+    response.writeHead(200, { ...base, "content-length": 0 });
+    response.end();
+    return;
+  }
+  const range = videoRange(file.size, request.headers.range);
+  if (range === "unsatisfiable") {
+    response.writeHead(416, { ...base, "content-range": `bytes */${file.size}` });
+    response.end();
+    return;
+  }
+  const { start, end } = range ?? { start: 0, end: file.size - 1 };
+  response.writeHead(range ? 206 : 200, {
+    ...base,
+    "content-length": end - start + 1,
+    ...(range ? { "content-range": `bytes ${start}-${end}/${file.size}` } : {}),
+  });
+  // a viewer aborts ranges on every seek; a closed socket is not an error here
+  await pipeline(fs.createReadStream(file.path, { start, end }), response).catch(() => {});
+}
 
 const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
   {
@@ -951,26 +984,18 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
           throw new HttpError(404, error.message);
         },
       );
-      const base = { "content-type": video.type, "accept-ranges": "bytes", "cache-control": "no-store" };
-      if (video.size === 0) {
-        response.writeHead(200, { ...base, "content-length": 0 });
-        response.end();
-        return;
-      }
-      const range = videoRange(video.size, request.headers.range);
-      if (range === "unsatisfiable") {
-        response.writeHead(416, { ...base, "content-range": `bytes */${video.size}` });
-        response.end();
-        return;
-      }
-      const { start, end } = range ?? { start: 0, end: video.size - 1 };
-      response.writeHead(range ? 206 : 200, {
-        ...base,
-        "content-length": end - start + 1,
-        ...(range ? { "content-range": `bytes ${start}-${end}/${video.size}` } : {}),
+      await streamRanged(video, request, response);
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/threads\/([^/]+)\/pdf$/,
+    handler: async ({ params, url, request, response }) => {
+      const thread = requireThread(params[0]!);
+      const pdf = await statWorkspacePdf(thread.cwd, url.searchParams.get("path") ?? "").catch((error: Error) => {
+        throw new HttpError(404, error.message);
       });
-      // the player aborts ranges on every seek; a closed socket is not an error here
-      await pipeline(fs.createReadStream(video.path, { start, end }), response).catch(() => {});
+      await streamRanged(pdf, request, response);
     },
   },
   {
