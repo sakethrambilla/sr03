@@ -33,8 +33,8 @@ export const FILE_REF_SOURCE =
   "|(?:\\.{1,2}\\/)?[\\w@+-]+(?:\\.[\\w@+-]+)*\\.[A-Za-z][\\w+]*(?::\\d+){0,2}";
 
 const TRAILING = /[.,;:!?'")\]}]+$/;
-const LINE_SUFFIX = /:(\d+)(?::\d+)?$/;
-const ANCHOR = /#L(\d+)$/;
+const LINE_SUFFIX = /:(\d+)(?:[:-]\d+)?$/;
+const ANCHOR = /#L(\d+)(?:-L?\d+)?$/;
 
 const JS_FILE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|vue|svelte|astro)$/i;
 const CSS_FILE = /\.(css|scss|less)$/i;
@@ -124,7 +124,12 @@ function candidates(base: string, python: boolean): { path: string; floor: numbe
 
 // the path and line a reference spells, before anything checks the path exists
 export function splitRef(text: string): FileRef | null {
-  let ref = text.trim().replace(TRAILING, "");
+  let ref = text.trim().replace(TRAILING, "").replace(/^file:\/\//i, "");
+  try {
+    ref = decodeURIComponent(ref);
+  } catch {
+    // a stray `%` that isn't an escape is part of the name
+  }
   let line: number | undefined;
   const anchor = ANCHOR.exec(ref);
   const suffix = anchor ? null : LINE_SUFFIX.exec(ref);

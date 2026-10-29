@@ -19,7 +19,7 @@ const QUOTE = /^ {0,3}>\s?(.*)$/;
 const RULE = /^ {0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/;
 // compiled once; matchAll hands each call its own cursor, so the recursion in inline() is safe
 const INLINE = new RegExp(
-  "`([^`]+)`|\\*\\*([\\s\\S]+?)\\*\\*|~~([\\s\\S]+?)~~|\\*([^\\s*][^*\\n]*?)\\*|\\[([^\\]]*)\\]\\(([^)\\s]+)\\)|(https?:\\/\\/[^\\s<>)\\]]+)" +
+  "`([^`]+)`|\\*\\*([\\s\\S]+?)\\*\\*|~~([\\s\\S]+?)~~|\\*([^\\s*][^*\\n]*?)\\*|\\[([^\\]]*)\\]\\((?:<([^>\\n]+)>|([^)\\s]+))\\)|(https?:\\/\\/[^\\s<>)\\]]+)" +
     `|(${FILE_REF_SOURCE})`,
   "g",
 );
@@ -87,7 +87,8 @@ function PathSpan({ text }: { text: string }) {
 }
 
 function LinkSpan({ href, children }: { href: string; children: ReactNode }) {
-  const hit = useTarget(href, !SCHEME.test(href));
+  const local = !SCHEME.test(href) || /^file:/i.test(href);
+  const hit = useTarget(href, local);
   if (hit) {
     const [open, target] = hit;
     return (
@@ -102,7 +103,7 @@ function LinkSpan({ href, children }: { href: string; children: ReactNode }) {
     );
   }
   // a relative href that resolves to nothing would navigate away from the app
-  if (!SCHEME.test(href)) return <>{children}</>;
+  if (local) return <>{children}</>;
   return (
     <a href={href} target="_blank" rel="noreferrer" className="text-primary underline underline-offset-2">
       {children}
@@ -209,7 +210,8 @@ function inline(text: string, key: string): ReactNode[] {
   for (const match of text.matchAll(INLINE)) {
     if (match.index > last) out.push(text.slice(last, match.index));
     const k = `${key}i${n++}`;
-    const [, code, strong, strike, em, linkText, href, bare, path] = match;
+    const [, code, strong, strike, em, linkText, angled, plain, bare, path] = match;
+    const href = angled ?? plain;
     if (code !== undefined) {
       out.push(<CodeSpan key={k} text={code} />);
     } else if (strong !== undefined) {
@@ -228,7 +230,7 @@ function inline(text: string, key: string): ReactNode[] {
       out.push(<em key={k}>{inline(em, k)}</em>);
     } else if (linkText !== undefined) {
       out.push(
-        <LinkSpan key={k} href={href}>
+        <LinkSpan key={k} href={href!}>
           {inline(linkText, k)}
         </LinkSpan>,
       );
