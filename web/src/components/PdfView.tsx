@@ -1,6 +1,8 @@
 // A pdf file tab: pdf.js pages on canvases, rasterised as they near the viewport.
 import { useEffect, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
+import { Button } from "@/components/ui/button";
+import { FitWidthIcon, ZoomInIcon, ZoomOutIcon } from "@/components/ui";
 
 let engine: Promise<typeof import("pdfjs-dist")> | undefined;
 function loadPdfjs() {
@@ -13,7 +15,13 @@ function loadPdfjs() {
   return engine;
 }
 
-const SCALE = 1.25;
+const MIN_SCALE = 0.5;
+const MAX_SCALE = 4;
+const ZOOM_STEP = 1.25;
+// the p-6 padding on both sides of the page column, in css px
+const GUTTER = 48;
+
+type Size = { width: number; height: number };
 
 export function PdfView({
   threadId,
@@ -64,15 +72,108 @@ export function PdfView({
 
   useEffect(() => () => void doc?.destroy(), [doc]);
 
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
+  const [base, setBase] = useState<Size | null>(null);
+  const [scale, setScale] = useState(1);
+  const [current, setCurrent] = useState(1);
+
+  const fitWidth = (size: Size | null = base) => {
+    if (!size || !scroller) return;
+    setScale(Math.min(MAX_SCALE, Math.max(MIN_SCALE, (scroller.clientWidth - GUTTER) / size.width)));
+  };
+
+  useEffect(() => {
+    setBase(null);
+    setCurrent(1);
+    if (!doc) return;
+    let cancelled = false;
+    doc
+      .getPage(1)
+      .then((page) => {
+        if (cancelled) return;
+        const viewport = page.getViewport({ scale: 1 });
+        setBase({ width: viewport.width, height: viewport.height });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [doc]);
+
+  useEffect(() => {
+    if (base && scroller) fitWidth(base);
+  }, [base, scroller]);
+
+  useEffect(() => {
+    if (!scroller || !base) return;
+    const ratios = new Map<number, number>();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          ratios.set(Number((entry.target as HTMLElement).dataset.page), entry.intersectionRatio);
+        }
+        let best = 0;
+        let bestRatio = 0;
+        for (const [page, ratio] of ratios) {
+          if (ratio > bestRatio) [best, bestRatio] = [page, ratio];
+        }
+        if (best) setCurrent(best);
+      },
+      { root: scroller, threshold: [0.5] },
+    );
+    for (const element of scroller.querySelectorAll("[data-page]")) observer.observe(element);
+    return () => observer.disconnect();
+  }, [scroller, base, doc]);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="min-h-0 flex-1 overflow-auto bg-card/40">
+      {doc && base && !error ? (
+        <div className="flex h-8 shrink-0 items-center gap-1 border-b border-border px-3">
+          <span className="font-mono text-[11px] text-muted-foreground">
+            {current} / {doc.numPages}
+          </span>
+          <div className="flex-1" />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-6 text-faint"
+            aria-label="Zoom out"
+            title="Zoom out"
+            disabled={scale <= MIN_SCALE}
+            onClick={() => setScale((value) => Math.max(MIN_SCALE, value / ZOOM_STEP))}
+          >
+            <ZoomOutIcon />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-6 text-faint"
+            aria-label="Zoom in"
+            title="Zoom in"
+            disabled={scale >= MAX_SCALE}
+            onClick={() => setScale((value) => Math.min(MAX_SCALE, value * ZOOM_STEP))}
+          >
+            <ZoomInIcon />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-6 text-faint"
+            aria-label="Fit width"
+            title="Fit width"
+            onClick={() => fitWidth()}
+          >
+            <FitWidthIcon />
+          </Button>
+        </div>
+      ) : null}
+      <div ref={setScroller} className="min-h-0 flex-1 overflow-auto bg-card/40">
         {error ? (
           <p className="px-4 py-6 text-[12px] text-destructive">{error}</p>
-        ) : doc ? (
-          <div className="flex flex-col items-center gap-4 p-6">
+        ) : doc && base ? (
+          <div className="flex w-max min-w-full flex-col items-center gap-4 p-6">
             {Array.from({ length: doc.numPages }, (_, index) => (
-              <PdfPage key={index} doc={doc} pageNumber={index + 1} scale={SCALE} />
+              <PdfPage key={index} doc={doc} pageNumber={index + 1} scale={scale} base={base} root={scroller} />
             ))}
           </div>
         ) : null}
@@ -81,10 +182,37 @@ export function PdfView({
   );
 }
 
-function PdfPage({ doc, pageNumber, scale }: { doc: PDFDocumentProxy; pageNumber: number; scale: number }) {
+function PdfPage({
+  doc,
+  pageNumber,
+  scale,
+  base,
+  root,
+}: {
+  doc: PDFDocumentProxy;
+  pageNumber: number;
+  scale: number;
+  base: Size;
+  root: HTMLElement | null;
+}) {
+  const wrapper = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
+  const [near, setNear] = useState(false);
+  const [own, setOwn] = useState<Size | null>(null);
 
   useEffect(() => {
+    const element = wrapper.current;
+    if (!element || !root) return;
+    const observer = new IntersectionObserver(([entry]) => setNear(entry.isIntersecting), {
+      root,
+      rootMargin: "800px 0px",
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [root]);
+
+  useEffect(() => {
+    if (!near) return;
     let cancelled = false;
     let render: { promise: Promise<void>; cancel: () => void } | undefined;
     doc
@@ -94,11 +222,11 @@ function PdfPage({ doc, pageNumber, scale }: { doc: PDFDocumentProxy; pageNumber
         const context = element?.getContext("2d");
         if (cancelled || !element || !context) return;
         const dpr = window.devicePixelRatio || 1;
+        const unit = page.getViewport({ scale: 1 });
+        setOwn({ width: unit.width, height: unit.height });
         const viewport = page.getViewport({ scale });
         element.width = Math.floor(viewport.width * dpr);
         element.height = Math.floor(viewport.height * dpr);
-        element.style.width = `${viewport.width}px`;
-        element.style.height = `${viewport.height}px`;
         render = page.render({
           canvas: element,
           canvasContext: context,
@@ -108,14 +236,25 @@ function PdfPage({ doc, pageNumber, scale }: { doc: PDFDocumentProxy; pageNumber
         return render.promise;
       })
       .catch(() => {
-        // a cancelled render or a destroyed document rejects; neither is worth surfacing
+        // a cancelled render (RenderingCancelledException) or a destroyed document rejects; neither is worth surfacing
       });
     return () => {
       cancelled = true;
       render?.cancel();
     };
-  }, [doc, pageNumber, scale]);
+  }, [doc, pageNumber, scale, near]);
 
-  // white is the paper, the one place a non-token colour is intended
-  return <canvas ref={canvas} className="rounded-md bg-white shadow-sm" />;
+  const size = own ?? base;
+  // until drawn a page borrows page 1's size; a far page keeps its old raster, stretched, until it nears again
+  return (
+    <div
+      ref={wrapper}
+      data-page={pageNumber}
+      className="shrink-0 overflow-hidden rounded-md bg-white shadow-sm"
+      style={{ width: size.width * scale, height: size.height * scale }}
+    >
+      {/* white is the paper, the one place a non-token colour is intended */}
+      <canvas ref={canvas} className="block size-full" />
+    </div>
+  );
 }

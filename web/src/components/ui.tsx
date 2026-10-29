@@ -65,6 +65,7 @@ import {
   Workflow,
   X,
   Zap,
+  MoveHorizontal,
   ZoomIn,
   ZoomOut,
   type LucideIcon,
@@ -279,6 +280,7 @@ const ICONS = {
   PullIcon: ArrowDownToLine,
   PushIcon: ArrowUpFromLine,
   SpinnerIcon: LoaderCircle,
+  FitWidthIcon: MoveHorizontal,
   ZoomInIcon: ZoomIn,
   ZoomOutIcon: ZoomOut,
   FitIcon: Scan,
@@ -340,6 +342,7 @@ export const FavoriteIcon = icon(ICONS.FavoriteIcon);
 export const PullIcon = icon(ICONS.PullIcon);
 export const PushIcon = icon(ICONS.PushIcon);
 export const SpinnerIcon = icon(ICONS.SpinnerIcon);
+export const FitWidthIcon = icon(ICONS.FitWidthIcon);
 export const ZoomInIcon = icon(ICONS.ZoomInIcon);
 export const ZoomOutIcon = icon(ICONS.ZoomOutIcon);
 export const FitIcon = icon(ICONS.FitIcon);
