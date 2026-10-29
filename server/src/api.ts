@@ -1014,8 +1014,10 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
     handler: async ({ params, request }) => {
       const thread = requireThread(params[0]!);
       const body = await readBody(request);
-      return locateEntry(thread.cwd, requireString(body, "path")).catch((error: NodeJS.ErrnoException) => {
-        throw error.code === "ENOENT" ? new HttpError(404, "File not found") : error;
+      const ref = requireString(body, "path");
+      const checkout = requireProject(thread.projectId).path;
+      return locateEntry(thread.cwd, ref, checkout).catch((error: NodeJS.ErrnoException) => {
+        throw error.code === "ENOENT" ? new HttpError(404, `File not found: ${error.path ?? ref}`) : error;
       });
     },
   },

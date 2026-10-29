@@ -503,10 +503,20 @@ export async function openWorkspaceFile(root: string, rel: string): Promise<void
 }
 
 // for a path a reply names that the file index skips (gitignored, or in another checkout):
-// inside the root it comes back relative so a tab can open it, outside it Finder shows it
-export async function locateEntry(root: string, ref: string): Promise<{ path: string | null }> {
+// inside the root it comes back relative so a tab can open it, outside it Finder shows it. A path
+// into the project's main checkout lands on the same file in the worktree when that file exists
+export async function locateEntry(
+  root: string,
+  ref: string,
+  checkout: string,
+): Promise<{ path: string | null }> {
   const base = path.resolve(root);
-  const target = path.resolve(base, ref.replace(/^~(?=\/|$)/, os.homedir()));
+  let target = path.resolve(base, ref.replace(/^~(?=\/|$)/, os.homedir()));
+  const main = path.resolve(checkout);
+  if (main !== base && target.startsWith(main + path.sep)) {
+    const mapped = path.join(base, path.relative(main, target));
+    if (await fs.stat(mapped).then((found) => found.isFile(), () => false)) target = mapped;
+  }
   const stats = await fs.stat(target);
   if (target.startsWith(base + path.sep) && stats.isFile()) {
     return { path: path.relative(base, target).split(path.sep).join("/") };

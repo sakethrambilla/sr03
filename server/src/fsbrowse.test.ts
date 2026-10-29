@@ -6,7 +6,7 @@ import test, { after } from "node:test";
 
 const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sr03-fsbrowse-"));
 process.env.SR03_DATA_DIR = dir;
-const { linuxPickerCommands, statWorkspacePdf, statWorkspaceVideo, videoRange, windowsPickerCommand } = await import("./fsbrowse.ts");
+const { linuxPickerCommands, locateEntry, statWorkspacePdf, statWorkspaceVideo, videoRange, windowsPickerCommand } = await import("./fsbrowse.ts");
 
 after(() => fs.rm(dir, { recursive: true, force: true }));
 
@@ -52,6 +52,19 @@ test("workspace video stat checks type and containment", async () => {
   assert.equal(video.type, "video/mp4");
   await assert.rejects(statWorkspaceVideo(root, "notes.txt"), /not a video/);
   await assert.rejects(statWorkspaceVideo(root, "../x.mp4"), /outside the session folder/);
+});
+
+test("locate maps a checkout path into the worktree and names a missing path", async () => {
+  const root = await fs.mkdtemp(path.join(dir, "locate-"));
+  const main = path.join(root, "main");
+  const wt = path.join(root, "wt");
+  await fs.mkdir(path.join(wt, "nested"), { recursive: true });
+  await fs.mkdir(main);
+  await fs.writeFile(path.join(wt, "ignored.txt"), "x");
+  await fs.writeFile(path.join(wt, "nested", "x.txt"), "x");
+  assert.deepEqual(await locateEntry(wt, path.join(main, "ignored.txt"), main), { path: "ignored.txt" });
+  assert.deepEqual(await locateEntry(wt, "nested/x.txt", main), { path: "nested/x.txt" });
+  await assert.rejects(locateEntry(wt, "nope.txt", main), { code: "ENOENT", path: path.join(wt, "nope.txt") });
 });
 
 test("workspace pdf stat checks type and containment", async () => {

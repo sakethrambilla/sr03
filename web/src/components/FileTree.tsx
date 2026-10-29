@@ -11,6 +11,7 @@ import {
   OVERSCAN,
   REFRESH_CONCURRENCY,
   ROW_HEIGHT,
+  ancestors,
   autoExpandFor,
   createDirLoadTracker,
   dirtyAncestors,
@@ -583,6 +584,19 @@ export function FileTree({
     });
   }, [changes]);
 
+  // the active tab's row only exists once its ancestors are open and loaded, so the scroll
+  // waits on rows below
+  const revealRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!openPath) return;
+    revealRef.current = openPath;
+    setExpanded((current) => {
+      const next = new Set(current);
+      for (const dir of ancestors(openPath)) next.add(dir);
+      return next.size === current.size ? current : next;
+    });
+  }, [openPath]);
+
   // the loadingDirs and dirErrors clauses both prevent a re-load loop: a read in flight would be
   // restarted whenever another directory resolves, and a failed read would retry without limit
   useEffect(() => {
@@ -760,6 +774,14 @@ export function FileTree({
   useEffect(() => {
     if (creatingIndex >= 0) virtualizer.scrollToIndex(creatingIndex, { align: "auto" });
   }, [creatingIndex]);
+
+  useEffect(() => {
+    if (!revealRef.current) return;
+    const index = rows.findIndex((row) => row.entry.path === revealRef.current);
+    if (index < 0) return;
+    revealRef.current = null;
+    virtualizer.scrollToIndex(index, { align: "auto" });
+  }, [rows, virtualizer]);
 
   // per-action props rather than one object: an inline actions literal is a fresh object every
   // render and would defeat Row's memo
