@@ -16,6 +16,7 @@ import {
   normalize,
   openTab,
   persistable,
+  replaceTab,
   resize,
   sameTab,
   selectTab,
@@ -412,4 +413,15 @@ test("persistable strips spawn tabs and keeps thread tabs", () => {
   const threadTab = { kind: "thread" as const, threadId: "t1" };
   const layout = singleGroup([CHAT, spawnTab, threadTab]);
   assert.deepEqual(persistable(layout).groups[0]!.tabs, [CHAT, threadTab]);
+});
+
+test("replaceTab swaps a tab in place and keeps it active", () => {
+  const spawn = { kind: "spawn" as const, id: "s1", providerId: "codex" as const };
+  const layout = openTab(singleGroup([CHAT, README]), spawn, 0);
+  const child = { kind: "thread" as const, threadId: "t1" };
+  const next = replaceTab(layout, spawn, child);
+  assert.equal(next.groups[0]!.tabs.length, 3);
+  assert.ok(sameTab(next.groups[0]!.tabs[2]!, child));
+  assert.ok(sameTab(activeTab(next.groups[0]!), child));
+  assert.equal(groupOf(next, spawn), -1);
 });

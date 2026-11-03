@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 import { api } from "../lib/api.ts";
 import { createFileIndex } from "../lib/fileref.ts";
 import type { FileRef } from "../lib/fileref.ts";
-import type { EditorLayout, EditorTab, Message, Thread, ThreadTask } from "../lib/types.ts";
+import type { EditorLayout, EditorTab, Message, ProviderId, Thread, ThreadTask } from "../lib/types.ts";
 import {
   MAX_GROUPS,
   activeTab,
@@ -16,6 +16,7 @@ import {
   moveTab,
   normalize,
   openTab,
+  replaceTab,
   resize as resizeGroups,
   sameTab,
   selectTab as selectInGroup,
@@ -34,6 +35,8 @@ import { SearchPalette } from "./SearchPalette.tsx";
 import type { PaletteMode } from "./SearchPalette.tsx";
 import { Timeline } from "./Timeline.tsx";
 import { SubagentView } from "./SubagentView.tsx";
+import { SpawnView } from "./SpawnView.tsx";
+import { ThreadTabView } from "./ThreadTabView.tsx";
 import { ProviderLogo } from "./ProviderLogo.tsx";
 import { SidebarToggle } from "./Sidebar.tsx";
 import { Separator } from "@/components/ui/separator";
@@ -46,6 +49,8 @@ import {
   CodeIcon,
   CursorIcon,
   FolderIcon,
+  Menu,
+  PlusIcon,
   StatusDot,
   TerminalIcon,
   WorktreeIcon,
@@ -211,6 +216,24 @@ export function ChatView({ thread }: { thread: Thread }) {
     (state) => state.providers.find((entry) => entry.id === thread.providerId) ?? EMPTY_PROVIDER,
   );
   const tasks = useStore((state) => state.tasksByThread[thread.id] ?? NO_TASKS);
+  const providers = useStore((state) => state.providers);
+  const threads = useStore((state) => state.threads);
+  const threadTitles = useMemo(
+    () => Object.fromEntries(threads.map((entry) => [entry.id, entry.title])),
+    [threads],
+  );
+  const spawnItems = useMemo(
+    () =>
+      [...providers]
+        .sort((a, b) => Number(b.id === thread.providerId) - Number(a.id === thread.providerId))
+        .map((entry) => ({
+          id: entry.id,
+          label: entry.label,
+          hint: entry.hint,
+          icon: <ProviderLogo id={entry.id} className="size-3.5" />,
+        })),
+    [providers, thread.providerId],
+  );
   const labels = useMemo(() => {
     const map: Record<string, string> = {};
     for (const task of tasks) map[task.id] = task.description;
@@ -344,7 +367,8 @@ export function ChatView({ thread }: { thread: Thread }) {
 
   const closeTabRequest = (tab: EditorTab) => {
     if (tab.kind === "file") requestClose(tab.path);
-    else if (tab.kind === "subagent") commit(closeTab(layoutRef.current, tab));
+    else if (tab.kind === "subagent" || tab.kind === "spawn" || tab.kind === "thread")
+      commit(closeTab(layoutRef.current, tab));
   };
 
   // every mounted file view gets the same function objects, so a streaming frame that
@@ -532,6 +556,21 @@ export function ChatView({ thread }: { thread: Thread }) {
             {provider.label}
           </span>
           {branch ? <BranchChip branch={branch} isWorktree={thread.isWorktree} /> : null}
+          <Menu
+            title="New agent in this folder"
+            trigger="Agent"
+            triggerIcon={<PlusIcon className="size-3.5" />}
+            items={spawnItems}
+            onPick={(id) =>
+              commit(
+                openTab(
+                  layoutRef.current,
+                  { kind: "spawn", id: crypto.randomUUID(), providerId: id as ProviderId },
+                  focusedRef.current,
+                ),
+              )
+            }
+          />
           <div className="flex-1" />
           {/* the toggles are icon buttons with padding of their own, so they sit tighter than the header gap */}
           <div className="flex items-center gap-1">
@@ -564,6 +603,7 @@ export function ChatView({ thread }: { thread: Thread }) {
             title={thread.title}
             dirty={dirty}
             labels={labels}
+            threadTitles={threadTitles}
             onFocusGroup={setFocused}
             onResize={(sashIndex, fractions) =>
               commit(resizeGroups(layoutRef.current, sashIndex, fractions))
@@ -630,7 +670,17 @@ export function ChatView({ thread }: { thread: Thread }) {
                         reveal={reveal?.path === tab.path ? reveal : null}
                         links={links}
                       />
-                    ) : null}
+                    ) : tab.kind === "spawn" ? (
+                      <SpawnView
+                        parent={thread}
+                        providerId={tab.providerId}
+                        onSent={(child) =>
+                          commit(replaceTab(layoutRef.current, tab, { kind: "thread", threadId: child.id }))
+                        }
+                      />
+                    ) : (
+                      <ThreadTabView threadId={tab.threadId} files={links} onRun={runCommand} />
+                    )}
                   </div>
                 );
               }),

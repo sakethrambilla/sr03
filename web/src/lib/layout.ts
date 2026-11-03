@@ -136,6 +136,17 @@ export function closeTab(layout: EditorLayout, tab: EditorTab): EditorLayout {
   return rebuild(layout.axis, without(layout.groups, tab), layout.sizes);
 }
 
+export function replaceTab(layout: EditorLayout, from: EditorTab, to: EditorTab): EditorLayout {
+  const index = groupOf(layout, from);
+  if (index === -1) return layout;
+  const groups = layout.groups.map((group, i) =>
+    i === index
+      ? { ...group, tabs: group.tabs.map((tab) => (sameTab(tab, from) ? to : tab)) }
+      : group,
+  );
+  return { ...layout, groups };
+}
+
 export function moveTab(
   layout: EditorLayout,
   tab: EditorTab,

@@ -259,7 +259,7 @@ export function providerCatalog(
 
 // Cursor scopes both knobs to the model, so a model switch can strand the chosen rung — Kimi K3
 // has no `medium`. Fast always returns to off: support varies and it is a billing multiplier.
-function tuneForModel(
+export function tuneForModel(
   provider: ProviderCatalog,
   model: string,
   effort: Effort,
