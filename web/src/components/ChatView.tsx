@@ -615,7 +615,7 @@ export function ChatView({ thread }: { thread: Thread }) {
                         files={links}
                         onRun={runCommand}
                       />
-                    ) : (
+                    ) : tab.kind === "file" ? (
                       <FileView
                         thread={thread}
                         path={tab.path}
@@ -630,7 +630,7 @@ export function ChatView({ thread }: { thread: Thread }) {
                         reveal={reveal?.path === tab.path ? reveal : null}
                         links={links}
                       />
-                    )}
+                    ) : null}
                   </div>
                 );
               }),

@@ -29,7 +29,10 @@ export interface Project {
 // `groups`.
 export type LayoutAxis = "horizontal" | "vertical";
 
-export type EditorTab = { kind: "chat" } | { kind: "file"; path: string };
+export type EditorTab =
+  | { kind: "chat" }
+  | { kind: "file"; path: string }
+  | { kind: "thread"; threadId: string };
 
 export interface EditorGroup {
   id: string;

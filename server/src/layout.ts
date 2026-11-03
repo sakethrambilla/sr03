@@ -17,6 +17,7 @@ function parseTab(value: unknown): EditorTab | null {
   if (!isRecord(value)) return null;
   if (value.kind === "chat") return { kind: "chat" };
   if (value.kind === "file" && nonEmptyString(value.path)) return { kind: "file", path: value.path };
+  if (value.kind === "thread" && nonEmptyString(value.threadId)) return { kind: "thread", threadId: value.threadId };
   return null;
 }
 
@@ -60,10 +61,12 @@ export function parseLayout(value: unknown): EditorLayout | null {
     groups.push(group);
   }
 
-  // one transcript, and at most one tab per file, across the whole layout
+  // one transcript, and at most one tab per file or thread, across the whole layout
   const tabs = groups.flatMap((group) => group.tabs);
   const paths = tabs.flatMap((tab) => (tab.kind === "file" ? [tab.path] : []));
   if (new Set(paths).size !== paths.length) return null;
+  const threadIds = tabs.flatMap((tab) => (tab.kind === "thread" ? [tab.threadId] : []));
+  if (new Set(threadIds).size !== threadIds.length) return null;
   if (tabs.filter((tab) => tab.kind === "chat").length !== 1) return null;
 
   if (!Array.isArray(source.sizes) || source.sizes.length !== groups.length) return null;

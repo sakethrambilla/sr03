@@ -33,6 +33,8 @@ export interface DropTarget {
 function tabName(tab: EditorTab, title: string, labels: Record<string, string>): string {
   if (tab.kind === "chat") return title;
   if (tab.kind === "subagent") return labels[tab.taskId] ?? "Subagent";
+  if (tab.kind === "spawn") return "New agent";
+  if (tab.kind === "thread") return "Agent";
   return tab.path.slice(tab.path.lastIndexOf("/") + 1);
 }
 
@@ -151,7 +153,7 @@ export function EditorTabs({
                   <CloseIcon className="size-3" />
                 </button>
               </div>
-            ) : (
+            ) : tab.kind === "file" ? (
               <div
                 onAuxClick={(event) => {
                   if (event.button === 1) onClose(tab);
@@ -201,7 +203,7 @@ export function EditorTabs({
                   )}
                 </button>
               </div>
-            )}
+            ) : null}
           </div>
         );
       })}
