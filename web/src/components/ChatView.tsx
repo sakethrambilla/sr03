@@ -671,13 +671,16 @@ export function ChatView({ thread }: { thread: Thread }) {
                         links={links}
                       />
                     ) : tab.kind === "spawn" ? (
-                      <SpawnView
-                        parent={thread}
-                        providerId={tab.providerId}
-                        onSent={(child) =>
-                          commit(replaceTab(layoutRef.current, tab, { kind: "thread", threadId: child.id }))
-                        }
-                      />
+                      <>
+                        <div className="flex-1" />
+                        <SpawnView
+                          parent={thread}
+                          providerId={tab.providerId}
+                          onSent={(child) =>
+                            commit(replaceTab(layoutRef.current, tab, { kind: "thread", threadId: child.id }))
+                          }
+                        />
+                      </>
                     ) : (
                       <ThreadTabView threadId={tab.threadId} files={links} onRun={runCommand} />
                     )}
