@@ -168,7 +168,10 @@ interface Store extends AppState {
   startFromDraft: (text: string) => Promise<void>;
   renameThread: (id: string, title: string) => Promise<void>;
   forkThread: (id: string) => Promise<void>;
-  setArchived: (id: string, archived: boolean) => Promise<void>;
+  setArchived: (id: string, archived: boolean, discardWorktree?: boolean) => Promise<void>;
+  archivePrompt: { threadId: string; files: string[]; commits: number } | null;
+  confirmArchive: () => Promise<void>;
+  cancelArchive: () => void;
   archiveIdle: (projectId: string) => Promise<void>;
   leaving: Record<string, number | null>;
   setLayout: (id: string, layout: EditorLayout) => void;
@@ -410,6 +413,7 @@ export const useStore = create<Store>((set, get) => ({
   appearance: startingAppearance,
   shortcuts: EMPTY_OVERRIDES,
   leaving: NO_LEAVING,
+  archivePrompt: null,
   finished: loadFinished(),
   error: null,
   booted: false,
@@ -694,10 +698,22 @@ export const useStore = create<Store>((set, get) => ({
     }
   },
 
-  setArchived: async (id, archived) => {
+  setArchived: async (id, archived, discardWorktree) => {
+    if (archived && discardWorktree === undefined) {
+      try {
+        const { dirty } = await api.archiveCheck(id);
+        if (dirty) {
+          set({ archivePrompt: { threadId: id, files: dirty.files, commits: dirty.commits } });
+          return;
+        }
+      } catch (error) {
+        set({ error: (error as Error).message });
+        return;
+      }
+    }
     if (archived) set((state) => ({ leaving: { ...state.leaving, [id]: null } }));
     try {
-      const thread = await api.patchThread(id, { archived });
+      const thread = await api.patchThread(id, { archived, discardWorktree });
       if (!archived) {
         set((state) => ({ threads: upsertThread(state.threads, thread) }));
         return;
@@ -713,6 +729,15 @@ export const useStore = create<Store>((set, get) => ({
       set((state) => ({ leaving: withoutKeys(state.leaving, [id]), error: (error as Error).message }));
     }
   },
+
+  confirmArchive: async () => {
+    const prompt = get().archivePrompt;
+    if (!prompt) return;
+    set({ archivePrompt: null });
+    await get().setArchived(prompt.threadId, true, true);
+  },
+
+  cancelArchive: () => set({ archivePrompt: null }),
 
   setLayout: (id, layout) => {
     const current = get().threads.find((thread) => thread.id === id);

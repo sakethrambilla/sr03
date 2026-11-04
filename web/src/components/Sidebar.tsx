@@ -28,6 +28,7 @@ import {
   ArchiveIcon,
   CheckIcon,
   ChevronIcon,
+  Dialog,
   DotsIcon,
   FilterIcon,
   FolderIcon,
@@ -412,6 +413,52 @@ function ProjectFilter({
   );
 }
 
+const ARCHIVE_PROMPT_FILES = 10;
+
+function ArchivePromptDialog() {
+  const prompt = useStore((state) => state.archivePrompt);
+  const confirmArchive = useStore((state) => state.confirmArchive);
+  const cancelArchive = useStore((state) => state.cancelArchive);
+  if (!prompt) return null;
+  const shown = prompt.files.slice(0, ARCHIVE_PROMPT_FILES);
+  const more = prompt.files.length - shown.length;
+  return (
+    <Dialog
+      title="Discard worktree changes?"
+      onClose={cancelArchive}
+      footer={
+        <>
+          <Button variant="ghost" onClick={cancelArchive}>
+            Cancel
+          </Button>
+          <Button variant="destructive" onClick={() => void confirmArchive()}>
+            Discard and archive
+          </Button>
+        </>
+      }
+    >
+      <p className="text-sm text-muted-foreground">
+        Archiving removes this session's worktree, and it has work that isn't saved anywhere else.
+      </p>
+      {shown.length > 0 ? (
+        <ul className="mt-3 space-y-0.5 font-mono text-xs">
+          {shown.map((file) => (
+            <li key={file} className="truncate">
+              {file}
+            </li>
+          ))}
+          {more > 0 ? <li className="text-muted-foreground">and {more} more</li> : null}
+        </ul>
+      ) : null}
+      {prompt.commits > 0 ? (
+        <p className="mt-3 text-sm">
+          {prompt.commits} unpushed {prompt.commits === 1 ? "commit" : "commits"}
+        </p>
+      ) : null}
+    </Dialog>
+  );
+}
+
 export function Sidebar() {
   const leaving = useStore((state) => state.leaving);
   const projects = useStore((state) => state.projects);
@@ -606,6 +653,7 @@ export function Sidebar() {
       {graphProject ? (
         <GitGraphPanel project={graphProject} onClose={() => setGraphProject(null)} />
       ) : null}
+      <ArchivePromptDialog />
       <PanelResize panel="sidebar" edge="right" />
     </aside>
   );
