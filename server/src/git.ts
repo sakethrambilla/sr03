@@ -328,6 +328,17 @@ export async function mergedBranches(root: string, target: string): Promise<Set<
   return new Set(output.split("\n").map((line) => line.trim()).filter(Boolean));
 }
 
+export async function unsavedWork(cwd: string, base: string): Promise<{ files: string[]; commits: number }> {
+  const status = await git(cwd, ["status", "--porcelain"]);
+  const files = status.split("\n").filter(Boolean).map((line) => line.slice(3));
+  const count = await git(cwd, ["rev-list", "--count", "HEAD", "--not", base, "--remotes"]);
+  return { files, commits: Number(count.trim()) || 0 };
+}
+
+export async function deleteBranch(root: string, branch: string): Promise<void> {
+  await git(root, ["branch", "-D", branch]);
+}
+
 export async function switchBranch(input: {
   cwd: string;
   branch: string;
