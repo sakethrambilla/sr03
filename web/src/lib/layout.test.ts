@@ -16,6 +16,7 @@ import {
   normalize,
   openTab,
   persistable,
+  replaceTab,
   resize,
   sameTab,
   selectTab,
@@ -37,7 +38,15 @@ function split(): EditorLayout {
 
 const paths = (layout: EditorLayout, group: number) =>
   layout.groups[group]!.tabs.map((tab) =>
-    tab.kind === "chat" ? "chat" : tab.kind === "file" ? tab.path : tab.taskId,
+    tab.kind === "chat"
+      ? "chat"
+      : tab.kind === "file"
+        ? tab.path
+        : tab.kind === "subagent"
+          ? tab.taskId
+          : tab.kind === "thread"
+            ? tab.threadId
+            : tab.id,
   );
 
 // --- identity and construction -------------------------------------------------------------
@@ -388,4 +397,31 @@ test("persistable strips a subagent-only group and keeps one chat tab", () => {
     allTabs(next).some((tab) => tab.kind === "subagent"),
     false,
   );
+});
+
+test("thread, spawn and file tabs with the same id are different tabs", () => {
+  const keys = [
+    tabKey({ kind: "thread", threadId: "a" }),
+    tabKey({ kind: "spawn", id: "a", providerId: "claude" }),
+    tabKey(file("a")),
+  ];
+  assert.equal(new Set(keys).size, 3);
+});
+
+test("persistable strips spawn tabs and keeps thread tabs", () => {
+  const spawnTab = { kind: "spawn" as const, id: "s1", providerId: "claude" as const };
+  const threadTab = { kind: "thread" as const, threadId: "t1" };
+  const layout = singleGroup([CHAT, spawnTab, threadTab]);
+  assert.deepEqual(persistable(layout).groups[0]!.tabs, [CHAT, threadTab]);
+});
+
+test("replaceTab swaps a tab in place and keeps it active", () => {
+  const spawn = { kind: "spawn" as const, id: "s1", providerId: "codex" as const };
+  const layout = openTab(singleGroup([CHAT, README]), spawn, 0);
+  const child = { kind: "thread" as const, threadId: "t1" };
+  const next = replaceTab(layout, spawn, child);
+  assert.equal(next.groups[0]!.tabs.length, 3);
+  assert.ok(sameTab(next.groups[0]!.tabs[2]!, child));
+  assert.ok(sameTab(activeTab(next.groups[0]!), child));
+  assert.equal(groupOf(next, spawn), -1);
 });

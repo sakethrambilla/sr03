@@ -27,12 +27,14 @@ export interface Project {
 // `groups`.
 export type LayoutAxis = "horizontal" | "vertical";
 
-// the subagent variant is client-only and deliberately absent from server/src/types.ts —
+// the subagent and spawn variants are client-only and deliberately absent from server/src/types.ts —
 // the server's layout guard should keep rejecting it
 export type EditorTab =
   | { kind: "chat" }
   | { kind: "file"; path: string }
-  | { kind: "subagent"; taskId: string };
+  | { kind: "subagent"; taskId: string }
+  | { kind: "thread"; threadId: string }
+  | { kind: "spawn"; id: string; providerId: ProviderId };
 
 export interface EditorGroup {
   id: string;

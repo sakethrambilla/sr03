@@ -145,3 +145,21 @@ test("rejects malformed json and non-objects", () => {
     assert.equal(parseLayout(value), null, `${JSON.stringify(value) ?? "undefined"} should be rejected`);
   }
 });
+
+test("accepts a thread tab", () => {
+  const layout = clone();
+  (groupsOf(layout)[1]!.tabs as unknown[]).push({ kind: "thread", threadId: "t2" });
+  assert.deepEqual(parseLayout(layout)?.groups[1]?.tabs[1], { kind: "thread", threadId: "t2" });
+});
+
+test("rejects a thread tab with no id", () => {
+  const layout = clone();
+  (groupsOf(layout)[1]!.tabs as unknown[]).push({ kind: "thread" });
+  assert.equal(parseLayout(layout), null);
+});
+
+test("rejects the same thread open twice", () => {
+  const layout = clone();
+  for (const group of groupsOf(layout)) (group.tabs as unknown[]).push({ kind: "thread", threadId: "t2" });
+  assert.equal(parseLayout(layout), null);
+});

@@ -25,6 +25,8 @@ export interface DropAllow {
 export function tabKey(tab: EditorTab): string {
   if (tab.kind === "chat") return "chat:";
   if (tab.kind === "subagent") return `subagent:${tab.taskId}`;
+  if (tab.kind === "thread") return `thread:${tab.threadId}`;
+  if (tab.kind === "spawn") return `spawn:${tab.id}`;
   return `file:${tab.path}`;
 }
 
@@ -134,6 +136,17 @@ export function closeTab(layout: EditorLayout, tab: EditorTab): EditorLayout {
   return rebuild(layout.axis, without(layout.groups, tab), layout.sizes);
 }
 
+export function replaceTab(layout: EditorLayout, from: EditorTab, to: EditorTab): EditorLayout {
+  const index = groupOf(layout, from);
+  if (index === -1) return layout;
+  const groups = layout.groups.map((group, i) =>
+    i === index
+      ? { ...group, tabs: group.tabs.map((tab) => (sameTab(tab, from) ? to : tab)) }
+      : group,
+  );
+  return { ...layout, groups };
+}
+
 export function moveTab(
   layout: EditorLayout,
   tab: EditorTab,
@@ -222,12 +235,12 @@ export function normalize(layout: EditorLayout | null): EditorLayout {
   return rebuild(axis, restored, repaired.sizes);
 }
 
-// subagent tabs are session-scoped, and the server's layout guard 400s on unknown kinds —
+// subagent and spawn tabs are session-scoped, and the server's layout guard 400s on unknown kinds —
 // which would leave every later layout write failing against a stale stored copy
 export function persistable(layout: EditorLayout): EditorLayout {
   const groups = layout.groups.map((group) => ({
     ...group,
-    tabs: group.tabs.filter((tab) => tab.kind !== "subagent"),
+    tabs: group.tabs.filter((tab) => tab.kind !== "subagent" && tab.kind !== "spawn"),
   }));
   return normalize({ ...layout, groups });
 }

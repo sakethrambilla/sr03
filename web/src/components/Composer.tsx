@@ -1065,14 +1065,14 @@ export function ThreadComposer({
       permissionMode={thread.permissionMode}
       effort={thread.effort}
       fast={thread.fast}
-      onModel={(model) => void patchActive({ model })}
-      onPermissionMode={(permissionMode) => void patchActive({ permissionMode })}
-      onEffort={(effort) => void patchActive({ effort })}
-      onFast={(fast) => void patchActive({ fast })}
+      onModel={(model) => void patchActive({ model }, thread.id)}
+      onPermissionMode={(permissionMode) => void patchActive({ permissionMode }, thread.id)}
+      onEffort={(effort) => void patchActive({ effort }, thread.id)}
+      onFast={(fast) => void patchActive({ fast }, thread.id)}
       placeholder={running ? `${name} is working…` : `Ask ${name} to change something…`}
-      onSubmit={(text) => send(text)}
+      onSubmit={(text) => send(text, thread.id)}
       running={running}
-      onInterrupt={() => void interrupt()}
+      onInterrupt={() => void interrupt(thread.id)}
       restore={restore}
       suggestion={suggestion}
       onAcceptSuggestion={() => clearSuggestion(thread.id)}

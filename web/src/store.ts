@@ -162,6 +162,16 @@ interface Store extends AppState {
   bootstrap: () => Promise<void>;
   refreshState: () => Promise<void>;
   openThread: (id: string) => Promise<void>;
+  loadThread: (id: string) => Promise<void>;
+  spawnThread: (input: {
+    parentId: string;
+    providerId: ProviderId;
+    model: string;
+    permissionMode: PermissionMode;
+    effort: Effort;
+    fast: boolean;
+    text: string;
+  }) => Promise<Thread>;
   openFolder: (path: string) => Promise<void>;
   startDraft: (input?: { projectId?: string; branch?: string; worktreePath?: string; locked?: boolean }) => void;
   patchDraft: (patch: Partial<Draft>) => void;
@@ -176,16 +186,16 @@ interface Store extends AppState {
   leaving: Record<string, number | null>;
   setLayout: (id: string, layout: EditorLayout) => void;
   removeThread: (id: string) => Promise<void>;
-  send: (text: string) => Promise<void>;
+  send: (text: string, threadId?: string) => Promise<void>;
   suggestionByThread: Record<string, string | null>;
   clearSuggestion: (threadId: string) => void;
-  interrupt: () => Promise<void>;
+  interrupt: (threadId?: string) => Promise<void>;
   patchActive: (patch: {
     model?: string;
     permissionMode?: PermissionMode;
     effort?: Effort;
     fast?: boolean;
-  }) => Promise<void>;
+  }, threadId?: string) => Promise<void>;
   setProviderPermissionMode: (providerId: ProviderId, mode: PermissionMode) => Promise<void>;
   respond: (approval: PendingApproval, decision: ApprovalDecision) => Promise<void>;
   answerQuestion: (questionId: string, answers: Record<string, string[]>) => Promise<void>;
@@ -252,7 +262,7 @@ export function providerCatalog(
 
 // Cursor scopes both knobs to the model, so a model switch can strand the chosen rung — Kimi K3
 // has no `medium`. Fast always returns to off: support varies and it is a billing multiplier.
-function tuneForModel(
+export function tuneForModel(
   provider: ProviderCatalog,
   model: string,
   effort: Effort,
@@ -515,17 +525,35 @@ export const useStore = create<Store>((set, get) => ({
       };
     });
     try {
-      const { thread, messages, tasks } = await api.thread(id);
-      set((state) => ({
-        threads: upsertThread(state.threads, thread),
-        messagesByThread: { ...state.messagesByThread, [id]: messages },
-        tasksByThread: { ...state.tasksByThread, [id]: tasks },
-        loadedThreads: { ...state.loadedThreads, [id]: true },
-      }));
+      await get().loadThread(id);
       void get().refreshUsage();
     } catch (error) {
       set({ error: (error as Error).message });
     }
+  },
+
+  loadThread: async (id) => {
+    const { thread, messages, tasks } = await api.thread(id);
+    set((state) => ({
+      threads: upsertThread(state.threads, thread),
+      messagesByThread: { ...state.messagesByThread, [id]: messages },
+      tasksByThread: { ...state.tasksByThread, [id]: tasks },
+      loadedThreads: { ...state.loadedThreads, [id]: true },
+    }));
+  },
+
+  // a second agent on the parent's cwd; activeThreadId stays on the parent
+  spawnThread: async ({ parentId, text, ...settings }) => {
+    const parent = get().threads.find((thread) => thread.id === parentId);
+    if (!parent) throw new Error("Thread not found");
+    const thread = await api.createThread({ projectId: parent.projectId, cwd: parent.cwd, ...settings });
+    set((state) => ({
+      threads: upsertThread(state.threads, thread),
+      messagesByThread: { ...state.messagesByThread, [thread.id]: [] },
+      loadedThreads: { ...state.loadedThreads, [thread.id]: true },
+    }));
+    await api.sendTurn(thread.id, text);
+    return thread;
   },
 
   openFolder: async (path) => {
@@ -763,8 +791,8 @@ export const useStore = create<Store>((set, get) => ({
     });
   },
 
-  send: async (text) => {
-    const id = get().activeThreadId;
+  send: async (text, threadId) => {
+    const id = threadId ?? get().activeThreadId;
     if (!id) return;
     get().clearSuggestion(id);
     try {
@@ -781,14 +809,14 @@ export const useStore = create<Store>((set, get) => ({
         : state,
     ),
 
-  interrupt: async () => {
-    const id = get().activeThreadId;
+  interrupt: async (threadId) => {
+    const id = threadId ?? get().activeThreadId;
     if (id) await api.interrupt(id).catch(() => undefined);
   },
 
   // applied locally first so the pickers move with the pointer, not with the round trip
-  patchActive: async (patch) => {
-    const id = get().activeThreadId;
+  patchActive: async (patch, threadId) => {
+    const id = threadId ?? get().activeThreadId;
     if (!id) return;
     const current = get().threads.find((thread) => thread.id === id);
     const next =
@@ -814,7 +842,7 @@ export const useStore = create<Store>((set, get) => ({
     }
   },
 
-  // machine-wide but provider-scoped — patchActive only ever touches the open thread
+  // machine-wide but provider-scoped — patchActive only ever touches one thread
   setProviderPermissionMode: async (providerId, permissionMode) => {
     const previous = get().providers;
     set({

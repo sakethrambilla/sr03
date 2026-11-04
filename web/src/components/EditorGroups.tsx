@@ -30,9 +30,16 @@ export interface DropTarget {
   before?: EditorTab;
 }
 
-function tabName(tab: EditorTab, title: string, labels: Record<string, string>): string {
+function tabName(
+  tab: EditorTab,
+  title: string,
+  labels: Record<string, string>,
+  threadTitles: Record<string, string>,
+): string {
   if (tab.kind === "chat") return title;
   if (tab.kind === "subagent") return labels[tab.taskId] ?? "Subagent";
+  if (tab.kind === "spawn") return "New agent";
+  if (tab.kind === "thread") return threadTitles[tab.threadId] ?? "Agent";
   return tab.path.slice(tab.path.lastIndexOf("/") + 1);
 }
 
@@ -57,6 +64,7 @@ export function EditorTabs({
   title,
   dirty,
   labels,
+  threadTitles,
   dragging,
   insertBefore,
   onSelect,
@@ -68,6 +76,7 @@ export function EditorTabs({
   title: string;
   dirty: Set<string>;
   labels: Record<string, string>;
+  threadTitles: Record<string, string>;
   dragging: EditorTab | null;
   insertBefore: EditorTab | null;
   onSelect: (groupIndex: number, tab: EditorTab) => void;
@@ -89,7 +98,7 @@ export function EditorTabs({
           insertBefore && sameTab(tab, insertBefore) ? (
             <span className="w-0.5 shrink-0 self-stretch bg-primary" />
           ) : null;
-        const name = tabName(tab, title, labels);
+        const name = tabName(tab, title, labels, threadTitles);
 
         return (
           <div key={tabKey(tab)} data-tab={tabKey(tab)} className="flex shrink-0 items-stretch">
@@ -110,7 +119,7 @@ export function EditorTabs({
                 <MessageIcon className="size-3.5" />
                 <span className="max-w-40 truncate">{title}</span>
               </button>
-            ) : tab.kind === "subagent" ? (
+            ) : tab.kind === "subagent" || tab.kind === "spawn" || tab.kind === "thread" ? (
               <div
                 onAuxClick={(event) => {
                   if (event.button === 1) onClose(tab);
@@ -151,7 +160,7 @@ export function EditorTabs({
                   <CloseIcon className="size-3" />
                 </button>
               </div>
-            ) : (
+            ) : tab.kind === "file" ? (
               <div
                 onAuxClick={(event) => {
                   if (event.button === 1) onClose(tab);
@@ -201,7 +210,7 @@ export function EditorTabs({
                   )}
                 </button>
               </div>
-            )}
+            ) : null}
           </div>
         );
       })}
@@ -214,6 +223,7 @@ export function EditorGroups({
   title,
   dirty,
   labels,
+  threadTitles,
   onFocusGroup,
   onResize,
   onEqualise,
@@ -226,6 +236,7 @@ export function EditorGroups({
   title: string;
   dirty: Set<string>;
   labels: Record<string, string>;
+  threadTitles: Record<string, string>;
   focused: number;
   onFocusGroup: (index: number) => void;
   onResize: (sashIndex: number, fractions: [number, number]) => void;
@@ -427,6 +438,7 @@ export function EditorGroups({
             title={title}
             dirty={dirty}
             labels={labels}
+            threadTitles={threadTitles}
             dragging={drag?.tab ?? null}
             insertBefore={drag?.over?.group === index ? (drag.over.before ?? null) : null}
             onSelect={onSelect}
@@ -474,12 +486,12 @@ export function EditorGroups({
         >
           {drag.tab.kind === "chat" ? (
             <MessageIcon className="size-3.5" />
-          ) : drag.tab.kind === "subagent" ? (
+          ) : drag.tab.kind === "subagent" || drag.tab.kind === "spawn" || drag.tab.kind === "thread" ? (
             <AgentIcon className="size-3.5" />
           ) : (
-            <FileIcon name={tabName(drag.tab, title, labels)} />
+            <FileIcon name={tabName(drag.tab, title, labels, threadTitles)} />
           )}
-          <span className="max-w-40 truncate">{tabName(drag.tab, title, labels)}</span>
+          <span className="max-w-40 truncate">{tabName(drag.tab, title, labels, threadTitles)}</span>
         </div>
       ) : null}
     </div>
