@@ -152,6 +152,12 @@ function openWindow() {
       setTimeout(() => placeTrafficLights(window), 50);
     });
   }
+  // a dead renderer leaves only backgroundColor behind; the server still holds all state
+  window.webContents.on("render-process-gone", (_event, details) => {
+    console.error(`renderer gone: ${details.reason} (exit ${details.exitCode})`);
+    if (details.reason === "clean-exit" || window.isDestroyed()) return;
+    void window.loadURL(appUrl ?? SPLASH);
+  });
   window.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: "deny" };
