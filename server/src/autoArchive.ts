@@ -1,4 +1,5 @@
 import { pendingApprovals, pendingQuestions } from "./agents/runtime.ts";
+import { cleanupWorktree } from "./archiveCleanup.ts";
 import { publish } from "./bus.ts";
 import { settings, threads } from "./db.ts";
 
@@ -12,15 +13,18 @@ export function archiveDays(raw: string | undefined): number {
   return DAY_CHOICES.includes(days) ? days : 7;
 }
 
-export function sweepStale(): void {
+export async function sweepStale(): Promise<void> {
   const stored = settings.all();
   if (stored[AUTO_ARCHIVE_KEY] !== "true") return;
   const cutoff = Date.now() - archiveDays(stored[AUTO_ARCHIVE_DAYS_KEY]) * 24 * 60 * 60 * 1000;
   const waiting = [...pendingApprovals(), ...pendingQuestions()].map((pending) => pending.threadId);
-  for (const thread of threads.archiveStale(cutoff, waiting)) publish({ type: "thread.updated", thread });
+  for (const thread of threads.archiveStale(cutoff, waiting)) {
+    publish({ type: "thread.updated", thread });
+    await cleanupWorktree(thread, false);
+  }
 }
 
 export function startAutoArchive(): void {
-  sweepStale();
-  setInterval(sweepStale, SWEEP_MS).unref();
+  void sweepStale();
+  setInterval(() => void sweepStale(), SWEEP_MS).unref();
 }
