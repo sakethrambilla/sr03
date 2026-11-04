@@ -124,6 +124,8 @@ export const api = {
     call<{ branch: string | null; dirty: number; diff: { files: number; insertions: number; deletions: number } }>(
       `/api/threads/${id}/git`,
     ),
+  archiveCheck: (id: string) =>
+    call<{ dirty: { path: string; files: string[]; commits: number } | null }>(`/api/threads/${id}/archive-check`),
   patchThread: (
     id: string,
     patch: {
@@ -133,6 +135,7 @@ export const api = {
       effort?: Effort;
       fast?: boolean;
       archived?: boolean;
+      discardWorktree?: boolean;
     },
   ) =>
     call<Thread>(`/api/threads/${id}`, {

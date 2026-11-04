@@ -9,6 +9,7 @@ import {
   commitFileDiff,
   commitFiles,
   commitLog,
+  deleteBranch,
   fetchWorktree,
   listRefs,
   listWorktrees,
@@ -16,6 +17,7 @@ import {
   mergedBranches,
   removeWorktree,
   unlockWorktree,
+  unsavedWork,
 } from "./git.ts";
 
 function sh(cwd: string, args: string[]): string {
@@ -208,4 +210,46 @@ test("fetchWorktree against an unreachable remote throws with git's own message"
   sh(dir, ["commit", "-q", "-m", "first"]);
   sh(dir, ["remote", "add", "origin", "/nonexistent/path/repo.git"]);
   return assert.rejects(() => fetchWorktree(dir), /Could not read from remote repository/);
+});
+
+function makeWorktree(): { dir: string; wt: string } {
+  const dir = makeRepo();
+  fs.writeFileSync(path.join(dir, "a.txt"), "one\n");
+  sh(dir, ["add", "."]);
+  sh(dir, ["commit", "-q", "-m", "first"]);
+  const wt = fs.mkdtempSync(path.join(os.tmpdir(), "sr03-git-wt-"));
+  fs.rmSync(wt, { recursive: true });
+  sh(dir, ["worktree", "add", "-q", "-b", "feature", wt, "main"]);
+  return { dir, wt };
+}
+
+test("unsavedWork on a fresh worktree reports nothing", async () => {
+  const { wt } = makeWorktree();
+  assert.deepEqual(await unsavedWork(wt, "main"), { files: [], commits: 0 });
+});
+
+test("unsavedWork lists an untracked file", async () => {
+  const { wt } = makeWorktree();
+  fs.writeFileSync(path.join(wt, "new.txt"), "x\n");
+  const result = await unsavedWork(wt, "main");
+  assert.ok(result.files.includes("new.txt"));
+});
+
+test("unsavedWork counts an unmerged commit with no remote", async () => {
+  const { wt } = makeWorktree();
+  fs.writeFileSync(path.join(wt, "b.txt"), "two\n");
+  sh(wt, ["add", "."]);
+  sh(wt, ["commit", "-q", "-m", "second"]);
+  const result = await unsavedWork(wt, "main");
+  assert.equal(result.commits, 1);
+});
+
+test("deleteBranch removes the branch", async () => {
+  const dir = makeRepo();
+  fs.writeFileSync(path.join(dir, "a.txt"), "one\n");
+  sh(dir, ["add", "."]);
+  sh(dir, ["commit", "-q", "-m", "first"]);
+  sh(dir, ["branch", "doomed"]);
+  await deleteBranch(dir, "doomed");
+  assert.equal(sh(dir, ["branch", "--list", "doomed"]), "");
 });

@@ -7,6 +7,7 @@ import { pipeline } from "node:stream/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import * as agents from "./agents/runtime.ts";
+import { archiveTarget, cleanupWorktree } from "./archiveCleanup.ts";
 import { AUTO_ARCHIVE_DAYS_KEY, AUTO_ARCHIVE_KEY, sweepStale } from "./autoArchive.ts";
 import * as git from "./git.ts";
 import * as pty from "./pty.ts";
@@ -421,6 +422,7 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
       }
       const archived = threads.archiveIdle(project.id, except);
       for (const thread of archived) publish({ type: "thread.updated", thread });
+      for (const thread of archived) await cleanupWorktree(thread, false);
       return archived;
     },
   },
@@ -1129,7 +1131,7 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
       const key = requireString(body, "key");
       settings.set(key, body.value);
       publish({ type: "settings.changed", key, value: body.value });
-      if (key === AUTO_ARCHIVE_KEY || key === AUTO_ARCHIVE_DAYS_KEY) sweepStale();
+      if (key === AUTO_ARCHIVE_KEY || key === AUTO_ARCHIVE_DAYS_KEY) void sweepStale();
       return { ok: true };
     },
   },
@@ -1201,6 +1203,16 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
     },
   },
   {
+    method: "GET",
+    pattern: /^\/api\/threads\/([^/]+)\/archive-check$/,
+    handler: async ({ params }) => {
+      const target = await archiveTarget(requireThread(params[0]!));
+      return target && (target.files.length || target.commits)
+        ? { dirty: { path: target.path, files: target.files, commits: target.commits } }
+        : { dirty: null };
+    },
+  },
+  {
     method: "PATCH",
     pattern: /^\/api\/threads\/([^/]+)$/,
     handler: async ({ params, request }) => {
@@ -1253,6 +1265,9 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
           }
           patch.archived = body.archived;
         }
+        if (body.discardWorktree !== undefined && typeof body.discardWorktree !== "boolean") {
+          throw new HttpError(400, "`discardWorktree` must be a boolean");
+        }
         const capabilities = currentProvider(thread.providerId).capabilities;
         if (
           thread.status === "running" &&
@@ -1289,6 +1304,9 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
         const updated = threads.update(thread.id, patch);
         if (!updated) throw new HttpError(404, "Thread not found");
         publish({ type: "thread.updated", thread: updated });
+        if (patch.archived === true && !thread.archived) {
+          await cleanupWorktree(updated, body.discardWorktree === true);
+        }
         return updated;
       });
     },
