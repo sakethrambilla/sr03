@@ -16,6 +16,7 @@ import type {
   Project,
   ProviderId,
   Thread,
+  ThreadKind,
   ThreadStatus,
 } from "./types.ts";
 
@@ -132,6 +133,9 @@ try {
   }
   if (!threadColumns.includes("layout")) {
     db.exec("ALTER TABLE threads ADD COLUMN layout TEXT");
+  }
+  if (!threadColumns.includes("kind")) {
+    db.exec("ALTER TABLE threads ADD COLUMN kind TEXT NOT NULL DEFAULT 'chat'");
   }
   if (!threadColumns.includes("external_source")) {
     db.exec("ALTER TABLE threads ADD COLUMN external_source TEXT");
@@ -259,6 +263,7 @@ function toThread(row: Row): Thread {
     id: row.id as string,
     projectId: row.project_id as string,
     providerId: row.provider_id === "cursor" || row.provider_id === "codex" ? row.provider_id : "claude",
+    kind: row.kind === "terminal" ? "terminal" : "chat",
     title: row.title as string,
     cwd: row.cwd as string,
     branch: (row.branch as string | null) ?? null,
@@ -316,8 +321,8 @@ const sql = {
   threadById: db.prepare("SELECT * FROM threads WHERE id = ?"),
   threadSetLayout: db.prepare("UPDATE threads SET layout = ? WHERE id = ?"),
   threadInsert: db.prepare(
-    `INSERT INTO threads (id, project_id, provider_id, title, cwd, branch, is_worktree, model, permission_mode, effort, fast, session_id, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO threads (id, project_id, provider_id, kind, title, cwd, branch, is_worktree, model, permission_mode, effort, fast, session_id, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ),
   threadClaim: db.prepare(
     `UPDATE threads SET status = 'running', owner_id = ?, updated_at = ?
@@ -492,6 +497,7 @@ export const threads = {
     permissionMode: PermissionMode;
     effort: Effort;
     fast: boolean;
+    kind?: ThreadKind;
   }): Thread {
     const now = Date.now();
     const thread: Thread = {
@@ -504,11 +510,13 @@ export const threads = {
       createdAt: now,
       updatedAt: now,
       ...input,
+      kind: input.kind ?? "chat",
     };
     sql.threadInsert.run(
       thread.id,
       thread.projectId,
       thread.providerId,
+      thread.kind,
       thread.title,
       thread.cwd,
       thread.branch,

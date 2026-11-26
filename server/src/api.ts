@@ -846,9 +846,13 @@ const routes: Array<{ method: string; pattern: RegExp; handler: Handler }> = [
           throw new HttpError(400, "This model has no fast mode");
         }
       }
+      if (body.kind !== undefined && body.kind !== "chat" && body.kind !== "terminal") {
+        throw new HttpError(400, "Unknown thread kind");
+      }
       const thread = threads.create({
         projectId: project.id,
         providerId,
+        kind: body.kind ?? "chat",
         effort: body.effort ?? defaultEffortFor(providerId, model),
         fast: body.fast === true,
         title: typeof body.title === "string" && body.title.trim() ? body.title.trim() : "New thread",

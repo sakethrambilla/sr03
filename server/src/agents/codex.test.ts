@@ -309,6 +309,7 @@ function threadFor(directory: string, extra: Partial<Thread> = {}): Thread {
     id: extra.id ?? "codex-adapter-test",
     projectId: "project",
     providerId: "codex",
+    kind: "chat",
     title: "Test",
     cwd: directory,
     branch: null,

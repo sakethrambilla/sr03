@@ -155,6 +155,9 @@ export function TerminalPanel({
   onHeightChange,
   onToggleMaximize,
   onClose,
+  embedded,
+  hidden,
+  onTerminals,
 }: {
   thread: Thread;
   command: { text: string; key: number } | null;
@@ -164,6 +167,11 @@ export function TerminalPanel({
   onHeightChange: (height: number) => void;
   onToggleMaximize: () => void;
   onClose: () => void;
+  // a terminal thread's main tab: fills its cell, never resizes, and outlives its last shell
+  embedded?: boolean;
+  // the embedded panel's tab is behind a file tab, so no terminal in it may measure itself
+  hidden?: boolean;
+  onTerminals?: (ids: string[]) => void;
 }) {
   const connected = useStore((state) => state.connected);
   const section = useRef<HTMLElement>(null);
@@ -238,8 +246,10 @@ export function TerminalPanel({
   const spawned = useRef(false);
   if (ids.length > 0) spawned.current = true;
 
+  useEffect(() => onTerminals?.(ids), [ids]);
+
   useEffect(() => {
-    if (ready && spawned.current && ids.length === 0) onClose();
+    if (ready && spawned.current && ids.length === 0 && !embedded) onClose();
   }, [ready, ids.length]);
 
   // the drag writes the height straight to the element and only commits on release: routing
@@ -279,13 +289,14 @@ export function TerminalPanel({
       data-see-through
       // the stored height came from whatever window it was dragged in, so a smaller one now
       // must still leave the transcript something
-      style={maximized ? undefined : { height: `min(${height}px, calc(100% - ${MIN_CONTENT}px))` }}
+      style={maximized || embedded ? undefined : { height: `min(${height}px, calc(100% - ${MIN_CONTENT}px))` }}
       className={cn(
-        "relative flex flex-col border-t border-border/60 bg-card",
-        maximized ? "min-h-0 flex-1" : "shrink-0",
+        "relative flex flex-col bg-card",
+        !embedded && "border-t border-border/60",
+        maximized || embedded ? "min-h-0 flex-1" : "shrink-0",
       )}
     >
-      {maximized ? null : (
+      {maximized || embedded ? null : (
         <div
           role="separator"
           aria-orientation="horizontal"
@@ -337,6 +348,8 @@ export function TerminalPanel({
         <span className="min-w-0 shrink truncate font-mono text-[10.5px] text-faint">
           {thread.cwd.replace(/^\/Users\/[^/]+/, "~")}
         </span>
+        {embedded ? null : (
+        <>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -352,6 +365,8 @@ export function TerminalPanel({
         <Button variant="ghost" onClick={onClose} aria-label="Hide terminal panel">
           <CloseIcon />
         </Button>
+        </>
+        )}
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col">
@@ -360,10 +375,22 @@ export function TerminalPanel({
             key={id}
             threadId={thread.id}
             terminalId={id}
-            visible={id === active}
+            visible={id === active && !hidden}
             connected={connected}
           />
         ))}
+        {embedded && ready && ids.length === 0 ? (
+          <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">
+            <p className="text-[13px] text-muted-foreground">No terminals open</p>
+            <Button
+              variant="secondary"
+              onClick={() => sendClientMessage({ type: "pty.create", threadId: thread.id, cols: 80, rows: 24 })}
+            >
+              <PlusIcon className="size-3.5" />
+              New terminal
+            </Button>
+          </div>
+        ) : null}
       </div>
     </section>
   );

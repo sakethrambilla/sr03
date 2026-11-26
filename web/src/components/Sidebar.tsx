@@ -41,6 +41,7 @@ import {
   cn,
   usePersistedState,
 } from "./ui.tsx";
+import { laneColor } from "../lib/gitgraph.ts";
 import { GitGraphPanel } from "./GitGraphPanel.tsx";
 import { PanelResize } from "./PanelResize.tsx";
 import { WorktreePanel } from "./WorktreePanel.tsx";
@@ -459,6 +460,31 @@ function ArchivePromptDialog() {
   );
 }
 
+interface WorktreeGroup {
+  cwd: string;
+  branch: string | null;
+  color: string | undefined;
+  threads: Thread[];
+}
+
+// sessions sharing a working directory, in order of their latest activity. A worktree's colour
+// comes from its place among the project's worktree paths, so it holds while activity reorders
+function worktreeGroups(projectThreads: Thread[], allProjectThreads: Thread[]): WorktreeGroup[] {
+  const worktreePaths = [...new Set(allProjectThreads.filter((t) => t.isWorktree).map((t) => t.cwd))].sort();
+  const groups = new Map<string, WorktreeGroup>();
+  for (const thread of projectThreads) {
+    let group = groups.get(thread.cwd);
+    if (!group) {
+      const index = worktreePaths.indexOf(thread.cwd);
+      // lane 0 is the accent orange, which already means "selected" elsewhere
+      group = { cwd: thread.cwd, branch: thread.branch, color: index === -1 ? undefined : laneColor(index + 1), threads: [] };
+      groups.set(thread.cwd, group);
+    }
+    group.threads.push(thread);
+  }
+  return [...groups.values()];
+}
+
 export function Sidebar() {
   const leaving = useStore((state) => state.leaving);
   const projects = useStore((state) => state.projects);
@@ -599,9 +625,42 @@ export function Sidebar() {
 
               {folded ? null : (
                 <ul className="mt-0.5">
-                  {projectThreads.map((thread) => (
-                    <ThreadRow key={thread.id} thread={thread} />
-                  ))}
+                  {worktreeGroups(
+                    projectThreads,
+                    threads.filter((thread) => thread.projectId === project.id),
+                  ).map((group, _index, groups) => {
+                    // a project whose sessions all share one folder has nothing to tell apart
+                    if (groups.length === 1) {
+                      return group.threads.map((thread) => <ThreadRow key={thread.id} thread={thread} />);
+                    }
+                    const key = `worktree:${group.cwd}`;
+                    const groupFolded = collapsed.has(key);
+                    const running = group.threads.some((thread) => thread.status === "running");
+                    return (
+                      <li key={group.cwd}>
+                        <Button
+                          variant="ghost"
+                          onClick={() => toggleCollapsed(key)}
+                          title={group.cwd}
+                          style={group.color ? { color: group.color } : undefined}
+                          className="h-auto w-full justify-start gap-1 px-0.5 pt-1.5 pb-0.5 has-[>svg]:px-0.5 text-[11px] font-medium text-faint hover:bg-transparent"
+                        >
+                          <ChevronIcon className={cn("size-3 shrink-0 transition-transform", groupFolded && "-rotate-90")} />
+                          <span className="max-w-[60%] min-w-0 truncate text-left">{group.branch ?? "detached"}</span>
+                          <span className="h-px min-w-4 flex-1 bg-current opacity-40" />
+                          {running ? <StatusDot status="running" /> : null}
+                          <span className="shrink-0 tabular-nums">{group.threads.length}</span>
+                        </Button>
+                        {groupFolded ? null : (
+                          <ul>
+                            {group.threads.map((thread) => (
+                              <ThreadRow key={thread.id} thread={thread} />
+                            ))}
+                          </ul>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </section>

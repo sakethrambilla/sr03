@@ -41,6 +41,7 @@ import {
   AgentIcon,
   BranchIcon,
   ChangesIcon,
+  CloseIcon,
   Dialog,
   ChevronIcon,
   CodeIcon,
@@ -221,6 +222,10 @@ export function ChatView({ thread }: { thread: Thread }) {
   const fsTick = useStore((state) => state.fsVersionByThread[thread.id] ?? 0);
   const connected = useStore((state) => state.connected);
   const [treeOpen, setTreeOpen] = usePersistedState<boolean>("file-tree", false);
+  const terminalThread = thread.kind === "terminal";
+  const closeThread = useStore((state) => state.closeThread);
+  const [shells, setShells] = useState<string[]>([]);
+  const [confirmingClose, setConfirmingClose] = useState(false);
   // the terminal panel is per thread: a shared flag would open it — and spawn a shell — in
   // every session you merely pass through
   const [terminalOpen, setTerminalOpen] = usePersistedIdState<boolean>(
@@ -484,7 +489,7 @@ export function ChatView({ thread }: { thread: Thread }) {
 
   useShortcut("toggleFileTree", () => setTreeOpen(!treeOpen));
   useShortcut("toggleAgents", () => setAgentsOpen(!agentsOpen), provider.capabilities.tasks);
-  useShortcut("toggleTerminal", () => setTerminalOpen(!terminalOpen));
+  useShortcut("toggleTerminal", () => setTerminalOpen(!terminalOpen), !terminalThread);
   // a browser tab would print instead, so this one is taken back by hand
   useShortcut("quickOpen", () => setPalette("files"));
   useShortcut("quickOpenText", () => setPalette("text"));
@@ -523,7 +528,7 @@ export function ChatView({ thread }: { thread: Thread }) {
       <main data-surface="background" className="relative flex h-full min-w-0 flex-1 flex-col">
         <header data-titlebar className="flex h-13 shrink-0 items-center gap-2 border-b border-border/60 px-3">
           <SidebarToggle />
-          <StatusDot status={thread.status} />
+          <StatusDot status={terminalThread ? (shells.length ? "running" : "idle") : thread.status} />
           <h1 className="min-w-0 truncate text-[13.5px] font-medium" title={thread.cwd}>
             {thread.title}
           </h1>
@@ -536,17 +541,29 @@ export function ChatView({ thread }: { thread: Thread }) {
           {/* the toggles are icon buttons with padding of their own, so they sit tighter than the header gap */}
           <div className="flex items-center gap-1">
             <OpenMenu thread={thread} />
-            {provider.capabilities.tasks ? (
+            {provider.capabilities.tasks && !terminalThread ? (
               <PanelToggle pressed={agentsOpen} onPressedChange={setAgentsOpen} label="Agents">
                 <AgentIcon className="size-4" />
               </PanelToggle>
             ) : null}
-            <PanelToggle pressed={terminalOpen} onPressedChange={setTerminalOpen} label="Terminal">
-              <TerminalIcon className="size-4" />
-            </PanelToggle>
+            {terminalThread ? null : (
+              <PanelToggle pressed={terminalOpen} onPressedChange={setTerminalOpen} label="Terminal">
+                <TerminalIcon className="size-4" />
+              </PanelToggle>
+            )}
             <PanelToggle pressed={treeOpen} onPressedChange={setTreeOpen} label="Files">
               <ChangesIcon className="size-4" />
             </PanelToggle>
+            {terminalThread ? (
+              <Button
+                variant="ghost"
+                aria-label="Close session"
+                title="Close session"
+                onClick={() => (shells.length ? setConfirmingClose(true) : closeThread())}
+              >
+                <CloseIcon />
+              </Button>
+            ) : null}
           </div>
         </header>
 
@@ -596,7 +613,23 @@ export function ChatView({ thread }: { thread: Thread }) {
                     onPointerDownCapture={() => setFocused(index)}
                     className={cn("flex min-h-0 min-w-0 flex-col", showing ? "" : "hidden")}
                   >
-                    {tab.kind === "chat" ? (
+                    {tab.kind === "chat" && terminalThread ? (
+                      <Suspense fallback={null}>
+                        <TerminalPanel
+                          thread={thread}
+                          command={null}
+                          height={0}
+                          defaultHeight={0}
+                          maximized={false}
+                          onHeightChange={() => undefined}
+                          onToggleMaximize={() => undefined}
+                          onClose={() => undefined}
+                          embedded
+                          hidden={!showing}
+                          onTerminals={setShells}
+                        />
+                      </Suspense>
+                    ) : tab.kind === "chat" ? (
                       <>
                         <Timeline
                           threadId={thread.id}
@@ -638,7 +671,7 @@ export function ChatView({ thread }: { thread: Thread }) {
           </EditorGroups>
         </div>
 
-        {terminalOpen ? (
+        {terminalOpen && !terminalThread ? (
           <Suspense fallback={null}>
             <TerminalPanel
               thread={thread}
@@ -675,6 +708,45 @@ export function ChatView({ thread }: { thread: Thread }) {
           onOpenFile={openFile}
           onClose={() => setPalette(null)}
         />
+      ) : null}
+
+      {confirmingClose ? (
+        <Dialog
+          title="Terminals are still running"
+          onClose={() => setConfirmingClose(false)}
+          footer={
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setConfirmingClose(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  for (const terminalId of shells) {
+                    sendClientMessage({ type: "pty.close", threadId: thread.id, terminalId });
+                  }
+                  closeThread();
+                }}
+              >
+                Stop
+              </Button>
+              <Button
+                onClick={() => {
+                  setConfirmingClose(false);
+                  closeThread();
+                }}
+              >
+                Keep running
+              </Button>
+            </div>
+          }
+        >
+          <p className="text-[13px] text-muted-foreground">
+            Stop ends every shell in this session and whatever is running in them. Keep running
+            closes the view and leaves them working; reopen the session from the sidebar to get
+            back to them.
+          </p>
+        </Dialog>
       ) : null}
 
       {pendingRewind ? (

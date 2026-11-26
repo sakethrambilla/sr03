@@ -11,6 +11,8 @@ export type PermissionMode =
 // Ordered faint-to-deep; a provider exposes whichever subset its selected model supports.
 export type Effort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type ThreadStatus = "idle" | "running" | "error";
+// a terminal thread's main tab is a set of shells instead of a chat; sr03 keeps no transcript for it
+export type ThreadKind = "chat" | "terminal";
 export type MessageRole = "user" | "assistant" | "tool" | "system" | "error";
 
 export interface Project {
@@ -50,6 +52,7 @@ export interface Thread {
   id: string;
   projectId: string;
   providerId: ProviderId;
+  kind: ThreadKind;
   title: string;
   cwd: string;
   branch: string | null;

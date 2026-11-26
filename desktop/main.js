@@ -152,6 +152,11 @@ function openWindow() {
       setTimeout(() => placeTrafficLights(window), 50);
     });
   }
+  // macOS reclaims an idle renderer under memory pressure, which leaves a blank window behind
+  window.webContents.on("render-process-gone", (_event, details) => {
+    console.error(`renderer gone: ${details.reason}`);
+    if (appUrl && !window.isDestroyed()) void window.loadURL(appUrl);
+  });
   window.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: "deny" };

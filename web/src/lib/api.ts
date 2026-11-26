@@ -23,6 +23,7 @@ import type {
   TableWindow,
   TextMatch,
   Thread,
+  ThreadKind,
   ThreadTask,
   TreeEntry,
   Usage,
@@ -111,6 +112,7 @@ export const api = {
     effort?: Effort;
     fast?: boolean;
     title?: string;
+    kind?: ThreadKind;
   }) => post<Thread>("/api/threads", input),
   thread: (id: string) =>
     call<{ thread: Thread; messages: Message[]; tasks: ThreadTask[] }>(`/api/threads/${id}`),

@@ -34,7 +34,7 @@ Active while a session is open.
 | `⌘P` | Quick open — files by name, `%` for text across the folder | `web/src/components/ChatView.tsx`, `web/src/lib/shortcuts.ts` |
 | `⌘⇧F` | Quick open, already switched to text | `web/src/components/ChatView.tsx`, `web/src/lib/shortcuts.ts` |
 | `⌘B` | Show / hide the file tree | `web/src/components/ChatView.tsx`, `web/src/lib/shortcuts.ts` |
-| `⌘J` | Show / hide the terminal | `web/src/components/ChatView.tsx`, `web/src/lib/shortcuts.ts` |
+| `⌘J` | Show / hide the terminal (chat sessions only) | `web/src/components/ChatView.tsx`, `web/src/lib/shortcuts.ts` |
 | `⌘⇧A` | Show / hide the agents panel, when the provider reports subagent tasks | `web/src/components/ChatView.tsx`, `web/src/lib/shortcuts.ts` |
 | `⌘\` | Split the focused group's active tab into a new group, along the session's axis | `web/src/components/ChatView.tsx`, `web/src/lib/shortcuts.ts` |
 | `⌘K` then `←` / `→` | Move focus to the previous / next editor group | `web/src/components/ChatView.tsx`, `web/src/lib/shortcuts.ts` |
