@@ -39,6 +39,7 @@ import type {
   ServerEvent,
   SlashCommand,
   Thread,
+  ThreadKind,
   ThreadPhase,
   ThreadTask,
   Usage,
@@ -165,7 +166,9 @@ interface Store extends AppState {
   openFolder: (path: string) => Promise<void>;
   startDraft: (input?: { projectId?: string; branch?: string; worktreePath?: string; locked?: boolean }) => void;
   patchDraft: (patch: Partial<Draft>) => void;
-  startFromDraft: (text: string) => Promise<void>;
+  // a terminal thread starts with no text: the CLI takes its first prompt itself
+  startFromDraft: (text: string, kind?: ThreadKind) => Promise<void>;
+  closeThread: () => void;
   renameThread: (id: string, title: string) => Promise<void>;
   forkThread: (id: string) => Promise<void>;
   setArchived: (id: string, archived: boolean, discardWorktree?: boolean) => Promise<void>;
@@ -589,7 +592,7 @@ export const useStore = create<Store>((set, get) => ({
 
   // a thread only exists once its first turn is sent, so cwd/branch are fixed for its lifetime.
   // the draft may have sat open while branches moved, so the plan is resolved again here
-  startFromDraft: async (text) => {
+  startFromDraft: async (text, kind = "chat") => {
     const draft = get().draft;
     if (!draft?.projectId) throw new Error("Choose a folder first");
     const snapshot = await api.git(draft.projectId).catch(() => null);
@@ -620,6 +623,7 @@ export const useStore = create<Store>((set, get) => ({
       permissionMode: draft.permissionMode,
       effort: draft.effort,
       fast: draft.fast,
+      kind,
     });
     set((state) => ({
       threads: upsertThread(state.threads, thread),
@@ -628,8 +632,10 @@ export const useStore = create<Store>((set, get) => ({
       loadedThreads: { ...state.loadedThreads, [thread.id]: true },
       draft: null,
     }));
-    await api.sendTurn(thread.id, text);
+    if (kind === "chat") await api.sendTurn(thread.id, text);
   },
+
+  closeThread: () => set({ activeThreadId: null }),
 
   renameThread: async (id, title) => {
     const trimmed = title.trim();

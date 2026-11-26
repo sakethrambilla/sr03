@@ -26,8 +26,10 @@ import {
   PlusIcon,
   SparkleIcon,
   StatusDot,
+  TerminalIcon,
   WorktreeIcon,
 } from "./ui.tsx";
+import { Button } from "@/components/ui/button";
 import { Composer } from "./Composer.tsx";
 import { ProviderLogo } from "./ProviderLogo.tsx";
 import { SidebarToggle } from "./Sidebar.tsx";
@@ -327,6 +329,15 @@ export function DraftView({ draft }: { draft: Draft }) {
           <p className="mt-1 text-[12px] text-faint">
             Once the first message is sent they stay fixed for the session.
           </p>
+          <Button
+            variant="secondary"
+            className="mt-4"
+            disabled={!draft.projectId || plan.kind === "blocked"}
+            onClick={() => startFromDraft("", "terminal").catch((error) => setError((error as Error).message))}
+          >
+            <TerminalIcon className="size-3.5" />
+            Open in terminal
+          </Button>
         </div>
       </div>
 
